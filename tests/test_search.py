@@ -1,21 +1,10 @@
 import pytest
 
-from pyzill import exceptions, search
-from tests.conftest import FakeResponse
+from pyzill import exceptions, http, search
 
 
-def test_for_sale_success(monkeypatch, search_success_body):
-    captured = {}
-
-    def fake_put(url, json=None, headers=None, proxies=None, impersonate=None, timeout=None):
-        captured["url"] = url
-        captured["json"] = json
-        captured["headers"] = headers
-        captured["impersonate"] = impersonate
-        captured["timeout"] = timeout
-        return FakeResponse(status_code=200, json_data=search_success_body)
-
-    monkeypatch.setattr(search.requests, "put", fake_put)
+def test_for_sale_success(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
 
     result = search.for_sale(
         search_value="Schenectady NY",
@@ -28,19 +17,18 @@ def test_for_sale_success(monkeypatch, search_success_body):
 
     assert len(result["mapResults"]) == 2
     assert result["mapResults"][0]["zpid"] == 348914888
-    assert captured["impersonate"] == "chrome136"
-    assert captured["timeout"] == 30.0
-    assert captured["headers"]["Referer"] == "https://www.zillow.com/"
-    assert captured["json"]["searchQueryState"]["usersSearchTerm"] == "Schenectady NY"
+
+    call = fake_http.calls[-1]
+    assert call["url"] == search._SEARCH_URL
+    assert call["impersonate"] == "chrome136"
+    assert call["timeout"] == 30.0
+    assert call["headers"]["Referer"] == "https://www.zillow.com/"
+    assert call["json"]["searchQueryState"]["usersSearchTerm"] == "Schenectady NY"
 
 
-def test_for_sale_403_raises_zillow_blocked_error(monkeypatch):
+def test_for_sale_403_raises_zillow_blocked_error(fake_http):
     px_html = "<html><body>Please verify you are a human. perimeterx px-captcha</body></html>"
-
-    def fake_put(*args, **kwargs):
-        return FakeResponse(status_code=403, text=px_html, headers={"server": "PerimeterX"})
-
-    monkeypatch.setattr(search.requests, "put", fake_put)
+    fake_http.install("PUT", status_code=403, text=px_html, headers={"server": "PerimeterX"})
 
     with pytest.raises(exceptions.ZillowBlockedError) as exc_info:
         search.for_sale(search_value="Schenectady NY")
@@ -50,64 +38,43 @@ def test_for_sale_403_raises_zillow_blocked_error(monkeypatch):
     assert "PerimeterX" in str(err) or "px-captcha" in str(err).lower()
 
 
-def test_search_5xx_retries_then_raises(monkeypatch):
-    calls = {"n": 0}
-
-    def fake_put(*args, **kwargs):
-        calls["n"] += 1
-        return FakeResponse(status_code=503, text="Service Unavailable")
-
-    monkeypatch.setattr(search.requests, "put", fake_put)
-    monkeypatch.setattr(search.time, "sleep", lambda *a, **k: None)
+def test_search_5xx_retries_then_raises(fake_http, monkeypatch):
+    fake_http.install("PUT", status_code=503, text="Service Unavailable")
+    monkeypatch.setattr(http.time, "sleep", lambda *a, **k: None)
 
     with pytest.raises(exceptions.ZillowBlockedError):
         search.for_sale(search_value="Schenectady NY", max_retries=2)
 
-    assert calls["n"] == 3  # initial + 2 retries
+    assert len(fake_http.calls) == 3  # initial + 2 retries
 
 
-def test_search_defaults_applied(monkeypatch, search_success_body):
-    captured = {}
-
-    def fake_put(url, json=None, headers=None, proxies=None, impersonate=None, timeout=None):
-        captured["json"] = json
-        return FakeResponse(status_code=200, json_data=search_success_body)
-
-    monkeypatch.setattr(search.requests, "put", fake_put)
+def test_search_defaults_applied(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
     search.search(search_value="anywhere")
 
-    bounds = captured["json"]["searchQueryState"]["mapBounds"]
+    query_state = fake_http.calls[-1]["json"]["searchQueryState"]
+    bounds = query_state["mapBounds"]
     assert bounds["north"] == 49.38
     assert bounds["south"] == 24.54
-    assert "mapZoom" not in captured["json"]["searchQueryState"]
+    assert "mapZoom" not in query_state
 
 
-def test_proxy_env_fallback(monkeypatch, search_success_body):
-    captured = {}
-
-    def fake_put(url, json=None, headers=None, proxies=None, impersonate=None, timeout=None):
-        captured["proxies"] = proxies
-        return FakeResponse(status_code=200, json_data=search_success_body)
-
-    monkeypatch.setattr(search.requests, "put", fake_put)
+def test_proxy_env_fallback(fake_http, monkeypatch, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
     monkeypatch.setenv("ZILLOW_PROXY", "http://user:pass@proxy.example:8080")
 
     search.for_sale(search_value="x")
-    assert captured["proxies"] == {
+    assert fake_http.calls[-1]["proxies"] == {
         "http": "http://user:pass@proxy.example:8080",
         "https": "http://user:pass@proxy.example:8080",
     }
 
-    captured.clear()
     search.for_sale(search_value="x", proxy_url="http://explicit:1@proxy.example:9090")
-    assert captured["proxies"]["http"] == "http://explicit:1@proxy.example:9090"
+    assert fake_http.calls[-1]["proxies"]["http"] == "http://explicit:1@proxy.example:9090"
 
 
-def test_iter_search_yields_and_limits(monkeypatch, search_success_body):
-    def fake_put(*args, **kwargs):
-        return FakeResponse(status_code=200, json_data=search_success_body)
-
-    monkeypatch.setattr(search.requests, "put", fake_put)
+def test_iter_search_yields_and_limits(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
 
     items = list(search.iter_search(search.for_sale, search_value="x"))
     assert len(items) == 2
@@ -117,11 +84,16 @@ def test_iter_search_yields_and_limits(monkeypatch, search_success_body):
     assert items[0]["zpid"] == 348914888
 
 
-def test_iter_search_normalize(monkeypatch, search_success_body):
-    def fake_put(*args, **kwargs):
-        return FakeResponse(status_code=200, json_data=search_success_body)
+def test_iter_search_default_fn(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
 
-    monkeypatch.setattr(search.requests, "put", fake_put)
+    items = list(search.iter_search(search_value="x", max_items=1))
+    assert len(items) == 1
+    assert items[0]["zpid"] == 348914888
+
+
+def test_iter_search_normalize(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
 
     items = list(search.iter_search(search.for_sale, normalize=True, search_value="x"))
     assert len(items) == 2
@@ -130,6 +102,25 @@ def test_iter_search_normalize(monkeypatch, search_success_body):
     assert items[0]["price"] is None
     assert items[0]["beds"] is None
     assert "hdpData" not in items[0]
+
+
+def test_for_rent_sets_rent_filters(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
+    search.for_rent(search_value="x", is_room=True, is_entire_place=True)
+
+    filter_state = fake_http.calls[-1]["json"]["searchQueryState"]["filterState"]
+    assert filter_state["isForRent"] == {"value": True}
+    assert filter_state["isRoomForRent"] == {"value": True}
+    assert "isEntirePlaceForRent" not in filter_state
+
+
+def test_sold_sets_sold_filters(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
+    search.sold(search_value="x")
+
+    filter_state = fake_http.calls[-1]["json"]["searchQueryState"]["filterState"]
+    assert filter_state["isRecentlySold"] == {"value": True}
+    assert filter_state["isForRent"] == {"value": False}
 
 
 def test_split_bbox_quadrants():

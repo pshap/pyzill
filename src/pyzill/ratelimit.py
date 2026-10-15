@@ -3,6 +3,8 @@ import random
 import threading
 import time
 
+DEFAULT_MIN_INTERVAL = 1.5
+
 
 class RateLimiter:
     """Thread-safe minimum-interval rate limiter with optional jitter.
@@ -13,7 +15,7 @@ class RateLimiter:
     return HTTP 403 for requests that arrive too quickly from one IP.
     """
 
-    def __init__(self, min_interval: float = 1.5, jitter: float = 0.5):
+    def __init__(self, min_interval: float = DEFAULT_MIN_INTERVAL, jitter: float = 0.5):
         self.min_interval = min_interval
         self.jitter = jitter
         self._lock = threading.Lock()
@@ -36,17 +38,17 @@ class RateLimiter:
             self._last = time.monotonic()
 
     def set_min_interval(self, min_interval: float) -> None:
-        self.min_interval = min_interval
+        self.min_interval = max(0.0, min_interval)
 
 
 def _read_min_interval() -> float:
     raw = os.environ.get("ZILLOW_MIN_INTERVAL")
     if raw is None:
-        return 1.5
+        return DEFAULT_MIN_INTERVAL
     try:
         return max(0.0, float(raw))
     except ValueError:
-        return 1.5
+        return DEFAULT_MIN_INTERVAL
 
 
 # Shared limiter used by both search and detail requests so that all traffic
@@ -66,7 +68,7 @@ def set_min_interval(min_interval: float) -> None:
         min_interval: Seconds to wait between requests. Use 0 to disable
             throttling (not recommended against Zillow).
     """
-    _limiter.min_interval = max(0.0, min_interval)
+    _limiter.set_min_interval(min_interval)
 
 
 def get_min_interval() -> float:

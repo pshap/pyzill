@@ -1,5 +1,6 @@
 import os
 import re
+from typing import Any
 from urllib.parse import quote, urlparse
 
 regex_space = re.compile(r"[\s ]+")
@@ -17,13 +18,23 @@ def remove_space(value: str) -> str:
     return regex_space.sub(" ", value.strip())
 
 
-def get_nested_value(dic, key_path, default=None):
-    keys = key_path.split(".")
+def get_nested_value(dic: Any, key_path: str, default: Any = None) -> Any:
+    """Return the value at a dot-separated key path, or ``default`` if absent.
+
+    Args:
+        dic: Mapping to traverse (any non-mapping input yields ``default``).
+        key_path: Dot-separated keys, e.g. ``"a.b.c"``.
+        default: Value returned when a key is missing or a step is not a
+            mapping.
+
+    Returns:
+        Any: the nested value, or ``default``.
+    """
     current = dic
-    for key in keys:
-        current = current.get(key, {})
-        if current == {} or current is None:
+    for key in key_path.split("."):
+        if not isinstance(current, dict) or key not in current:
             return default
+        current = current[key]
     return current
 
 

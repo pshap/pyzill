@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+### Added
+- `get_from_department_id` / `get_from_department_url` — correctly-spelled
+  names for the apartment-detail functions. `get_from_deparment_id` /
+  `get_from_deparment_url` remain as backwards-compatible aliases.
+
+### Changed
+- Centralized HTTP handling in a new internal `pyzill.http` module
+  (`build_headers`, `build_proxies`, `is_ok`, `request`). Search and detail
+  functions now share header construction, proxy resolution, throttling, and
+  5xx retry logic.
+- `for_sale`, `for_rent`, and `sold` forward arguments via `**kwargs` instead
+  of repeating ~18-parameter signatures; `for_rent` still accepts `is_room`
+  and `is_entire_place`.
+- `get_from_department_id` now builds `https://www.zillow.com/apartments/<id>/`
+  (previously a hardcoded example URL).
+
 ## [1.2.0] - 2025-10
 
 ### Added
@@ -22,8 +40,8 @@ All notable changes to this project are documented here.
   `TID`, `PGH`, `PTH`, `ISC`, `ICN`, `LOG`, `G`, `RSE`, `PLW`, `PLE`, `DTZ`,
   `ERA`, `PT`, `S`, `PLR`, and `ARG`. Test-only false positives (`assert`,
   magic values, unused fake-HTTP-function arguments) are ignored under
-  `tests/`; legitimate `PLR0913`/`PLR0917` on the filter-heavy public API
-  functions use targeted `noqa` comments.
+  `tests/`; legitimate `PLR0913` on the filter-heavy public API functions use
+  targeted `noqa` comments.
 
 ### Changed
 - Added `requires-python = ">=3.12"` to `pyproject.toml`, matching the Ruff

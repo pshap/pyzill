@@ -18,15 +18,16 @@ def parse_body_home(body: bytes) -> dict[str, Any]:
     """
     component_props = parse_body(body)
     data_raw = get_nested_value(component_props, "gdpClientCache")
+    if not data_raw:
+        return {}
     property_json = loads(data_raw)
-    parsed_data = {}
-    for data in property_json.values():
-        if "property" in str(data):
-            parsed_data = data.get("property")
-    return parsed_data
+    return next(
+        (value["property"] for value in property_json.values() if isinstance(value, dict) and "property" in value),
+        {},
+    )
 
 
-def parse_body_deparments(body: bytes) -> dict[str, Any]:
+def parse_body_departments(body: bytes) -> dict[str, Any]:
     """parse HTML content to retrieve JSON data
 
     Args:

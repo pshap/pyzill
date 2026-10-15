@@ -1,36 +1,17 @@
 from typing import Any
 
-from curl_cffi import requests
-
-from pyzill.parse import parse_body_deparments, parse_body_home
-from pyzill.ratelimit import wait_for_slot
-from pyzill.utils import resolve_proxy
-
-headers = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",  # noqa: E501
-    "Accept-Language": "en",
-    "Cache-Control": "no-cache",
-    "Pragma": "no-cache",
-    "Sec-Ch-Ua": '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Upgrade-Insecure-Requests": "1",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",  # noqa: E501
-}
+from pyzill import http
+from pyzill.parse import parse_body_departments, parse_body_home
 
 
 def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> Any:
-    proxy_url = resolve_proxy(proxy_url)
-    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-    wait_for_slot()
-    response = requests.get(
-        url=url,
+    """Fetch a detail page and enforce a 2xx response."""
+    headers = {**http.build_headers(impersonate), "Sec-Fetch-Site": "none"}
+    response = http.request(
+        "GET",
+        url,
         headers=headers,
-        proxies=proxies,
+        proxy_url=proxy_url,
         impersonate=impersonate,
         timeout=timeout,
     )
@@ -59,47 +40,47 @@ def get_from_home_id(
     return get_from_home_url(home_url, proxy_url, impersonate, timeout)
 
 
-def get_from_deparment_id(
-    deparment_id: str,
+def get_from_department_id(
+    department_id: str,
     proxy_url: str | None = None,
     impersonate: str = "chrome136",
     timeout: float = 30.0,
 ) -> dict[str, Any]:
-    """Scrape data for an apartment/deparment based on its Zillow ID.
+    """Scrape data for an apartment/department based on its Zillow ID.
 
     Args:
-        deparment_id: Zillow apartment complex ID.
+        department_id: Zillow apartment complex ID.
         proxy_url: Proxy URL (falls back to ZILLOW_PROXY env var).
         impersonate: curl_cffi TLS impersonation profile.
         timeout: Request timeout in seconds.
 
     Returns:
-        dict[str, Any]: parsed parment information
+        dict[str, Any]: parsed department information
     """
-    home_url = f"https://www.zillow.com/apartments/texas/the-lennox/{deparment_id}"
+    home_url = f"https://www.zillow.com/apartments/{department_id}/"
     response = _get(home_url, proxy_url, impersonate, timeout)
-    return parse_body_deparments(response.content)
+    return parse_body_departments(response.content)
 
 
-def get_from_deparment_url(
-    deparment_url: str,
+def get_from_department_url(
+    department_url: str,
     proxy_url: str | None = None,
     impersonate: str = "chrome136",
     timeout: float = 30.0,
 ) -> dict[str, Any]:
-    """Scrape data for an apartment/deparment based on its Zillow URL.
+    """Scrape data for an apartment/departement based on its Zillow URL.
 
     Args:
-        deparment_url: Full Zillow apartment URL.
+        department_url: Full Zillow apartment URL.
         proxy_url: Proxy URL (falls back to ZILLOW_PROXY env var).
         impersonate: curl_cffi TLS impersonation profile.
         timeout: Request timeout in seconds.
 
     Returns:
-        dict[str, Any]: parsed parment information
+        dict[str, Any]: parsed department information
     """
-    response = _get(deparment_url, proxy_url, impersonate, timeout)
-    return parse_body_deparments(response.content)
+    response = _get(department_url, proxy_url, impersonate, timeout)
+    return parse_body_departments(response.content)
 
 
 def get_from_home_url(
@@ -121,3 +102,8 @@ def get_from_home_url(
     """
     response = _get(home_url, proxy_url, impersonate, timeout)
     return parse_body_home(response.content)
+
+
+# Backwards-compatible aliases for the historical "deparment" misspelling.
+get_from_deparment_id = get_from_department_id
+get_from_deparment_url = get_from_department_url

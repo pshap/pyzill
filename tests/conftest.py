@@ -3,7 +3,7 @@ import json
 import pytest
 from curl_cffi.requests.exceptions import HTTPError
 
-from pyzill import ratelimit
+from pyzill import http, ratelimit
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +33,37 @@ class FakeResponse:
     def raise_for_status(self):
         if self.status_code >= 400:
             raise HTTPError(f"HTTP Error {self.status_code}", 0, self)
+
+
+class _FakeHTTP:
+    """Records outgoing pyzill.http request calls and returns canned responses."""
+
+    def __init__(self, monkeypatch):
+        self._monkeypatch = monkeypatch
+        self.calls: list[dict] = []
+
+    def install(self, method, *, status_code=200, json_data=None, text="", content=b"", headers=None):
+        """Patch ``curl_cffi.requests.<method>`` to return a FakeResponse."""
+        response = FakeResponse(
+            status_code=status_code,
+            json_data=json_data,
+            text=text,
+            content=content,
+            headers=headers,
+        )
+
+        def handler(**kwargs):
+            self.calls.append({"method": method.lower(), **kwargs})
+            return response
+
+        self._monkeypatch.setattr(http.requests, method.lower(), handler)
+        return response
+
+
+@pytest.fixture
+def fake_http(monkeypatch):
+    """Intercept :func:`pyzill.http.request` at the curl_cffi boundary."""
+    return _FakeHTTP(monkeypatch)
 
 
 def _next_data_html(page_props: dict) -> bytes:

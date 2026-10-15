@@ -25,7 +25,7 @@ Zillow's anti-bot stack (PerimeterX) is aggressive. What works today:
 | Capability | Status | Notes |
 |---|---|---|
 | `get_from_home_url` / `get_from_home_id` | ✅ Works unauthenticated | No proxy required in testing |
-| `get_from_deparment_url` / `get_from_deparment_id` | ✅ Works unauthenticated | No proxy required in testing |
+| `get_from_department_url` / `get_from_department_id` | ✅ Works unauthenticated | No proxy required in testing |
 | `for_sale` / `for_rent` / `sold` | ⚠️ Works, but flaky without a proxy | Rapid repeated requests from one IP get **403** |
 
 **Search endpoints are rate-limited per IP.** A single request often
@@ -271,17 +271,17 @@ data = pyzill.get_from_home_url(
 ```python
 import pyzill
 
-data = pyzill.get_from_deparment_id("CgKZT4")
+data = pyzill.get_from_department_id("CgKZT4")
 ```
 
 ```python
 import pyzill
 
-data = pyzill.get_from_deparment_url("https://www.zillow.com/apartments/kissimmee-fl/the-nexus-at-overbrook/9DSWrh/")
+data = pyzill.get_from_department_url("https://www.zillow.com/apartments/kissimmee-fl/the-nexus-at-overbrook/9DSWrh/")
 ```
 
-> Note: the `deparment` misspelling is part of the public API and is kept for
-> backwards compatibility.
+> Note: the historical `deparment` misspelling (`get_from_deparment_id` /
+> `get_from_deparment_url`) is kept as a backwards-compatible alias.
 
 ## API
 
@@ -293,7 +293,7 @@ data = pyzill.get_from_deparment_url("https://www.zillow.com/apartments/kissimme
 | `iter_search(search_fn, max_items=None, **kwargs)` | Yield individual listings |
 | `split_bbox(ne_lat, ne_long, sw_lat, sw_long)` | Split a bbox into 4 quadrants |
 | `get_from_home_url(url, ...)` / `get_from_home_id(id, ...)` | Home details |
-| `get_from_deparment_url(url, ...)` / `get_from_deparment_id(id, ...)` | Apartment details |
+| `get_from_department_url(url, ...)` / `get_from_department_id(id, ...)` | Apartment details |
 | `parse_proxy(host, port, user, password)` | Build a proxy URL |
 | `resolve_proxy(proxy_url=None)` | Resolve `proxy_url` with `ZILLOW_PROXY` fallback |
 | `set_min_interval(seconds)` / `get_min_interval()` | Configure request throttling |

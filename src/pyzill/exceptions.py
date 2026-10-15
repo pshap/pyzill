@@ -5,7 +5,8 @@ class ZillowBlockedError(Exception):
         self.status_code = status_code
         self.url = url
         self.body_snippet = body_snippet[:500]
+        lowered = self.body_snippet.lower()
         hint = ""
-        if "px-captcha" in body_snippet.lower() or "perimeterx" in body_snippet.lower():
+        if "px-captcha" in lowered or "perimeterx" in lowered:
             hint = " Zillow PerimeterX detected the request. A residential proxy is required for search endpoints."
         super().__init__(f"Zillow returned HTTP {status_code} for {url}.{hint} Body starts with: {self.body_snippet!r}")

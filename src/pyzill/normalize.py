@@ -126,6 +126,4 @@ def normalize_listings(listings: Any) -> list[dict[str, Any]]:
     Returns:
         list[dict[str, Any]]: Normalized listings.
     """
-    if not listings:
-        return []
-    return [normalize_listing(item) for item in listings if isinstance(item, dict)]
+    return [normalize_listing(item) for item in (listings or []) if isinstance(item, dict)]
