@@ -45,6 +45,7 @@ class Listing(TypedDict):
 
 # Anything that is not a digit, minus sign or decimal point.
 _NOT_NUMBER = re.compile(r"[^0-9.\-]")
+_PRICE_SUFFIXES = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
 
 
 def _to_number(value: Any) -> int | float | None:
@@ -68,9 +69,9 @@ def _to_number(value: Any) -> int | float | None:
 def parse_price(value: Any) -> int | None:
     """Parse a Zillow price into an int.
 
-    Handles preformatted strings (``"$329,900"`` -> ``329900``), numeric
-    values, and ``None``.  Non-positive results (Zillow uses ``0``/``"$0"``
-    to mean "unknown") are returned as ``None``.
+    Handles preformatted strings (``"$329,900"`` -> ``329900``), K/M/B
+    suffixes, numeric values, and ``None``.  Non-positive results (Zillow uses
+    ``0``/``"$0"`` to mean "unknown") are returned as ``None``.
 
     Args:
         value: Raw price, e.g. ``"$329,900"``, ``329900``, ``None``.
@@ -78,7 +79,22 @@ def parse_price(value: Any) -> int | None:
     Returns:
         int | None: The price in whole dollars, or None if unknown.
     """
-    num = _to_number(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", "").replace("$", "")
+        suffix = cleaned[-1].upper() if cleaned else ""
+        if suffix in _PRICE_SUFFIXES:
+            numeric_text = cleaned[:-1].strip()
+            if re.search(r"[A-Za-z]", numeric_text):
+                return None
+            num = _to_number(numeric_text)
+            if num is not None:
+                num *= _PRICE_SUFFIXES[suffix]
+        elif re.search(r"[A-Za-z]", cleaned):
+            return None
+        else:
+            num = _to_number(value)
+    else:
+        num = _to_number(value)
     if num is None:
         return None
     price = round(num)

@@ -22,7 +22,10 @@ def test_normalize_listing_keys_match_typeddict():
         ("$0", None),
         (0, None),
         ("N/A", None),
-        ("$550K", 550),
+        ("$550K", 550000),
+        ("$1.2M", 1200000),
+        ("$1.5B", 1500000000),
+        ("$2T", None),
     ],
 )
 def test_parse_price(value, expected):
