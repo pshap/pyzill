@@ -3,6 +3,7 @@ from curl_cffi import requests
 import time
 
 from pyzill.exceptions import ZillowBlockedError
+from pyzill.utils import resolve_proxy
 
 # Wide bounding box covering the continental US, used as default when no
 # coordinates are supplied.  search_value still narrows results server-side.
@@ -54,6 +55,7 @@ def _do_search_request(
     max_retries: int,
 ) -> dict[str, Any]:
     """Issue the PUT request with retry logic and status checking."""
+    proxy_url = resolve_proxy(proxy_url)
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
     headers = _headers(impersonate)
     last_exception: Exception | None = None
