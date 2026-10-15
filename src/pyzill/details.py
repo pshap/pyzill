@@ -16,6 +16,7 @@ def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> R
         proxy_url=proxy_url,
         impersonate=impersonate,
         timeout=timeout,
+        max_retries=http.DEFAULT_MAX_RETRIES,
     )
 
 

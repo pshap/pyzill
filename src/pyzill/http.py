@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from curl_cffi import requests
 from curl_cffi.requests import Response
+from curl_cffi.requests.exceptions import RequestException
 
 from pyzill.exceptions import ZillowBlockedError
 from pyzill.ratelimit import wait_for_slot
@@ -29,6 +30,7 @@ _HTTP_OK_MAX = 300  # exclusive
 _HTTP_SERVER_ERROR_MIN = 500
 
 _RETRY_DELAY = 1.0
+DEFAULT_MAX_RETRIES = 1
 
 _ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"  # noqa: E501
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36"  # noqa: E501
@@ -77,7 +79,7 @@ def request(  # noqa: PLR0913 - central request primitive
     proxy_url: str | None = None,
     impersonate: str = "chrome136",
     timeout: float = 30.0,
-    max_retries: int = 0,
+    max_retries: int = DEFAULT_MAX_RETRIES,
     json: Any = None,
 ) -> Response:
     """Issue a throttled Zillow request, retrying transient (5xx) failures.
@@ -93,7 +95,7 @@ def request(  # noqa: PLR0913 - central request primitive
         proxy_url: Proxy URL (falls back to ``ZILLOW_PROXY``).
         impersonate: curl_cffi TLS impersonation profile.
         timeout: Request timeout in seconds.
-        max_retries: Retries on 5xx / network errors (default 0).
+        max_retries: Retries on 5xx / request errors (default 1).
         json: JSON body to send, or None.
 
     Returns:
@@ -121,8 +123,7 @@ def request(  # noqa: PLR0913 - central request primitive
                     **body,
                 ),
             )
-        except Exception as exc:
-            last_exception = exc
+        except RequestException:
             if attempt < max_retries:
                 time.sleep(_RETRY_DELAY)
                 continue

@@ -174,7 +174,7 @@ def search(  # noqa: PLR0913 - mirrors Zillow's filter surface
     proxy_url: str | None = None,
     impersonate: str = "chrome136",
     timeout: float = 30.0,
-    max_retries: int = 1,
+    max_retries: int = http.DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any]:
     """Run a raw Zillow search with a custom filter_state.
 
