@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [1.2.0] - 2025-10
+
+### Added
+- `parse_price(value)` — coerce Zillow price strings (`"$329,900"`) or numbers
+  into an `int`; returns `None` for unknown/`0`/non-numeric values.
+- `normalize_listing(listing)` — flatten a raw listing into predictable,
+  numeric-or-`None` fields, falling back to `hdpData.homeInfo` when top-level
+  fields are missing. Handles the common case where `price` is a preformatted
+  string and `beds`/`baths`/`area` are absent or `None`.
+- `normalize_listings(listings)` — same, for an iterable; skips non-dict items.
+- `iter_search(..., normalize=True)` — yield normalized listings.
+
 ## [1.1.0] - 2025-10
 
 ### Added

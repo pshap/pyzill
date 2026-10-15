@@ -3,6 +3,7 @@ from curl_cffi import requests
 import time
 
 from pyzill.exceptions import ZillowBlockedError
+from pyzill.normalize import normalize_listing
 from pyzill.ratelimit import wait_for_slot
 from pyzill.utils import resolve_proxy
 
@@ -422,6 +423,7 @@ def search(
 def iter_search(
     search_fn=None,
     max_items: int | None = None,
+    normalize: bool = False,
     **kwargs: Any,
 ):
     """Yield individual mapResults listings from a search function.
@@ -434,13 +436,15 @@ def iter_search(
         ``pagination`` argument does NOT increase this cap — it only
         affects the sidebar ``listResults``.  If you get exactly 500
         results and need more, split the bounding box into smaller
-        quadrants and run one query per quadrant (the ``bbox`` helper
+        quadrants and run one query per quadrant (the ``split_bbox`` helper
         below can generate those quadrants for you).
 
     Args:
         search_fn: One of :func:`for_sale`, :func:`for_rent`, or
             :func:`sold`.  Defaults to :func:`for_sale`.
         max_items: Stop after yielding this many listings (None = all).
+        normalize: When True, yield :func:`~pyzill.normalize.normalize_listing`
+            output (flat, numeric-or-None fields) instead of raw Zillow dicts.
         **kwargs: Passed directly to the search function.
 
     Yields:
@@ -459,7 +463,7 @@ def iter_search(
     for i, listing in enumerate(map_results):
         if max_items is not None and i >= max_items:
             return
-        yield listing
+        yield normalize_listing(listing) if normalize else listing
 
 
 def split_bbox(

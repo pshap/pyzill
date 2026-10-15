@@ -12,8 +12,10 @@ It supports two capabilities:
 
 - Search for sale, for rent, and sold listings
 - Property detail extraction by URL or ID (homes and apartment complexes)
+- Listing normalization: prices and missing fields coerced to numeric-or-`None`
 - Browser TLS impersonation via [`curl_cffi`](https://github.com/yifeikong/curl_cffi)
 - Configurable proxy (explicit or via environment variable)
+- Built-in request throttling to avoid 403s
 - Clear `ZillowBlockedError` when Zillow blocks a request
 
 ## Current status (as of 2025-10)
@@ -170,6 +172,46 @@ results = pyzill.for_sale(
 )
 ```
 
+### Normalizing listings (prices and missing fields)
+
+Raw Zillow listings are inconsistent: `price` is a preformatted string
+(`"$329,900"`), and `beds`/`baths`/`area` can be missing, `None`, or `0`.
+`normalize_listing` flattens a listing into predictable, numeric-or-`None`
+fields, falling back to `hdpData.homeInfo` when a top-level field is absent:
+
+```python
+import pyzill
+
+results = pyzill.for_sale(search_value="12305", ne_lat=42.825, ne_long=-73.925,
+                          sw_lat=42.805, sw_long=-73.955, zoom_value=15)
+
+for home in pyzill.normalize_listings(results["mapResults"]):
+    print(home["address"], home["price"], home["beds"], home["home_type"])
+```
+
+`normalize_listing` returns keys: `zpid`, `price` (int or `None`), `price_label`,
+`beds`, `baths`, `area`, `address`, `street`, `city`, `state`, `zipcode`,
+`latitude`, `longitude`, `home_type`, `status`, `status_type`, `detail_url`
+(absolute), `image_url`, `zestimate`, `rent_zestimate`.
+
+Use `parse_price` on its own to coerce a single value:
+
+```python
+>>> pyzill.parse_price("$1,200,000")
+1200000
+>>> pyzill.parse_price("$0")   # Zillow uses 0 for "unknown"
+None
+```
+
+`iter_search` can normalize on the fly:
+
+```python
+import pyzill
+
+for home in pyzill.iter_search(pyzill.for_sale, normalize=True, search_value="12305"):
+    print(home["price"])
+```
+
 ### Rate limiting
 
 pyzill throttles all requests to Zillow so that consecutive calls are spaced
@@ -253,6 +295,8 @@ data = pyzill.get_from_deparment_url(
 | `parse_proxy(host, port, user, password)` | Build a proxy URL |
 | `resolve_proxy(proxy_url=None)` | Resolve `proxy_url` with `ZILLOW_PROXY` fallback |
 | `set_min_interval(seconds)` / `get_min_interval()` | Configure request throttling |
+| `normalize_listing(listing)` / `normalize_listings(listings)` | Flatten raw listings to numeric-or-`None` fields |
+| `parse_price(value)` | Parse a Zillow price string/number into an int |
 | `ZillowBlockedError` | Raised on non-2xx responses from Zillow |
 
 ## Development

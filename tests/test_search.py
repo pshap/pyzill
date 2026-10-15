@@ -117,6 +117,21 @@ def test_iter_search_yields_and_limits(monkeypatch, search_success_body):
     assert items[0]["zpid"] == 348914888
 
 
+def test_iter_search_normalize(monkeypatch, search_success_body):
+    def fake_put(*args, **kwargs):
+        return FakeResponse(status_code=200, json_data=search_success_body)
+
+    monkeypatch.setattr(search.requests, "put", fake_put)
+
+    items = list(search.iter_search(search.for_sale, normalize=True, search_value="x"))
+    assert len(items) == 2
+    # normalized shape: flat keys, numeric-or-None
+    assert items[0]["zpid"] == 348914888
+    assert items[0]["price"] is None
+    assert items[0]["beds"] is None
+    assert "hdpData" not in items[0]
+
+
 def test_split_bbox_quadrants():
     quadrants = search.split_bbox(ne_lat=10, ne_long=10, sw_lat=0, sw_long=0)
     assert len(quadrants) == 4
