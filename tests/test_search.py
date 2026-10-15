@@ -75,6 +75,40 @@ def test_search_defaults_applied(fake_http, search_success_body):
     assert "mapZoom" not in query_state
 
 
+@pytest.mark.parametrize(
+    ("ne_lat", "ne_long", "sw_lat", "sw_long"),
+    [
+        (42.85, None, 42.78, -74.00),
+        (42.85, -73.90, None, -74.00),
+    ],
+)
+def test_search_rejects_partial_bbox(fake_http, ne_lat, ne_long, sw_lat, sw_long):
+    fake_http.install("PUT", json_data={})
+
+    with pytest.raises(ValueError, match="all four"):
+        search.search(ne_lat=ne_lat, ne_long=ne_long, sw_lat=sw_lat, sw_long=sw_long)
+
+
+@pytest.mark.parametrize(
+    ("ne_lat", "ne_long", "sw_lat", "sw_long"),
+    [(42.78, -73.90, 42.85, -74.00), (42.85, -74.00, 42.78, -73.90)],
+)
+def test_search_rejects_invalid_bbox(fake_http, ne_lat, ne_long, sw_lat, sw_long):
+    fake_http.install("PUT", json_data={})
+
+    with pytest.raises(ValueError, match="north-east"):
+        search.search(ne_lat=ne_lat, ne_long=ne_long, sw_lat=sw_lat, sw_long=sw_long)
+
+
+def test_search_does_not_mutate_filter_state(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
+    filter_state = {"isAllHomes": {"value": True}}
+
+    search.search(filter_state=filter_state, min_beds=2)
+
+    assert filter_state == {"isAllHomes": {"value": True}}
+
+
 def test_proxy_env_fallback(fake_http, monkeypatch, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
     monkeypatch.setenv("ZILLOW_PROXY", "http://user:pass@proxy.example:8080")

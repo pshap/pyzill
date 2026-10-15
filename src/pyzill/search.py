@@ -37,13 +37,28 @@ def _resolve_bbox(
     sw_lat: float | None,
     sw_long: float | None,
 ) -> dict[str, float]:
-    """Fill in any missing bbox corner from the continental-US default."""
-    return {
-        "ne_lat": _DEFAULT_BBOX["ne_lat"] if ne_lat is None else ne_lat,
-        "ne_long": _DEFAULT_BBOX["ne_long"] if ne_long is None else ne_long,
-        "sw_lat": _DEFAULT_BBOX["sw_lat"] if sw_lat is None else sw_lat,
-        "sw_long": _DEFAULT_BBOX["sw_long"] if sw_long is None else sw_long,
+    """Resolve a complete bbox, or use the continental-US default."""
+    coordinates = (ne_lat, ne_long, sw_lat, sw_long)
+    if all(value is None for value in coordinates):
+        return _DEFAULT_BBOX.copy()
+    if any(value is None for value in coordinates):
+        raise ValueError("all four bbox coordinates must be provided together")
+
+    resolved = {
+        "ne_lat": _required_coordinate(ne_lat),
+        "ne_long": _required_coordinate(ne_long),
+        "sw_lat": _required_coordinate(sw_lat),
+        "sw_long": _required_coordinate(sw_long),
     }
+    if resolved["ne_lat"] <= resolved["sw_lat"] or resolved["ne_long"] <= resolved["sw_long"]:
+        raise ValueError("north-east bbox coordinates must be greater than south-west coordinates")
+    return resolved
+
+
+def _required_coordinate(value: float | None) -> float:
+    if value is None:
+        raise ValueError("all four bbox coordinates must be provided together")
+    return value
 
 
 def _build_search_query_state(  # noqa: PLR0913 - assembles many query parts
@@ -55,8 +70,7 @@ def _build_search_query_state(  # noqa: PLR0913 - assembles many query parts
     filters: dict[str, dict[str, int] | None],
 ) -> dict[str, Any]:
     """Assemble the ``searchQueryState`` payload from its parts."""
-    if filter_state is None:
-        filter_state = {}
+    filter_state = {} if filter_state is None else filter_state.copy()
     query_state: dict[str, Any] = {
         "isMapVisible": True,
         "isListVisible": True,
