@@ -9,7 +9,9 @@ into a flat dict of predictable, numeric-or-``None`` values.
 import re
 from typing import Any, TypedDict
 
-_BASE_URL = "https://www.zillow.com"
+from pyzill.http import ZILLOW_HOME
+
+_BASE_URL = ZILLOW_HOME
 
 
 class Listing(TypedDict):

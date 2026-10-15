@@ -16,7 +16,7 @@ _DEFAULT_BBOX = {
     "sw_long": -124.79,
 }
 
-_SEARCH_URL = "https://www.zillow.com/async-create-search-page-state"
+_SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
 
 
 def _range_filter(min_value: int | None, max_value: int | None) -> dict[str, int] | None:
@@ -186,8 +186,8 @@ def search(  # noqa: PLR0913 - mirrors Zillow's filter surface
     zoom_value: int | None = None,
     filter_state: dict[str, Any] | None = None,
     proxy_url: str | None = None,
-    impersonate: str = "chrome136",
-    timeout: float = 30.0,
+    impersonate: str = http.DEFAULT_IMPERSONATE,
+    timeout: float = http.DEFAULT_TIMEOUT,
     max_retries: int = http.DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any]:
     """Run a raw Zillow search with a custom filter_state.
@@ -205,7 +205,7 @@ def search(  # noqa: PLR0913 - mirrors Zillow's filter surface
         zoom_value: Map zoom level.
         filter_state: Raw Zillow filterState dict.
         proxy_url: Proxy URL (residential proxies strongly recommended).
-        impersonate: curl_cffi TLS impersonation profile (default "chrome136").
+        impersonate: curl_cffi TLS impersonation profile.
         timeout: Request timeout in seconds (default 30).
         max_retries: Retries on 5xx / network errors (default 1).
 

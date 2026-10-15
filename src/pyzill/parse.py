@@ -33,7 +33,7 @@ def parse_body_home(body: bytes) -> dict[str, Any]:
     for value in property_json.values():
         property_data = value.get("property") if isinstance(value, dict) else None
         if isinstance(property_data, dict):
-            return {key: item for key, item in property_data.items()}
+            return dict(property_data)
     raise _blocked(body)
 
 

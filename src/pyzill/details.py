@@ -23,8 +23,8 @@ def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> R
 def get_from_home_id(
     property_id: int,
     proxy_url: str | None = None,
-    impersonate: str = "chrome136",
-    timeout: float = 30.0,
+    impersonate: str = http.DEFAULT_IMPERSONATE,
+    timeout: float = http.DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     """Scrape data for a property based on its Zillow property ID (zpid).
 
@@ -37,15 +37,15 @@ def get_from_home_id(
     Returns:
         dict[str, Any]: parsed property information
     """
-    home_url = f"https://www.zillow.com/homedetails/any-title/{property_id}_zpid/"
+    home_url = f"{http.ZILLOW_HOME}/homedetails/any-title/{property_id}_zpid/"
     return get_from_home_url(home_url, proxy_url, impersonate, timeout)
 
 
 def get_from_department_id(
     department_id: str,
     proxy_url: str | None = None,
-    impersonate: str = "chrome136",
-    timeout: float = 30.0,
+    impersonate: str = http.DEFAULT_IMPERSONATE,
+    timeout: float = http.DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     """Scrape data for an apartment/department based on its Zillow ID.
 
@@ -58,7 +58,7 @@ def get_from_department_id(
     Returns:
         dict[str, Any]: parsed department information
     """
-    home_url = f"https://www.zillow.com/apartments/{department_id}/"
+    home_url = f"{http.ZILLOW_HOME}/apartments/{department_id}/"
     response = _get(home_url, proxy_url, impersonate, timeout)
     return parse_body_departments(response.content)
 
@@ -66,8 +66,8 @@ def get_from_department_id(
 def get_from_department_url(
     department_url: str,
     proxy_url: str | None = None,
-    impersonate: str = "chrome136",
-    timeout: float = 30.0,
+    impersonate: str = http.DEFAULT_IMPERSONATE,
+    timeout: float = http.DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     """Scrape data for an apartment/departement based on its Zillow URL.
 
@@ -87,8 +87,8 @@ def get_from_department_url(
 def get_from_home_url(
     home_url: str,
     proxy_url: str | None = None,
-    impersonate: str = "chrome136",
-    timeout: float = 30.0,
+    impersonate: str = http.DEFAULT_IMPERSONATE,
+    timeout: float = http.DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     """Scrape a Zillow home-detail URL and parse the property data.
 

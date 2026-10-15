@@ -16,27 +16,21 @@ from pyzill.ratelimit import wait_for_slot
 from pyzill.utils import resolve_proxy
 
 ZILLOW_HOME = "https://www.zillow.com"
-
-# Chrome major version for each supported curl_cffi impersonate profile.
-_CHROME_VERSIONS = {
-    "chrome124": "124",
-    "chrome131": "131",
-    "chrome136": "136",
-}
-_DEFAULT_CHROME_VERSION = "136"
+DEFAULT_IMPERSONATE = "chrome136"
+DEFAULT_TIMEOUT = 30.0
+DEFAULT_MAX_RETRIES = 1
 
 _HTTP_OK_MIN = 200
 _HTTP_OK_MAX = 300  # exclusive
 _HTTP_SERVER_ERROR_MIN = 500
 
 _RETRY_DELAY = 1.0
-DEFAULT_MAX_RETRIES = 1
 
 _ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"  # noqa: E501
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36"  # noqa: E501
 
 
-def build_headers(impersonate: str = "chrome136") -> dict[str, str]:
+def build_headers(impersonate: str = DEFAULT_IMPERSONATE) -> dict[str, str]:
     """Return browser headers matching a curl_cffi impersonate profile.
 
     curl_cffi already sets the TLS/JA3 fingerprint and most headers; these fill
@@ -48,7 +42,8 @@ def build_headers(impersonate: str = "chrome136") -> dict[str, str]:
     Returns:
         dict[str, str]: base headers (callers add request-specific ones).
     """
-    version = _CHROME_VERSIONS.get(impersonate, _DEFAULT_CHROME_VERSION)
+    default_version = DEFAULT_IMPERSONATE.removeprefix("chrome")
+    version = "".join(char for char in impersonate.removeprefix("chrome") if char.isdigit()) or default_version
     return {
         "Accept": _ACCEPT,
         "Accept-Language": "en",
@@ -77,8 +72,8 @@ def request(  # noqa: PLR0913 - central request primitive
     *,
     headers: dict[str, str],
     proxy_url: str | None = None,
-    impersonate: str = "chrome136",
-    timeout: float = 30.0,
+    impersonate: str = DEFAULT_IMPERSONATE,
+    timeout: float = DEFAULT_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
     json: Any = None,
 ) -> Response:
