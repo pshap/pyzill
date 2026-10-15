@@ -307,7 +307,12 @@ def iter_search(
     """
     map_results = search_fn(**kwargs).get("mapResults", [])
     for listing in islice(map_results, max_items):
-        yield normalize_listing(listing) if normalize else listing
+        if normalize:
+            normalized = normalize_listing(listing)
+            if normalized is not None:
+                yield normalized
+        elif isinstance(listing, Mapping):
+            yield listing
 
 
 def split_bbox(

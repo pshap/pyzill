@@ -14,6 +14,8 @@ All notable changes to this project are documented here.
   `iter_search` now yields `Mapping[str, Any]`.
 - Detail functions accept `max_retries` with the same default and retry policy
   as search functions.
+- Normalization skips non-dict listing entries consistently in
+  `normalize_listing`, `normalize_listings`, and normalized iteration.
 
 ### Changed
 - Centralized HTTP handling in a new internal `pyzill.http` module

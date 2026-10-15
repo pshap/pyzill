@@ -136,6 +136,5 @@ def test_normalize_listings_empty():
     assert normalize.normalize_listings([]) == []
 
 
-def test_normalize_listing_rejects_non_dict():
-    with pytest.raises(TypeError):
-        normalize.normalize_listing(["not a dict"])  # type: ignore[arg-type]
+def test_normalize_listing_skips_non_dict():
+    assert normalize.normalize_listing(["not a dict"]) is None

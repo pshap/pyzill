@@ -181,6 +181,8 @@ Raw Zillow listings are inconsistent: `price` is a preformatted string
 `normalize_listing` flattens a listing into predictable, numeric-or-`None`
 fields, falling back to `hdpData.homeInfo` when a top-level field is absent:
 
+Non-dict entries are skipped by the normalization helpers.
+
 ```python
 import pyzill
 

@@ -7,9 +7,10 @@ into a flat dict of predictable, numeric-or-``None`` values.
 """
 
 import re
-from typing import Any, TypedDict
+from typing import Any, TypedDict, overload
 
 from pyzill.http import ZILLOW_HOME
+from pyzill.utils import get_nested_value
 
 _BASE_URL = ZILLOW_HOME
 
@@ -111,7 +112,20 @@ def _first(*values: Any) -> Any:
     return None
 
 
-def normalize_listing(listing: dict[str, Any]) -> Listing:
+def _first_number(value: Any, fallback: Any) -> int | float | None:
+    number = _to_number(value)
+    return number if number is not None else _to_number(fallback)
+
+
+@overload
+def normalize_listing(listing: dict[str, Any]) -> Listing: ...
+
+
+@overload
+def normalize_listing(listing: Any) -> Listing | None: ...
+
+
+def normalize_listing(listing: Any) -> Listing | None:
     """Flatten a raw Zillow listing into a normalized ``Listing``.
 
     Prefers top-level fields and falls back to ``hdpData.homeInfo`` when a
@@ -123,13 +137,17 @@ def normalize_listing(listing: dict[str, Any]) -> Listing:
         listing: A single raw entry from ``mapResults`` / ``listResults``.
 
     Returns:
-        Listing: A new dict with a fixed set of keys (see :class:`Listing`).
+        Listing | None: A normalized listing, or None for non-dict entries.
     """
     if not isinstance(listing, dict):
-        raise TypeError(f"expected a listing dict, got {type(listing).__name__}")
+        return None
 
-    info = (listing.get("hdpData") or {}).get("homeInfo") or {}
+    info = get_nested_value(listing, "hdpData.homeInfo", {})
+    if not isinstance(info, dict):
+        info = {}
     lat_long = listing.get("latLong") or {}
+    if not isinstance(lat_long, dict):
+        lat_long = {}
 
     price = parse_price(listing.get("price"))
     if price is None:
@@ -143,16 +161,16 @@ def normalize_listing(listing: dict[str, Any]) -> Listing:
         "zpid": _to_number(listing.get("zpid")),
         "price": price,
         "price_label": listing.get("priceLabel"),
-        "beds": _first(_to_number(listing.get("beds")), _to_number(info.get("bedrooms"))),
-        "baths": _first(_to_number(listing.get("baths")), _to_number(info.get("bathrooms"))),
-        "area": _first(_to_number(listing.get("area")), _to_number(info.get("livingArea"))),
+        "beds": _first_number(listing.get("beds"), info.get("bedrooms")),
+        "baths": _first_number(listing.get("baths"), info.get("bathrooms")),
+        "area": _first_number(listing.get("area"), info.get("livingArea")),
         "address": listing.get("address"),
         "street": info.get("streetAddress"),
         "city": info.get("city"),
         "state": _first(listing.get("addressState"), info.get("state")),
         "zipcode": info.get("zipcode"),
-        "latitude": _to_number(_first(lat_long.get("latitude"), info.get("latitude"))),
-        "longitude": _to_number(_first(lat_long.get("longitude"), info.get("longitude"))),
+        "latitude": _first_number(lat_long.get("latitude"), info.get("latitude")),
+        "longitude": _first_number(lat_long.get("longitude"), info.get("longitude")),
         "home_type": info.get("homeType"),
         "status": _first(listing.get("statusText"), info.get("homeStatus")),
         "status_type": listing.get("statusType"),
@@ -172,4 +190,4 @@ def normalize_listings(listings: Any) -> list[Listing]:
     Returns:
         list[Listing]: Normalized listings.
     """
-    return [normalize_listing(item) for item in (listings or []) if isinstance(item, dict)]
+    return [normalized for item in (listings or []) if (normalized := normalize_listing(item)) is not None]
