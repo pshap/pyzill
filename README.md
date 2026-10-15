@@ -279,22 +279,22 @@ data = pyzill.get_from_home_url(
 )
 ```
 
-## For departments (apartment complexes)
+## For apartments (apartment complexes)
 
 ```python
 import pyzill
 
-data = pyzill.get_from_department_id("CgKZT4")
+data = pyzill.get_from_apartment_id("CgKZT4")
 ```
 
 ```python
 import pyzill
 
-data = pyzill.get_from_department_url("https://www.zillow.com/apartments/kissimmee-fl/the-nexus-at-overbrook/9DSWrh/")
+data = pyzill.get_from_apartment_url("https://www.zillow.com/apartments/kissimmee-fl/the-nexus-at-overbrook/9DSWrh/")
 ```
 
-> Note: the historical `deparment` misspelling (`get_from_deparment_id` /
-> `get_from_deparment_url`) is kept as a backwards-compatible alias.
+> The old `department` names and historical `deparment` misspellings remain
+> as deprecated aliases and emit `DeprecationWarning`.
 
 ## API
 
@@ -303,10 +303,10 @@ data = pyzill.get_from_department_url("https://www.zillow.com/apartments/kissimm
 | `for_sale(...)` | For-sale listings inside a bounding box |
 | `for_rent(...)` | For-rent listings (also `is_entire_place`, `is_room`) |
 | `sold(...)` | Recently-sold listings |
-| `iter_search(search_fn, max_items=None, **kwargs)` | Yield individual listings |
-| `split_bbox(ne_lat, ne_long, sw_lat, sw_long)` | Split a bbox into 4 quadrants |
+| `iter_search(max_items=None, **kwargs)` / `iter_sale(...)` / `iter_rent(...)` / `iter_sold(...)` | Yield individual listings |
+| `split_bbox(bbox)` | Split a `BBox` into 4 quadrants |
 | `get_from_home_url(url, ...)` / `get_from_home_id(id, ...)` | Home details |
-| `get_from_department_url(url, ...)` / `get_from_department_id(id, ...)` | Apartment details |
+| `get_from_apartment_url(url, ...)` / `get_from_apartment_id(id, ...)` | Apartment details |
 | `parse_proxy(host, port, user, password)` | Build a proxy URL |
 | `resolve_proxy(proxy_url=None)` | Resolve `proxy_url` with `ZILLOW_PROXY` fallback |
 | `set_min_interval(seconds)` / `get_min_interval()` | Configure request throttling |

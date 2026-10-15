@@ -38,30 +38,44 @@ def test_get_from_home_url(fake_http, home_detail_body):
     assert data["bathrooms"] == 2
 
 
-def test_get_from_department_id(fake_http, department_detail_body):
+def test_get_from_apartment_id(fake_http, department_detail_body):
     fake_http.install("GET", content=department_detail_body)
 
-    data = details.get_from_department_id("CgKZT4")
+    data = details.get_from_apartment_id("CgKZT4")
     assert data["id"] == "CgKZT4"
     assert data["name"] == "The Lennox"
     assert fake_http.calls[-1]["url"] == "https://www.zillow.com/apartments/CgKZT4/"
 
 
-def test_get_from_department_url(fake_http, department_detail_body):
+def test_get_from_apartment_url(fake_http, department_detail_body):
     fake_http.install("GET", content=department_detail_body)
 
-    data = details.get_from_department_url(
+    data = details.get_from_apartment_url(
         "https://www.zillow.com/apartments/kissimmee-fl/the-nexus-at-overbrook/9DSWrh/"
     )
     assert data["id"] == "CgKZT4"
 
 
-def test_deparment_aliases_still_work(fake_http, department_detail_body):
+@pytest.mark.parametrize("alias", [
+    details.get_from_department_id,
+    details.get_from_deparment_id,
+])
+def test_department_id_aliases_warn(fake_http, department_detail_body, alias):
     fake_http.install("GET", content=department_detail_body)
 
-    assert details.get_from_deparment_id is details.get_from_department_id
-    assert details.get_from_deparment_url is details.get_from_department_url
-    assert details.get_from_deparment_id("CgKZT4")["id"] == "CgKZT4"
+    with pytest.warns(DeprecationWarning, match="deprecated"):
+        assert alias("CgKZT4")["id"] == "CgKZT4"
+
+
+@pytest.mark.parametrize("alias", [
+    details.get_from_department_url,
+    details.get_from_deparment_url,
+])
+def test_department_url_aliases_warn(fake_http, department_detail_body, alias):
+    fake_http.install("GET", content=department_detail_body)
+
+    with pytest.warns(DeprecationWarning, match="deprecated"):
+        assert alias("https://www.zillow.com/apartments/CgKZT4/")["id"] == "CgKZT4"
 
 
 def test_detail_http_error_raises(fake_http):

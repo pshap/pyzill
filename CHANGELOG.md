@@ -7,9 +7,9 @@ All notable changes to this project are documented here.
 ### Added
 - `BBox` and `CONTINENTAL_US` define typed search viewports; search functions
   accept `bbox=` and `split_bbox` returns `BBox` quadrants.
-- `get_from_department_id` / `get_from_department_url` — correctly-spelled
-  names for the apartment-detail functions. `get_from_deparment_id` /
-  `get_from_deparment_url` remain as backwards-compatible aliases.
+- `get_from_apartment_id` / `get_from_apartment_url` — canonical names for
+  apartment-detail functions. The former department spellings and historical
+  `deparment` misspellings remain as deprecated aliases.
 - `Listing` — a `TypedDict` describing the normalized shape produced by
   `normalize_listing` / `normalize_listings`.
   Zero-dependency static typing for the flat, numeric-or-`None` output;
@@ -20,16 +20,19 @@ All notable changes to this project are documented here.
   `normalize_listing` and `normalize_listings`.
 - Added explicit `iter_sale`, `iter_rent`, and `iter_sold` helpers; `iter_search`
   remains the for-sale shorthand.
+- Apartment detail functions are now named `get_from_apartment_id` and
+  `get_from_apartment_url`; the former department spellings remain as
+  deprecated aliases that emit `DeprecationWarning`.
 
 ### Changed
 - Centralized HTTP handling in a new internal `pyzill.http` module
   (`build_headers`, `build_proxies`, `get_page`, `put_json`, `request`). Search
   and detail functions now share header construction, proxy resolution,
   throttling, and 5xx retry logic.
-- `for_sale`, `for_rent`, and `sold` forward arguments via `**kwargs` instead
-  of repeating ~18-parameter signatures; `for_rent` still accepts `is_room`
-  and `is_entire_place`.
-- `get_from_department_id` now builds `https://www.zillow.com/apartments/<id>/`
+- `for_sale`, `for_rent`, and `sold` expose their keyword parameters through
+  typed `Unpack` signatures; `for_rent` explicitly exposes `is_room` and
+  `is_entire_place`.
+- `get_from_apartment_id` builds `https://www.zillow.com/apartments/<id>/`
   (previously a hardcoded example URL).
 
 ### Tooling

@@ -1,3 +1,4 @@
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -26,7 +27,7 @@ def get_from_home_id(
     )
 
 
-def get_from_department_id(
+def get_from_apartment_id(
     department_id: str,
     proxy_url: str | None = None,
     impersonate: str = http.DEFAULT_IMPERSONATE,
@@ -40,7 +41,7 @@ def get_from_department_id(
     )
 
 
-def get_from_department_url(
+def get_from_apartment_url(
     department_url: str,
     proxy_url: str | None = None,
     impersonate: str = http.DEFAULT_IMPERSONATE,
@@ -68,6 +69,65 @@ def get_from_home_url(
     )
 
 
-# Backwards-compatible aliases for the historical "deparment" misspelling.
-get_from_deparment_id = get_from_department_id
-get_from_deparment_url = get_from_department_url
+def get_from_department_id(
+    department_id: str,
+    proxy_url: str | None = None,
+    impersonate: str = http.DEFAULT_IMPERSONATE,
+    timeout: float = http.DEFAULT_TIMEOUT,
+    max_retries: int = http.DEFAULT_MAX_RETRIES,
+) -> dict[str, Any]:
+    """Deprecated alias for :func:`get_from_apartment_id`."""
+    warnings.warn(
+        "get_from_department_id is deprecated; use get_from_apartment_id",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_from_apartment_id(department_id, proxy_url, impersonate, timeout, max_retries)
+
+
+def get_from_department_url(
+    department_url: str,
+    proxy_url: str | None = None,
+    impersonate: str = http.DEFAULT_IMPERSONATE,
+    timeout: float = http.DEFAULT_TIMEOUT,
+    max_retries: int = http.DEFAULT_MAX_RETRIES,
+) -> dict[str, Any]:
+    """Deprecated alias for :func:`get_from_apartment_url`."""
+    warnings.warn(
+        "get_from_department_url is deprecated; use get_from_apartment_url",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_from_apartment_url(department_url, proxy_url, impersonate, timeout, max_retries)
+
+
+def get_from_deparment_id(
+    department_id: str,
+    proxy_url: str | None = None,
+    impersonate: str = http.DEFAULT_IMPERSONATE,
+    timeout: float = http.DEFAULT_TIMEOUT,
+    max_retries: int = http.DEFAULT_MAX_RETRIES,
+) -> dict[str, Any]:
+    """Deprecated alias for :func:`get_from_apartment_id`."""
+    warnings.warn(
+        "get_from_deparment_id is deprecated; use get_from_apartment_id",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_from_apartment_id(department_id, proxy_url, impersonate, timeout, max_retries)
+
+
+def get_from_deparment_url(
+    department_url: str,
+    proxy_url: str | None = None,
+    impersonate: str = http.DEFAULT_IMPERSONATE,
+    timeout: float = http.DEFAULT_TIMEOUT,
+    max_retries: int = http.DEFAULT_MAX_RETRIES,
+) -> dict[str, Any]:
+    """Deprecated alias for :func:`get_from_apartment_url`."""
+    warnings.warn(
+        "get_from_deparment_url is deprecated; use get_from_apartment_url",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return get_from_apartment_url(department_url, proxy_url, impersonate, timeout, max_retries)
