@@ -7,12 +7,13 @@ from pyzill.details import (
     get_from_home_url,
 )
 from pyzill.exceptions import ZillowBlockedError
-from pyzill.normalize import normalize_listing, normalize_listings, parse_price
+from pyzill.normalize import Listing, normalize_listing, normalize_listings, parse_price
 from pyzill.ratelimit import get_min_interval, set_min_interval
 from pyzill.search import for_rent, for_sale, iter_search, sold, split_bbox
 from pyzill.utils import parse_proxy, resolve_proxy
 
 __all__ = [
+    "Listing",
     "ZillowBlockedError",
     "for_rent",
     "for_sale",

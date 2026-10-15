@@ -197,6 +197,15 @@ for home in pyzill.normalize_listings(results["mapResults"]):
 `latitude`, `longitude`, `home_type`, `status`, `status_type`, `detail_url`
 (absolute), `image_url`, `zestimate`, `rent_zestimate`.
 
+The output shape is available as a `TypedDict` for static analysis (no runtime
+dependency):
+
+```python
+from pyzill import Listing
+
+home: Listing = pyzill.normalize_listing(results["mapResults"][0])
+```
+
 Use `parse_price` on its own to coerce a single value:
 
 ```python
@@ -298,6 +307,7 @@ data = pyzill.get_from_department_url("https://www.zillow.com/apartments/kissimm
 | `resolve_proxy(proxy_url=None)` | Resolve `proxy_url` with `ZILLOW_PROXY` fallback |
 | `set_min_interval(seconds)` / `get_min_interval()` | Configure request throttling |
 | `normalize_listing(listing)` / `normalize_listings(listings)` | Flatten raw listings to numeric-or-`None` fields |
+| `Listing` | `TypedDict` describing the normalized listing shape |
 | `parse_price(value)` | Parse a Zillow price string/number into an int |
 | `ZillowBlockedError` | Raised on non-2xx responses from Zillow |
 

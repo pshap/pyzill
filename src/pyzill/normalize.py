@@ -7,9 +7,41 @@ into a flat dict of predictable, numeric-or-``None`` values.
 """
 
 import re
-from typing import Any
+from typing import Any, TypedDict
 
 _BASE_URL = "https://www.zillow.com"
+
+
+class Listing(TypedDict):
+    """Normalized, flat representation of a Zillow listing.
+
+    Every key is always present.  Numeric fields are ``int``/``float`` or
+    ``None`` (never the ``"$0"``/missing sentinels Zillow uses); string fields
+    are ``str`` or ``None``.  This is a static shape only -- it is not
+    validated at runtime.
+    """
+
+    zpid: int | float | None
+    price: int | None
+    price_label: str | None
+    beds: int | float | None
+    baths: int | float | None
+    area: int | float | None
+    address: str | None
+    street: str | None
+    city: str | None
+    state: str | None
+    zipcode: str | None
+    latitude: float | None
+    longitude: float | None
+    home_type: str | None
+    status: str | None
+    status_type: str | None
+    detail_url: str | None
+    image_url: str | None
+    zestimate: int | None
+    rent_zestimate: int | None
+
 
 # Anything that is not a digit, minus sign or decimal point.
 _NOT_NUMBER = re.compile(r"[^0-9.\-]")
@@ -61,8 +93,8 @@ def _first(*values: Any) -> Any:
     return None
 
 
-def normalize_listing(listing: dict[str, Any]) -> dict[str, Any]:
-    """Flatten a raw Zillow listing into a normalized dict.
+def normalize_listing(listing: dict[str, Any]) -> Listing:
+    """Flatten a raw Zillow listing into a normalized ``Listing``.
 
     Prefers top-level fields and falls back to ``hdpData.homeInfo`` when a
     field is missing.  Numeric fields are coerced; unknown values become
@@ -73,11 +105,7 @@ def normalize_listing(listing: dict[str, Any]) -> dict[str, Any]:
         listing: A single raw entry from ``mapResults`` / ``listResults``.
 
     Returns:
-        dict[str, Any]: A new dict with these keys: ``zpid``, ``price``,
-        ``price_label``, ``beds``, ``baths``, ``area``, ``address``,
-        ``street``, ``city``, ``state``, ``zipcode``, ``latitude``,
-        ``longitude``, ``home_type``, ``status``, ``status_type``,
-        ``detail_url``, ``image_url``, ``zestimate``, ``rent_zestimate``.
+        Listing: A new dict with a fixed set of keys (see :class:`Listing`).
     """
     if not isinstance(listing, dict):
         raise TypeError(f"expected a listing dict, got {type(listing).__name__}")
@@ -117,13 +145,13 @@ def normalize_listing(listing: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def normalize_listings(listings: Any) -> list[dict[str, Any]]:
+def normalize_listings(listings: Any) -> list[Listing]:
     """Normalize an iterable of raw listings, skipping non-dict entries.
 
     Args:
         listings: Iterable of raw listing dicts.
 
     Returns:
-        list[dict[str, Any]]: Normalized listings.
+        list[Listing]: Normalized listings.
     """
     return [normalize_listing(item) for item in (listings or []) if isinstance(item, dict)]

@@ -8,6 +8,10 @@ All notable changes to this project are documented here.
 - `get_from_department_id` / `get_from_department_url` — correctly-spelled
   names for the apartment-detail functions. `get_from_deparment_id` /
   `get_from_deparment_url` remain as backwards-compatible aliases.
+- `Listing` — a `TypedDict` describing the normalized shape produced by
+  `normalize_listing` / `normalize_listings` (and `iter_search(..., normalize=True)`).
+  Zero-dependency static typing for the flat, numeric-or-`None` output;
+  `iter_search` now yields `Mapping[str, Any]`.
 
 ### Changed
 - Centralized HTTP handling in a new internal `pyzill.http` module

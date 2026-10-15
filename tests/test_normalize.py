@@ -1,6 +1,12 @@
 import pytest
 
 from pyzill import normalize
+from pyzill.normalize import Listing
+
+
+def test_normalize_listing_keys_match_typeddict():
+    out = normalize.normalize_listing({"zpid": "1"})
+    assert set(out) == set(Listing.__annotations__)
 
 
 @pytest.mark.parametrize(

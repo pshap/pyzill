@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from itertools import islice
 from typing import Any, cast
 
@@ -254,7 +254,7 @@ def iter_search(
     max_items: int | None = None,
     normalize: bool = False,
     **kwargs: Any,
-) -> Iterator[dict[str, Any]]:
+) -> Iterator[Mapping[str, Any]]:
     """Yield individual mapResults listings from a search function.
 
     Wraps :func:`for_sale`, :func:`for_rent`, or :func:`sold` and yields
@@ -277,7 +277,8 @@ def iter_search(
         **kwargs: Passed directly to the search function.
 
     Yields:
-        dict[str, Any]: one listing from mapResults.
+        Mapping[str, Any]: one listing from mapResults — a raw Zillow mapping,
+        or a :class:`~pyzill.normalize.Listing` when ``normalize=True``.
 
     Example:
         >>> for listing in pyzill.iter_search(
