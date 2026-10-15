@@ -40,6 +40,20 @@ def test_for_sale_403_raises_zillow_blocked_error(fake_http):
     assert "PerimeterX" in str(err) or "px-captcha" in str(err).lower()
 
 
+def test_search_missing_results_raises_zillow_blocked_error(fake_http):
+    fake_http.install("PUT", json_data={"cat1": {}})
+
+    with pytest.raises(exceptions.ZillowBlockedError):
+        search.for_sale(search_value="Schenectady NY")
+
+
+def test_search_invalid_json_raises_zillow_blocked_error(fake_http):
+    fake_http.install("PUT", text="not json")
+
+    with pytest.raises(exceptions.ZillowBlockedError):
+        search.for_sale(search_value="Schenectady NY")
+
+
 def test_search_5xx_retries_then_raises(fake_http, monkeypatch):
     fake_http.install("PUT", status_code=503, text="Service Unavailable")
     monkeypatch.setattr(time, "sleep", lambda *a, **k: None)
