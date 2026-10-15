@@ -1,6 +1,6 @@
 from collections.abc import Callable, Iterator, Mapping
 from itertools import islice
-from typing import Any
+from typing import Any, TypedDict, Unpack
 
 from pyzill import http
 from pyzill.exceptions import ZillowBlockedError
@@ -17,6 +17,36 @@ _DEFAULT_BBOX = {
 }
 
 _SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
+
+
+class _SearchParams(TypedDict, total=False):
+    search_value: str
+    pagination: int
+    min_beds: int | None
+    max_beds: int | None
+    min_bathrooms: int | None
+    max_bathrooms: int | None
+    min_price: int | None
+    max_price: int | None
+    ne_lat: float | None
+    ne_long: float | None
+    sw_lat: float | None
+    sw_long: float | None
+    zoom_value: int | None
+    filter_state: dict[str, Any] | None
+    proxy_url: str | None
+    impersonate: str
+    timeout: float
+    max_retries: int
+
+
+class _QueryStateParams(TypedDict):
+    search_value: str
+    pagination: int
+    bbox: dict[str, float]
+    zoom_value: int | None
+    filter_state: dict[str, Any] | None
+    filters: dict[str, dict[str, int] | None]
 
 
 def _flags(**values: Any) -> dict[str, dict[str, Any]]:
@@ -76,15 +106,14 @@ def _required_coordinate(value: float | None) -> float:
     return value
 
 
-def _build_search_query_state(  # noqa: PLR0913 - assembles many query parts
-    search_value: str,
-    pagination: int,
-    bbox: dict[str, float],
-    zoom_value: int | None,
-    filter_state: dict[str, Any] | None,
-    filters: dict[str, dict[str, int] | None],
-) -> dict[str, Any]:
+def _build_search_query_state(**kwargs: Unpack[_QueryStateParams]) -> dict[str, Any]:
     """Assemble the ``searchQueryState`` payload from its parts."""
+    search_value = kwargs["search_value"]
+    pagination = kwargs["pagination"]
+    bbox = kwargs["bbox"]
+    zoom_value = kwargs["zoom_value"]
+    filter_state = kwargs["filter_state"]
+    filters = kwargs["filters"]
     filter_state = {} if filter_state is None else filter_state.copy()
     query_state: dict[str, Any] = {
         "isMapVisible": True,
@@ -167,26 +196,7 @@ def sold(**kwargs: Any) -> dict[str, Any]:
     return search(filter_state=filter_state, **kwargs)
 
 
-def search(  # noqa: PLR0913 - mirrors Zillow's filter surface
-    search_value: str = "",
-    pagination: int = 1,
-    min_beds: int | None = None,
-    max_beds: int | None = None,
-    min_bathrooms: int | None = None,
-    max_bathrooms: int | None = None,
-    min_price: int | None = None,
-    max_price: int | None = None,
-    ne_lat: float | None = None,
-    ne_long: float | None = None,
-    sw_lat: float | None = None,
-    sw_long: float | None = None,
-    zoom_value: int | None = None,
-    filter_state: dict[str, Any] | None = None,
-    proxy_url: str | None = None,
-    impersonate: str = http.DEFAULT_IMPERSONATE,
-    timeout: float = http.DEFAULT_TIMEOUT,
-    max_retries: int = http.DEFAULT_MAX_RETRIES,
-) -> dict[str, Any]:
+def search(**kwargs: Unpack[_SearchParams]) -> dict[str, Any]:
     """Run a raw Zillow search with a custom filter_state.
 
     Most callers should use :func:`for_sale`, :func:`for_rent`, or
@@ -212,6 +222,24 @@ def search(  # noqa: PLR0913 - mirrors Zillow's filter surface
     Raises:
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
+    search_value = kwargs.get("search_value", "")
+    pagination = kwargs.get("pagination", 1)
+    min_beds = kwargs.get("min_beds")
+    max_beds = kwargs.get("max_beds")
+    min_bathrooms = kwargs.get("min_bathrooms")
+    max_bathrooms = kwargs.get("max_bathrooms")
+    min_price = kwargs.get("min_price")
+    max_price = kwargs.get("max_price")
+    ne_lat = kwargs.get("ne_lat")
+    ne_long = kwargs.get("ne_long")
+    sw_lat = kwargs.get("sw_lat")
+    sw_long = kwargs.get("sw_long")
+    zoom_value = kwargs.get("zoom_value")
+    filter_state = kwargs.get("filter_state")
+    proxy_url = kwargs.get("proxy_url")
+    impersonate = kwargs.get("impersonate", http.DEFAULT_IMPERSONATE)
+    timeout = kwargs.get("timeout", http.DEFAULT_TIMEOUT)
+    max_retries = kwargs.get("max_retries", http.DEFAULT_MAX_RETRIES)
     query_state = _build_search_query_state(
         search_value=search_value,
         pagination=pagination,
