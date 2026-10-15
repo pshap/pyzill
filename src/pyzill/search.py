@@ -1,202 +1,356 @@
-from typing import Any, List
+from typing import Any
 from curl_cffi import requests
-import json
+import time
 
+from pyzill.exceptions import ZillowBlockedError
 
-def for_sale(
-    pagination: int,
-    search_value: str,
-    min_beds: int,
-    max_beds: int,
-    min_bathrooms: int,
-    max_bathrooms: int,
-    min_price: int,
-    max_price: int,
-    ne_lat: float,
-    ne_long: float,
-    sw_lat: float,
-    sw_long: float,
-    zoom_value: int,
-    proxy_url: str | None = None,
-) -> dict[str, Any]:
-    """get results of the listing that are for sale, you will get a dictionary with the keywords
-    mapResults and listResults, use mapResults which contains all the listings from all paginations
-    listResults is more for the right side bar that you see when searching on zillow. 
-    Be aware the the maximum size of mapResults is 500 so if you get results with size 500, so if you want 
-    to get the whole result frm a particular area, you need to play with the zoom, or the coordinates.
-    Even if you try to paginate over all results, it won't work even if you use mapResults or listResults
-    I would recomend not use pagination because you have all results(with 500 maximum) on mapResults
-    Args:
-        pagination (int): number of page in pagination
-        ne_lat (float): ne latitude value
-        ne_long (float): ne longitude value
-        sw_lat (float): sw latitude value
-        sw_long (float): sw longitude value
-        sw_long (float): sw longitude value
-        proxy_url (str | None, optional): proxy URL for masking the request. Defaults to None.
+# Wide bounding box covering the continental US, used as default when no
+# coordinates are supplied.  search_value still narrows results server-side.
+_DEFAULT_BBOX = {
+    "ne_lat": 49.38,
+    "ne_long": -66.94,
+    "sw_lat": 24.54,
+    "sw_long": -124.79,
+}
 
-    Returns:
-        dict[str, Any]: listing of properties in JSON format
-    """
-    rent = {
-		"sortSelection":  {"value": "globalrelevanceex"},
-		"isAllHomes":  {"value": True},
-	}
-    return search(pagination,search_value,min_beds,max_beds,min_bathrooms,max_bathrooms,min_price,max_price,ne_lat,ne_long,sw_lat,sw_long,zoom_value,rent,proxy_url)
+_SEARCH_URL = "https://www.zillow.com/async-create-search-page-state"
 
-def for_rent(
-    pagination: int,
-    search_value: str,
-    is_entire_place: bool,
-    is_room: bool,
-    min_beds: int,
-    max_beds: int,
-    min_bathrooms: int,
-    max_bathrooms: int,
-    min_price: int,
-    max_price: int,
-    ne_lat: float,
-    ne_long: float,
-    sw_lat: float,
-    sw_long: float,
-    zoom_value: int,
-    proxy_url: str | None = None,
-) -> dict[str, Any]:
-    """get results of the listing that are for rent, you will get a dictionary with the keywords
-    mapResults and listResults, use mapResults which contains all the listings from all paginations
-    listResults is more for the right side bar that you see when searching on zillow. 
-    Be aware the the maximum size of mapResults is 500 so if you get results with size 500, so if you want 
-    to get the whole result frm a particular area, you need to play with the zoom, or the coordinates.
-    Even if you try to paginate over all results, it won't work even if you use mapResults or listResults
-    I would recomend not use pagination because you have all results(with 500 maximum) on mapResults
-    Args:
-        pagination (int): number of page in pagination
-        ne_lat (float): ne latitude value
-        ne_long (float): ne longitude value
-        sw_lat (float): sw latitude value
-        sw_long (float): sw longitude value
-        sw_long (float): sw longitude value
-        proxy_url (str | None, optional): proxy URL for masking the request. Defaults to None.
-
-    Returns:
-        dict[str, Any]: listing of properties in JSON format
-    """
-    rent = {
-		"sortSelection":  {"value": "priorityscore"},
-		"isNewConstruction":  {"value": False},
-		"isForSaleForeclosure":  {"value": False},
-		"isForSaleByOwner":  {"value": False},
-		"isForSaleByAgent":  {"value": False},
-		"isForRent":  {"value": True},
-		"isComingSoon":  {"value": False},
-		"isAuction":  {"value": False},
-		"isAllHomes":  {"value": True},
-	}
-    if is_room:
-        rent["isRoomForRent"] = {"value": True}
-    if not is_entire_place:    
-        rent["isEntirePlaceForRent"] = {"value": False}
-    return search(pagination,search_value,min_beds,max_beds,min_bathrooms,max_bathrooms,min_price,max_price,ne_lat,ne_long,sw_lat,sw_long,zoom_value,rent,proxy_url)
-
-def sold(
-    pagination: int,
-    search_value: str,
-    min_beds: int,
-    max_beds: int,
-    min_bathrooms: int,
-    max_bathrooms: int,
-    min_price: int,
-    max_price: int,
-    ne_lat: float,
-    ne_long: float,
-    sw_lat: float,
-    sw_long: float,
-    zoom_value: int,
-    proxy_url: str | None = None,
-) -> dict[str, Any]:
-    """get results of the listing that were sold, you will get a dictionary with the keywords
-    mapResults and listResults, use mapResults which contains all the listings from all paginations
-    listResults is more for the right side bar that you see when searching on zillow. 
-    Be aware the the maximum size of mapResults is 500 so if you get results with size 500, so if you want 
-    to get the whole result frm a particular area, you need to play with the zoom, or the coordinates.
-    Even if you try to paginate over all results, it won't work even if you use mapResults or listResults
-    I would recomend not use pagination because you have all results(with 500 maximum) on mapResults
-    Args:
-        pagination (int): number of page in pagination
-        ne_lat (float): ne latitude value
-        ne_long (float): ne longitude value
-        sw_lat (float): sw latitude value
-        sw_long (float): sw longitude value
-        sw_long (float): sw longitude value
-        proxy_url (str | None, optional): proxy URL for masking the request. Defaults to None.
-
-    Returns:
-        dict[str, Any]: listing of properties in JSON format
-    """
-    rent = {
-		"sortSelection":  {"value": "globalrelevanceex"},
-		"isNewConstruction":  {"value": False},
-		"isForSaleForeclosure":  {"value": False},
-		"isForSaleByOwner":  {"value": False},
-		"isForSaleByAgent":  {"value": False},
-		"isForRent":  {"value": False},
-		"isComingSoon":  {"value": False},
-		"isAuction":  {"value": False},
-		"isAllHomes":  {"value": True},
-		"isRecentlySold":  {"value": True},
-	}
-    return search(pagination,search_value,min_beds,max_beds,min_bathrooms,max_bathrooms,min_price,max_price,ne_lat,ne_long,sw_lat,sw_long,zoom_value,rent,proxy_url)
-    
-def search(
-    pagination: int,
-    search_value: str,
-    min_beds: int,
-    max_beds: int,
-    min_bathrooms: int,
-    max_bathrooms: int,
-    min_price: int,
-    max_price: int,
-    ne_lat: float,
-    ne_long: float,
-    sw_lat: float,
-    sw_long: float,
-    zoom_value: int,
-    filter_state: dict[str, Any],
-    proxy_url: str | None = None,
-) -> dict[str, Any]:
-    """get results of the listing of the given page number
-
-    Args:
-        pagination (int): number of page in pagination
-        ne_lat (float): ne latitude value
-        ne_long (float): ne longitude value
-        sw_lat (float): sw latitude value
-        sw_long (float): sw longitude value
-        sw_long (float): sw longitude value
-        filter_state (dict[str, Any]): input data for making the search
-        proxy_url (str | None, optional): proxy URL for masking the request. Defaults to None.
-
-    Returns:
-        dict[str, Any]: listing of properties in JSON format
-    """
-    headers = {
+# Headers matching the default impersonate profile (chrome136).
+# curl_cffi already sets TLS/JA3 and most headers; these fill in the rest.
+def _headers(impersonate: str) -> dict[str, str]:
+    # Map impersonate profile name to a Chrome major version for the
+    # fallback User-Agent / Sec-Ch-Ua headers.
+    version_map = {
+        "chrome124": "124",
+        "chrome131": "131",
+        "chrome136": "136",
+    }
+    major = version_map.get(impersonate, "136")
+    return {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
         "Accept-Language": "en",
         "Content-Type": "application/json",
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
         "origin": "https://www.zillow.com",
-        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "Referer": "https://www.zillow.com/",
+        "Sec-Ch-Ua": f'"Chromium";v="{major}", "Google Chrome";v="{major}", "Not.A/Brand";v="99"',
         "Sec-Ch-Ua-Mobile": "?0",
         "Sec-Ch-Ua-Platform": '"Windows"',
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-Site": "same-site",
         "Sec-Fetch-User": "?1",
         "Upgrade-Insecure-Requests": "1",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36",
     }
-    inputData = {
+
+
+def _do_search_request(
+    input_data: dict[str, Any],
+    proxy_url: str | None,
+    impersonate: str,
+    timeout: float,
+    max_retries: int,
+) -> dict[str, Any]:
+    """Issue the PUT request with retry logic and status checking."""
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    headers = _headers(impersonate)
+    last_exception: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = requests.put(
+                url=_SEARCH_URL,
+                json=input_data,
+                headers=headers,
+                proxies=proxies,
+                impersonate=impersonate,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            last_exception = exc
+            if attempt < max_retries:
+                time.sleep(1)
+                continue
+            raise
+
+        if 200 <= response.status_code < 300:
+            return response.json()
+
+        # Non-2xx: raise immediately on 4xx (client errors like 403 won't
+        # succeed on retry); retry on 5xx.
+        if 400 <= response.status_code < 500:
+            raise ZillowBlockedError(
+                status_code=response.status_code,
+                url=_SEARCH_URL,
+                body_snippet=response.text or "",
+            )
+        last_exception = ZillowBlockedError(
+            status_code=response.status_code,
+            url=_SEARCH_URL,
+            body_snippet=response.text or "",
+        )
+        if attempt < max_retries:
+            time.sleep(1)
+
+    raise last_exception  # pragma: no cover
+
+
+def for_sale(
+    search_value: str = "",
+    pagination: int = 1,
+    min_beds: int | None = None,
+    max_beds: int | None = None,
+    min_bathrooms: int | None = None,
+    max_bathrooms: int | None = None,
+    min_price: int | None = None,
+    max_price: int | None = None,
+    ne_lat: float | None = None,
+    ne_long: float | None = None,
+    sw_lat: float | None = None,
+    sw_long: float | None = None,
+    zoom_value: int | None = None,
+    proxy_url: str | None = None,
+    impersonate: str = "chrome136",
+    timeout: float = 30.0,
+    max_retries: int = 1,
+) -> dict[str, Any]:
+    """Get listings that are for sale.
+
+    Returns a dict with keys ``mapResults`` and ``listResults``.
+    Use ``mapResults`` — it contains all listings across paginations
+    (capped at 500 by Zillow; narrow the bbox/zoom to get more).
+
+    Args:
+        search_value: Free-text location (e.g. "Schenectady NY").
+        pagination: Page number for the sidebar list (rarely needed).
+        min_beds / max_beds: Bedroom filter bounds.
+        min_bathrooms / max_bathrooms: Bathroom filter bounds.
+        min_price / max_price: Price filter bounds.
+        ne_lat / ne_long / sw_lat / sw_long: Bounding-box corners.
+            Defaults to a continental-US bbox; narrow via ``search_value``.
+        zoom_value: Map zoom level.
+        proxy_url: Proxy URL (residential proxies strongly recommended).
+        impersonate: curl_cffi TLS impersonation profile (default "chrome136").
+        timeout: Request timeout in seconds (default 30).
+        max_retries: Retries on 5xx / network errors (default 1).
+
+    Returns:
+        dict[str, Any]: listing of properties in JSON format
+
+    Raises:
+        ZillowBlockedError: If Zillow responds with a non-2xx status.
+    """
+    filter_state = {
+        "sortSelection": {"value": "globalrelevanceex"},
+        "isAllHomes": {"value": True},
+    }
+    return search(
+        search_value=search_value,
+        pagination=pagination,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        ne_lat=ne_lat,
+        ne_long=ne_long,
+        sw_lat=sw_lat,
+        sw_long=sw_long,
+        zoom_value=zoom_value,
+        filter_state=filter_state,
+        proxy_url=proxy_url,
+        impersonate=impersonate,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
+
+
+def for_rent(
+    search_value: str = "",
+    pagination: int = 1,
+    is_entire_place: bool = False,
+    is_room: bool = False,
+    min_beds: int | None = None,
+    max_beds: int | None = None,
+    min_bathrooms: int | None = None,
+    max_bathrooms: int | None = None,
+    min_price: int | None = None,
+    max_price: int | None = None,
+    ne_lat: float | None = None,
+    ne_long: float | None = None,
+    sw_lat: float | None = None,
+    sw_long: float | None = None,
+    zoom_value: int | None = None,
+    proxy_url: str | None = None,
+    impersonate: str = "chrome136",
+    timeout: float = 30.0,
+    max_retries: int = 1,
+) -> dict[str, Any]:
+    """Get listings that are for rent.
+
+    See :func:`for_sale` for argument descriptions.
+
+    Raises:
+        ZillowBlockedError: If Zillow responds with a non-2xx status.
+    """
+    filter_state = {
+        "sortSelection": {"value": "priorityscore"},
+        "isNewConstruction": {"value": False},
+        "isForSaleForeclosure": {"value": False},
+        "isForSaleByOwner": {"value": False},
+        "isForSaleByAgent": {"value": False},
+        "isForRent": {"value": True},
+        "isComingSoon": {"value": False},
+        "isAuction": {"value": False},
+        "isAllHomes": {"value": True},
+    }
+    if is_room:
+        filter_state["isRoomForRent"] = {"value": True}
+    if not is_entire_place:
+        filter_state["isEntirePlaceForRent"] = {"value": False}
+    return search(
+        search_value=search_value,
+        pagination=pagination,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        ne_lat=ne_lat,
+        ne_long=ne_long,
+        sw_lat=sw_lat,
+        sw_long=sw_long,
+        zoom_value=zoom_value,
+        filter_state=filter_state,
+        proxy_url=proxy_url,
+        impersonate=impersonate,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
+
+
+def sold(
+    search_value: str = "",
+    pagination: int = 1,
+    min_beds: int | None = None,
+    max_beds: int | None = None,
+    min_bathrooms: int | None = None,
+    max_bathrooms: int | None = None,
+    min_price: int | None = None,
+    max_price: int | None = None,
+    ne_lat: float | None = None,
+    ne_long: float | None = None,
+    sw_lat: float | None = None,
+    sw_long: float | None = None,
+    zoom_value: int | None = None,
+    proxy_url: str | None = None,
+    impersonate: str = "chrome136",
+    timeout: float = 30.0,
+    max_retries: int = 1,
+) -> dict[str, Any]:
+    """Get listings that were sold.
+
+    See :func:`for_sale` for argument descriptions.
+
+    Raises:
+        ZillowBlockedError: If Zillow responds with a non-2xx status.
+    """
+    filter_state = {
+        "sortSelection": {"value": "globalrelevanceex"},
+        "isNewConstruction": {"value": False},
+        "isForSaleForeclosure": {"value": False},
+        "isForSaleByOwner": {"value": False},
+        "isForSaleByAgent": {"value": False},
+        "isForRent": {"value": False},
+        "isComingSoon": {"value": False},
+        "isAuction": {"value": False},
+        "isAllHomes": {"value": True},
+        "isRecentlySold": {"value": True},
+    }
+    return search(
+        search_value=search_value,
+        pagination=pagination,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        ne_lat=ne_lat,
+        ne_long=ne_long,
+        sw_lat=sw_lat,
+        sw_long=sw_long,
+        zoom_value=zoom_value,
+        filter_state=filter_state,
+        proxy_url=proxy_url,
+        impersonate=impersonate,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
+
+
+def search(
+    search_value: str = "",
+    pagination: int = 1,
+    min_beds: int | None = None,
+    max_beds: int | None = None,
+    min_bathrooms: int | None = None,
+    max_bathrooms: int | None = None,
+    min_price: int | None = None,
+    max_price: int | None = None,
+    ne_lat: float | None = None,
+    ne_long: float | None = None,
+    sw_lat: float | None = None,
+    sw_long: float | None = None,
+    zoom_value: int | None = None,
+    filter_state: dict[str, Any] | None = None,
+    proxy_url: str | None = None,
+    impersonate: str = "chrome136",
+    timeout: float = 30.0,
+    max_retries: int = 1,
+) -> dict[str, Any]:
+    """Run a raw Zillow search with a custom filter_state.
+
+    Most callers should use :func:`for_sale`, :func:`for_rent`, or
+    :func:`sold` instead.
+
+    Args:
+        search_value: Free-text location (e.g. "Schenectady NY").
+        pagination: Page number for the sidebar list.
+        min_beds / max_beds: Bedroom filter bounds.
+        min_bathrooms / max_bathrooms: Bathroom filter bounds.
+        min_price / max_price: Price filter bounds.
+        ne_lat / ne_long / sw_lat / sw_long: Bounding-box corners.
+        zoom_value: Map zoom level.
+        filter_state: Raw Zillow filterState dict.
+        proxy_url: Proxy URL (residential proxies strongly recommended).
+        impersonate: curl_cffi TLS impersonation profile (default "chrome136").
+        timeout: Request timeout in seconds (default 30).
+        max_retries: Retries on 5xx / network errors (default 1).
+
+    Returns:
+        dict[str, Any]: listing of properties in JSON format
+
+    Raises:
+        ZillowBlockedError: If Zillow responds with a non-2xx status.
+    """
+    if ne_lat is None:
+        ne_lat = _DEFAULT_BBOX["ne_lat"]
+    if ne_long is None:
+        ne_long = _DEFAULT_BBOX["ne_long"]
+    if sw_lat is None:
+        sw_lat = _DEFAULT_BBOX["sw_lat"]
+    if sw_long is None:
+        sw_long = _DEFAULT_BBOX["sw_long"]
+
+    if filter_state is None:
+        filter_state = {}
+
+    input_data: dict[str, Any] = {
         "searchQueryState": {
             "isMapVisible": True,
             "isListVisible": True,
@@ -207,7 +361,6 @@ def search(
                 "west": sw_long,
             },
             "filterState": filter_state,
-            "mapZoom": zoom_value,
             "pagination": {
                 "currentPage": pagination,
             },
@@ -219,40 +372,41 @@ def search(
         "requestId": 10,
         "isDebugRequest": False,
     }
-    if search_value is not None:
-        inputData["searchQueryState"]["usersSearchTerm"]=search_value
+    if zoom_value is not None:
+        input_data["searchQueryState"]["mapZoom"] = zoom_value
 
-    if min_beds is not None or  max_beds is not None:
-        beds = {}
+    if search_value:
+        input_data["searchQueryState"]["usersSearchTerm"] = search_value
+
+    if min_beds is not None or max_beds is not None:
+        beds: dict[str, int] = {}
         if min_beds is not None:
             beds["min"] = min_beds
         if max_beds is not None:
             beds["max"] = max_beds
-        inputData["searchQueryState"]["filterState"]["beds"] = beds
+        input_data["searchQueryState"]["filterState"]["beds"] = beds
 
-    if min_bathrooms is not None or  max_bathrooms is not None:
-        baths = {}
+    if min_bathrooms is not None or max_bathrooms is not None:
+        baths: dict[str, int] = {}
         if min_bathrooms is not None:
             baths["min"] = min_bathrooms
         if max_bathrooms is not None:
             baths["max"] = max_bathrooms
-        inputData["searchQueryState"]["filterState"]["baths"] = baths
+        input_data["searchQueryState"]["filterState"]["baths"] = baths
 
-    if min_price is not None or  max_price is not None:
-        price = {}
+    if min_price is not None or max_price is not None:
+        price: dict[str, int] = {}
         if min_price is not None:
             price["min"] = min_price
         if max_price is not None:
             price["max"] = max_price
-        inputData["searchQueryState"]["filterState"]["price"] = price
+        input_data["searchQueryState"]["filterState"]["price"] = price
 
-    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
-    response = requests.put(
-        url="https://www.zillow.com/async-create-search-page-state",
-        json=inputData,
-        headers=headers,
-        proxies=proxies,  
-        impersonate="chrome124",
+    data = _do_search_request(
+        input_data=input_data,
+        proxy_url=proxy_url,
+        impersonate=impersonate,
+        timeout=timeout,
+        max_retries=max_retries,
     )
-    data = response.json()
     return data.get("cat1", {}).get("searchResults", {})
