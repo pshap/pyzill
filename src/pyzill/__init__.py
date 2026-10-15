@@ -1,4 +1,4 @@
 from pyzill.details import get_from_home_id, get_from_deparment_id, get_from_deparment_url, get_from_home_url
-from pyzill.search import for_sale, for_rent, sold, search
+from pyzill.search import for_sale, for_rent, sold, iter_search, split_bbox
 from pyzill.utils import parse_proxy, resolve_proxy
 from pyzill.exceptions import ZillowBlockedError

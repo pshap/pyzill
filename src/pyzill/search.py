@@ -412,3 +412,76 @@ def search(
         max_retries=max_retries,
     )
     return data.get("cat1", {}).get("searchResults", {})
+
+
+def iter_search(
+    search_fn=None,
+    max_items: int | None = None,
+    **kwargs: Any,
+):
+    """Yield individual mapResults listings from a search function.
+
+    Wraps :func:`for_sale`, :func:`for_rent`, or :func:`sold` and yields
+    one listing dict at a time from ``mapResults``.
+
+    Note:
+        Zillow caps ``mapResults`` at **500 listings per query**.  The
+        ``pagination`` argument does NOT increase this cap — it only
+        affects the sidebar ``listResults``.  If you get exactly 500
+        results and need more, split the bounding box into smaller
+        quadrants and run one query per quadrant (the ``bbox`` helper
+        below can generate those quadrants for you).
+
+    Args:
+        search_fn: One of :func:`for_sale`, :func:`for_rent`, or
+            :func:`sold`.  Defaults to :func:`for_sale`.
+        max_items: Stop after yielding this many listings (None = all).
+        **kwargs: Passed directly to the search function.
+
+    Yields:
+        dict[str, Any]: one listing from mapResults.
+
+    Example:
+        >>> for listing in pyzill.iter_search(
+        ...     pyzill.for_sale, search_value="Schenectady NY"
+        ... ):
+        ...     print(listing["address"])
+    """
+    if search_fn is None:
+        search_fn = for_sale
+    result = search_fn(**kwargs)
+    map_results = result.get("mapResults", [])
+    for i, listing in enumerate(map_results):
+        if max_items is not None and i >= max_items:
+            return
+        yield listing
+
+
+def split_bbox(
+    ne_lat: float,
+    ne_long: float,
+    sw_lat: float,
+    sw_long: float,
+) -> list[dict[str, float]]:
+    """Split a bounding box into 4 quadrants.
+
+    Useful for working around Zillow's 500-result cap on mapResults:
+    run one search per quadrant and combine the results.
+
+    Args:
+        ne_lat: North-east latitude.
+        ne_long: North-east longitude.
+        sw_lat: South-west latitude.
+        sw_long: South-west longitude.
+
+    Returns:
+        list[dict[str, float]]: four dicts with ne_lat/ne_long/sw_lat/sw_long keys.
+    """
+    mid_lat = (ne_lat + sw_lat) / 2
+    mid_long = (ne_long + sw_long) / 2
+    return [
+        {"ne_lat": ne_lat, "ne_long": mid_long, "sw_lat": mid_lat, "sw_long": sw_long},
+        {"ne_lat": ne_lat, "ne_long": ne_long, "sw_lat": mid_lat, "sw_long": mid_long},
+        {"ne_lat": mid_lat, "ne_long": mid_long, "sw_lat": sw_lat, "sw_long": sw_long},
+        {"ne_lat": mid_lat, "ne_long": ne_long, "sw_lat": sw_lat, "sw_long": mid_long},
+    ]

@@ -39,8 +39,8 @@ def parse_proxy(ip_or_domain: str, port: str, username: str, password: str) -> s
     Returns:
         str: proxy URL of the form http://user:pass@host:port
     """
-    encoded_username = quote(username)
-    encoded_password = quote(password)
+    encoded_username = quote(username, safe="")
+    encoded_password = quote(password, safe="")
     proxy_url = f"http://{encoded_username}:{encoded_password}@{ip_or_domain}:{port}"
     return proxy_url
 

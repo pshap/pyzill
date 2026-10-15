@@ -14,5 +14,15 @@ license = { text = "MIT" }
 keywords=['zillow', 'scraper', 'crawler']
 dependencies=['bs4','requests','curl_cffi']
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
 [project.urls]
 Homepage='https://github.com/johnbalvin/pyzill'
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
