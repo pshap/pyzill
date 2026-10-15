@@ -1,10 +1,9 @@
-from html import unescape
 from json import loads
 from typing import Any, cast
 
 from bs4 import BeautifulSoup
 
-from pyzill.utils import get_nested_value, remove_space
+from pyzill.utils import get_nested_value
 
 
 def parse_body_home(body: bytes) -> dict[str, Any]:
@@ -57,7 +56,5 @@ def parse_body(body: bytes) -> dict[str, Any]:
     selection = soup.select_one("#__NEXT_DATA__")
     if not selection:
         return {}
-    html_data = selection.getText()
-    html_data = remove_space(unescape(html_data))
-    data = loads(html_data)
+    data = loads(selection.string or "")
     return cast("dict[str, Any]", get_nested_value(data, "props.pageProps.componentProps"))
