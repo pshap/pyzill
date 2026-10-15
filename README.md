@@ -46,13 +46,23 @@ pip install pyzill
 ```python
 import pyzill
 
-# Search requires all coordinates optional now — a wide default bbox is used
-# when omitted, so a single keyword call works:
-results = pyzill.for_sale(search_value="Schenectady NY")
+results = pyzill.for_sale(
+    search_value="Schenectady NY",
+    ne_lat=42.85, ne_long=-73.90,   # north-east corner
+    sw_lat=42.78, sw_long=-74.00,   # south-west corner
+    zoom_value=12,
+)
 
 map_results = results["mapResults"]   # up to 500 listings
 print(len(map_results), "listings")
 ```
+
+> **Coordinates define the results.** Zillow searches the `mapBounds`
+> viewport you pass. `search_value` labels the search but does **not**
+> tighten the viewport. If you omit the coordinates, pyzill falls back to a
+> continental-US bounding box, so a bare `for_sale(search_value="Schenectady NY")`
+> returns up to 500 listings from across the country — not Schenectady. Always
+> pass a bounding box (or use `split_bbox` to tile a region) for local results.
 
 ### Search with filters and an explicit bounding box
 

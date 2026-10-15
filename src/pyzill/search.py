@@ -7,7 +7,8 @@ from pyzill.ratelimit import wait_for_slot
 from pyzill.utils import resolve_proxy
 
 # Wide bounding box covering the continental US, used as default when no
-# coordinates are supplied.  search_value still narrows results server-side.
+# coordinates are supplied.  Note: this does NOT narrow to search_value --
+# Zillow searches the viewport, so omitting coordinates yields national results.
 _DEFAULT_BBOX = {
     "ne_lat": 49.38,
     "ne_long": -66.94,
@@ -132,8 +133,10 @@ def for_sale(
         min_beds / max_beds: Bedroom filter bounds.
         min_bathrooms / max_bathrooms: Bathroom filter bounds.
         min_price / max_price: Price filter bounds.
-        ne_lat / ne_long / sw_lat / sw_long: Bounding-box corners.
-            Defaults to a continental-US bbox; narrow via ``search_value``.
+        ne_lat / ne_long / sw_lat / sw_long: Bounding-box corners that define
+            the search viewport. If omitted, a continental-US bbox is used and
+            results will span the whole country (``search_value`` only labels
+            the search; it does not narrow the viewport).
         zoom_value: Map zoom level.
         proxy_url: Proxy URL (residential proxies strongly recommended).
         impersonate: curl_cffi TLS impersonation profile (default "chrome136").
