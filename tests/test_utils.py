@@ -5,6 +5,7 @@ from pyzill import utils
 
 def test_remove_space():
     assert utils.remove_space("  hello   world  ") == "hello world"
+    assert utils.collapse_whitespace("  hello   world  ") == "hello world"
 
 
 def test_get_nested_value():

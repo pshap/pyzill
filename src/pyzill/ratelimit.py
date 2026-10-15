@@ -1,7 +1,8 @@
-import os
 import random
 import threading
 import time
+
+from pyzill.config import read_env
 
 DEFAULT_MIN_INTERVAL = 1.5
 
@@ -42,7 +43,7 @@ class RateLimiter:
 
 
 def _read_min_interval() -> float:
-    raw = os.environ.get("ZILLOW_MIN_INTERVAL")
+    raw = read_env("ZILLOW_MIN_INTERVAL")
     if raw is None:
         return DEFAULT_MIN_INTERVAL
     try:
