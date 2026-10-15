@@ -13,7 +13,7 @@ readme= "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 keywords=['zillow', 'scraper', 'crawler']
-dependencies=['bs4','requests','curl_cffi']
+dependencies=['beautifulsoup4','curl_cffi']
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
