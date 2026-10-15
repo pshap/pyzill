@@ -14,6 +14,12 @@ All notable changes to this project are documented here.
 - `normalize_listings(listings)` — same, for an iterable; skips non-dict items.
 - `iter_search(..., normalize=True)` — yield normalized listings.
 
+### Tooling
+- Added [Ruff](https://docs.astral.sh/ruff/) for linting and formatting, with
+  config in `pyproject.toml` and a `dev` optional-dependency group. Run
+  `ruff check .` and `ruff format .`.
+
+
 ## [1.1.0] - 2025-10
 
 ### Added

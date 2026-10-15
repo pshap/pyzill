@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from curl_cffi.requests.exceptions import HTTPError
 
 from pyzill import ratelimit
 
@@ -31,7 +32,7 @@ class FakeResponse:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise Exception(f"HTTP {self.status_code}")
+            raise HTTPError(f"HTTP Error {self.status_code}", 0, self)
 
 
 def _next_data_html(page_props: dict) -> bytes:

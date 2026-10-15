@@ -1,4 +1,5 @@
 import pytest
+from curl_cffi.requests.exceptions import HTTPError
 
 from pyzill import details
 from tests.conftest import FakeResponse
@@ -29,9 +30,7 @@ def test_get_from_home_url(monkeypatch, home_detail_body):
 
     monkeypatch.setattr(details.requests, "get", fake_get)
 
-    data = details.get_from_home_url(
-        "https://www.zillow.com/homedetails/27-Washington-Ave/348914888_zpid/"
-    )
+    data = details.get_from_home_url("https://www.zillow.com/homedetails/27-Washington-Ave/348914888_zpid/")
     assert data["bedrooms"] == 3
     assert data["bathrooms"] == 2
 
@@ -65,5 +64,5 @@ def test_detail_http_error_raises(monkeypatch):
 
     monkeypatch.setattr(details.requests, "get", fake_get)
 
-    with pytest.raises(Exception):
+    with pytest.raises(HTTPError):
         details.get_from_home_url("https://www.zillow.com/homedetails/bad_zpid/")

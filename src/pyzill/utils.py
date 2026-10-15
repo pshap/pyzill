@@ -68,8 +68,7 @@ def resolve_proxy(proxy_url: str | None = None) -> str | None:
     parsed = urlparse(proxy_url)
     if parsed.scheme not in ("http", "https", "socks5", "socks5h"):
         raise ValueError(
-            f"Invalid proxy URL scheme {parsed.scheme!r} in {proxy_url!r}; "
-            "expected http, https, socks5, or socks5h"
+            f"Invalid proxy URL scheme {parsed.scheme!r} in {proxy_url!r}; expected http, https, socks5, or socks5h"
         )
     if not parsed.hostname:
         raise ValueError(f"Invalid proxy URL {proxy_url!r}: missing hostname")

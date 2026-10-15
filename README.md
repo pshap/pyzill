@@ -50,12 +50,14 @@ import pyzill
 
 results = pyzill.for_sale(
     search_value="Schenectady NY",
-    ne_lat=42.85, ne_long=-73.90,   # north-east corner
-    sw_lat=42.78, sw_long=-74.00,   # south-west corner
+    ne_lat=42.85,
+    ne_long=-73.90,  # north-east corner
+    sw_lat=42.78,
+    sw_long=-74.00,  # south-west corner
     zoom_value=12,
 )
 
-map_results = results["mapResults"]   # up to 500 listings
+map_results = results["mapResults"]  # up to 500 listings
 print(len(map_results), "listings")
 ```
 
@@ -73,12 +75,16 @@ import pyzill
 
 results = pyzill.for_sale(
     search_value="Schenectady NY",
-    ne_lat=42.85, ne_long=-73.90,
-    sw_lat=42.78, sw_long=-74.00,
+    ne_lat=42.85,
+    ne_long=-73.90,
+    sw_lat=42.78,
+    sw_long=-74.00,
     zoom_value=12,
-    min_beds=2, max_beds=4,
+    min_beds=2,
+    max_beds=4,
     min_bathrooms=1,
-    min_price=100_000, max_price=500_000,
+    min_price=100_000,
+    max_price=500_000,
 )
 for listing in results["mapResults"]:
     print(listing["zpid"], listing.get("address"))
@@ -94,9 +100,7 @@ Search is much more reliable through a residential proxy. Pass one explicitly:
 ```python
 import pyzill
 
-proxy_url = pyzill.parse_proxy(
-    "proxy.example.com", "8080", "username", "password"
-)
+proxy_url = pyzill.parse_proxy("proxy.example.com", "8080", "username", "password")
 results = pyzill.for_sale(search_value="Schenectady NY", proxy_url=proxy_url)
 ```
 
@@ -147,9 +151,7 @@ If you hit exactly 500 and need more, split the area into quadrants with
 ```python
 import pyzill
 
-quadrants = pyzill.split_bbox(
-    ne_lat=42.85, ne_long=-73.90, sw_lat=42.78, sw_long=-74.00
-)
+quadrants = pyzill.split_bbox(ne_lat=42.85, ne_long=-73.90, sw_lat=42.78, sw_long=-74.00)
 for bbox in quadrants:
     results = pyzill.for_sale(search_value="Schenectady NY", **bbox)
     print(len(results["mapResults"]))
@@ -182,8 +184,9 @@ fields, falling back to `hdpData.homeInfo` when a top-level field is absent:
 ```python
 import pyzill
 
-results = pyzill.for_sale(search_value="12305", ne_lat=42.825, ne_long=-73.925,
-                          sw_lat=42.805, sw_long=-73.955, zoom_value=15)
+results = pyzill.for_sale(
+    search_value="12305", ne_lat=42.825, ne_long=-73.925, sw_lat=42.805, sw_long=-73.955, zoom_value=15
+)
 
 for home in pyzill.normalize_listings(results["mapResults"]):
     print(home["address"], home["price"], home["beds"], home["home_type"])
@@ -234,7 +237,8 @@ export ZILLOW_MIN_INTERVAL=3   # wait 3s between requests
 
 ```python
 import pyzill
-pyzill.set_min_interval(3)      # or 0 to disable
+
+pyzill.set_min_interval(3)  # or 0 to disable
 print(pyzill.get_min_interval())
 ```
 
@@ -273,9 +277,7 @@ data = pyzill.get_from_deparment_id("CgKZT4")
 ```python
 import pyzill
 
-data = pyzill.get_from_deparment_url(
-    "https://www.zillow.com/apartments/kissimmee-fl/the-nexus-at-overbrook/9DSWrh/"
-)
+data = pyzill.get_from_deparment_url("https://www.zillow.com/apartments/kissimmee-fl/the-nexus-at-overbrook/9DSWrh/")
 ```
 
 > Note: the `deparment` misspelling is part of the public API and is kept for
@@ -303,8 +305,10 @@ data = pyzill.get_from_deparment_url(
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[test]"
-pytest
+pip install -e ".[dev]"
+pytest            # run tests
+ruff check .      # lint
+ruff format .     # format
 ```
 
 ## License

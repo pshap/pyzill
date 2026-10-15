@@ -1,7 +1,8 @@
 from typing import Any
+
 from curl_cffi import requests
 
-from pyzill.parse import parse_body_home, parse_body_deparments
+from pyzill.parse import parse_body_deparments, parse_body_home
 from pyzill.ratelimit import wait_for_slot
 from pyzill.utils import resolve_proxy
 

@@ -1,6 +1,7 @@
-from typing import Any
-from curl_cffi import requests
 import time
+from typing import Any
+
+from curl_cffi import requests
 
 from pyzill.exceptions import ZillowBlockedError
 from pyzill.normalize import normalize_listing
@@ -18,6 +19,7 @@ _DEFAULT_BBOX = {
 }
 
 _SEARCH_URL = "https://www.zillow.com/async-create-search-page-state"
+
 
 # Headers matching the default impersonate profile (chrome136).
 # curl_cffi already sets TLS/JA3 and most headers; these fill in the rest.
