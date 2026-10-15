@@ -5,6 +5,7 @@ status handling so that search and detail requests stay consistent.
 """
 
 import time
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from curl_cffi import requests
@@ -19,6 +20,16 @@ ZILLOW_HOME = "https://www.zillow.com"
 DEFAULT_IMPERSONATE = "chrome136"
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_MAX_RETRIES = 1
+
+
+@dataclass(frozen=True, slots=True)
+class RequestOptions:
+    """Common options for a Zillow request."""
+
+    proxy_url: str | None = None
+    impersonate: str = DEFAULT_IMPERSONATE
+    timeout: float = DEFAULT_TIMEOUT
+    max_retries: int = DEFAULT_MAX_RETRIES
 
 _HTTP_OK_MIN = 200
 _HTTP_OK_MAX = 300  # exclusive
@@ -64,6 +75,50 @@ def build_proxies(proxy_url: str | None) -> ProxySpec | None:
     """Resolve ``proxy_url`` (with ``ZILLOW_PROXY`` fallback) into a proxies dict."""
     proxy_url = resolve_proxy(proxy_url)
     return {"http": proxy_url, "https": proxy_url} if proxy_url else None
+
+
+def get_page(
+    url: str,
+    *,
+    options: RequestOptions | None = None,
+) -> Response:
+    """Fetch a Zillow page using browser navigation headers."""
+    options = options or RequestOptions()
+    return request(
+        "GET",
+        url,
+        headers={**build_headers(options.impersonate), "Sec-Fetch-Site": "none"},
+        proxy_url=options.proxy_url,
+        impersonate=options.impersonate,
+        timeout=options.timeout,
+        max_retries=options.max_retries,
+    )
+
+
+def put_json(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    options: RequestOptions | None = None,
+) -> Response:
+    """Send a Zillow JSON request using XHR headers."""
+    options = options or RequestOptions()
+    return request(
+        "PUT",
+        url,
+        headers={
+            **build_headers(options.impersonate),
+            "Content-Type": "application/json",
+            "origin": ZILLOW_HOME,
+            "Referer": f"{ZILLOW_HOME}/",
+            "Sec-Fetch-Site": "same-site",
+        },
+        proxy_url=options.proxy_url,
+        impersonate=options.impersonate,
+        timeout=options.timeout,
+        max_retries=options.max_retries,
+        json=payload,
+    )
 
 
 def request(  # noqa: PLR0913 - central request primitive

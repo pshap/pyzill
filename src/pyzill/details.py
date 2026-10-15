@@ -8,15 +8,9 @@ from pyzill.parse import parse_body_departments, parse_body_home
 
 def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> Response:
     """Fetch a detail page and enforce a 2xx response."""
-    headers = {**http.build_headers(impersonate), "Sec-Fetch-Site": "none"}
-    return http.request(
-        "GET",
+    return http.get_page(
         url,
-        headers=headers,
-        proxy_url=proxy_url,
-        impersonate=impersonate,
-        timeout=timeout,
-        max_retries=http.DEFAULT_MAX_RETRIES,
+        options=http.RequestOptions(proxy_url=proxy_url, impersonate=impersonate, timeout=timeout),
     )
 
 

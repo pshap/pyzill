@@ -236,22 +236,15 @@ def search(  # noqa: PLR0913 - mirrors Zillow's filter surface
         "requestId": 10,
         "isDebugRequest": False,
     }
-    headers = {
-        **http.build_headers(impersonate),
-        "Content-Type": "application/json",
-        "origin": http.ZILLOW_HOME,
-        "Referer": f"{http.ZILLOW_HOME}/",
-        "Sec-Fetch-Site": "same-site",
-    }
-    response = http.request(
-        "PUT",
+    response = http.put_json(
         _SEARCH_URL,
-        headers=headers,
-        proxy_url=proxy_url,
-        impersonate=impersonate,
-        timeout=timeout,
-        max_retries=max_retries,
-        json=input_data,
+        input_data,
+        options=http.RequestOptions(
+            proxy_url=proxy_url,
+            impersonate=impersonate,
+            timeout=timeout,
+            max_retries=max_retries,
+        ),
     )
     try:
         data = response.json()  # type: ignore[no-untyped-call]
