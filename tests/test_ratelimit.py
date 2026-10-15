@@ -11,6 +11,12 @@ def test_disabled_when_interval_zero():
     assert time.monotonic() - start < 0.1
 
 
+def test_new_limiter_has_no_previous_slot():
+    limiter = RateLimiter(min_interval=1, jitter=0)
+
+    assert limiter._last == float("-inf")
+
+
 def test_enforces_min_interval():
     limiter = RateLimiter(min_interval=0.2, jitter=0)
     limiter.wait()

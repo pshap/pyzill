@@ -19,7 +19,7 @@ class RateLimiter:
         self.min_interval = min_interval
         self.jitter = jitter
         self._lock = threading.Lock()
-        self._last = 0.0
+        self._last = float("-inf")
 
     def wait(self) -> None:
         """Block until at least ``min_interval`` (+ jitter) since the last call.
