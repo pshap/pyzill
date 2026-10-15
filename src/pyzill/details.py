@@ -2,6 +2,7 @@ from typing import Any
 from curl_cffi import requests
 
 from pyzill.parse import parse_body_home, parse_body_deparments
+from pyzill.ratelimit import wait_for_slot
 from pyzill.utils import resolve_proxy
 
 headers = {
@@ -24,6 +25,7 @@ headers = {
 def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> Any:
     proxy_url = resolve_proxy(proxy_url)
     proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    wait_for_slot()
     response = requests.get(
         url=url,
         headers=headers,

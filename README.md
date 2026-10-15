@@ -1,125 +1,258 @@
-# Zillow scraper in Python
+# pyzill — Zillow scraper in Python
 
 ## Overview
-This project is an open-source tool developed in Python for extracting product information from Zillow. It's designed to be easy to use, making it an ideal solution for developers looking for Zillow product data.
+
+An open-source Python library for extracting real-estate data from Zillow.
+It supports two capabilities:
+
+- **Search** — query for-sale / for-rent / sold listings inside a bounding box.
+- **Details** — fetch full property data for a home or apartment by Zillow URL or ID.
 
 ## Features
-- Full search support
-- Extracts detailed product information from Zillow
-- Implemented in Python just because it's popular
-- Easy to integrate with existing Python projects
 
-### Important
-- Use rotating residential proxies, zillow will block if you make multiple requests with the same IP, 
+- Search for sale, for rent, and sold listings
+- Property detail extraction by URL or ID (homes and apartment complexes)
+- Browser TLS impersonation via [`curl_cffi`](https://github.com/yifeikong/curl_cffi)
+- Configurable proxy (explicit or via environment variable)
+- Clear `ZillowBlockedError` when Zillow blocks a request
 
-### Install
+## Current status (as of 2025-10)
+
+Zillow's anti-bot stack (PerimeterX) is aggressive. What works today:
+
+| Capability | Status | Notes |
+|---|---|---|
+| `get_from_home_url` / `get_from_home_id` | ✅ Works unauthenticated | No proxy required in testing |
+| `get_from_deparment_url` / `get_from_deparment_id` | ✅ Works unauthenticated | No proxy required in testing |
+| `for_sale` / `for_rent` / `sold` | ⚠️ Works, but flaky without a proxy | Rapid repeated requests from one IP get **403** |
+
+**Search endpoints are rate-limited per IP.** A single request often
+succeeds, but repeated requests will be blocked. For anything beyond a quick
+test, use a rotating **residential** proxy. Zillow fingerprints datacenter IPs
+and will block them.
+
+When Zillow blocks a request it returns a PerimeterX challenge page. pyzill
+detects this and raises `pyzill.ZillowBlockedError` (never a bare
+`JSONDecodeError`).
+
+## Install
 
 ```bash
-$ pip install pyzill
+pip install pyzill
 ```
-## Examples
 
-```Python
+## Quick start
+
+```python
 import pyzill
-import json
-ne_lat = 38.602951833355434
-ne_long = -87.22283859375
-sw_lat = 23.42674607019482
-sw_long = -112.93084640625
-pagination = 1
-#pagination is for the list that you see at the right when searching
-#you don't need to iterate over all the pages because zillow sends the whole data on mapresults at once on the first page
-#however the maximum result zillow returns is 500, so if mapResults is 500
-#try playing with the zoom or moving the coordinates, pagination won't help because you will always get at maximum 500 results
-pagination = 1
-proxy_url = pyzill.parse_proxy("[proxy_ip or proxy_domain]","[proxy_port]","[proxy_username]","[proxy_password]")
-results_sold = pyzill.sold(pagination, 
-              search_value="miami",
-              min_beds=1,max_beds=1,
-              min_bathrooms=None,max_bathrooms=None,
-              min_price=10000,max_price=None,
-              ne_lat=ne_lat,ne_long=ne_long,sw_lat=sw_lat,sw_long=sw_long,
-              zoom_value=5,
-              proxy_url=proxy_url)
-              
-results_sale = pyzill.for_sale(pagination, 
-              search_value="",
-              min_beds=None,max_beds=None,
-              min_bathrooms=3,max_bathrooms=None,
-              min_price=None,max_price=None,
-              ne_lat=ne_lat,ne_long=ne_long,sw_lat=sw_lat,sw_long=sw_long,
-              zoom_value=10,
-              proxy_url=proxy_url)
 
-results_rent = pyzill.for_rent(pagination, 
-              search_value="",is_entire_place=False,is_room=True,
-              min_beds=1,max_beds=None,
-              min_bathrooms=None,max_bathrooms=None,
-              min_price=10000,max_price=None,
-              ne_lat=ne_lat,ne_long=ne_long,sw_lat=sw_lat,sw_long=sw_long,
-              zoom_value=15,
-              proxy_url=proxy_url)
-jsondata_sold = json.dumps(results_sold)
-jsondata_sale = json.dumps(results_sale)
-jsondata_rent = json.dumps(results_rent)
-f = open("./jsondata_sold.json", "w")
-f.write(jsondata_sold)
-f.close()
-f = open("./jsondata_sale.json", "w")
-f.write(jsondata_sale)
-f.close()
-f = open("./jsondata_rent.json", "w")
-f.write(jsondata_rent)
-f.close()
+# Search requires all coordinates optional now — a wide default bbox is used
+# when omitted, so a single keyword call works:
+results = pyzill.for_sale(search_value="Schenectady NY")
+
+map_results = results["mapResults"]   # up to 500 listings
+print(len(map_results), "listings")
 ```
-# For homes
 
-```Python
+### Search with filters and an explicit bounding box
+
+```python
 import pyzill
-import json
-property_url="https://www.zillow.com/homedetails/858-Shady-Grove-Ln-Harrah-OK-73045/339897685_zpid/"
-proxy_url = pyzill.parse_proxy("[proxy_ip or proxy_domain]","[proxy_port]","[proxy_username]","[proxy_password]")
-data = pyzill.get_from_home_url(property_url,proxy_url)
-jsondata = json.dumps(data)
-f = open("details.json", "w")
-f.write(jsondata)
-f.close()
+
+results = pyzill.for_sale(
+    search_value="Schenectady NY",
+    ne_lat=42.85, ne_long=-73.90,
+    sw_lat=42.78, sw_long=-74.00,
+    zoom_value=12,
+    min_beds=2, max_beds=4,
+    min_bathrooms=1,
+    min_price=100_000, max_price=500_000,
+)
+for listing in results["mapResults"]:
+    print(listing["zpid"], listing.get("address"))
 ```
 
-```Python
+`for_rent` and `sold` take the same arguments. `for_rent` also accepts
+`is_entire_place` and `is_room`.
+
+### Proxy configuration
+
+Search is much more reliable through a residential proxy. Pass one explicitly:
+
+```python
 import pyzill
-import json
-property_id=2056016566
-proxy_url = pyzill.parse_proxy("[proxy_ip or proxy_domain]","[proxy_port]","[proxy_username]","[proxy_password]")
-data = pyzill.get_from_home_id(property_id,proxy_url)
-jsondata = json.dumps(data)
-f = open("details.json", "w")
-f.write(jsondata)
-f.close()
+
+proxy_url = pyzill.parse_proxy(
+    "proxy.example.com", "8080", "username", "password"
+)
+results = pyzill.for_sale(search_value="Schenectady NY", proxy_url=proxy_url)
 ```
 
-# For departments
+Or set the `ZILLOW_PROXY` environment variable once and omit `proxy_url`
+everywhere:
 
-```Python
+```bash
+export ZILLOW_PROXY="http://user:pass@proxy.example.com:8080"
+```
+
+```python
 import pyzill
-import json
-property_url="https://www.zillow.com/apartments/kissimmee-fl/the-nexus-at-overbrook/9DSWrh/"
-proxy_url = pyzill.parse_proxy("[proxy_ip or proxy_domain]","[proxy_port]","[proxy_username]","[proxy_password]")
-data = pyzill.get_from_deparment_url(property_url,proxy_url)
-jsondata = json.dumps(data)
-f = open("details.json", "w")
-f.write(jsondata)
-f.close()
+
+results = pyzill.for_sale(search_value="Schenectady NY")  # uses ZILLOW_PROXY
 ```
 
-```Python
+An explicit `proxy_url` argument always wins over `ZILLOW_PROXY`. Supported
+schemes: `http`, `https`, `socks5`, `socks5h`.
+
+### Handling blocks
+
+```python
 import pyzill
-import json
-property_id="CgKZT4"
-proxy_url = pyzill.parse_proxy("[proxy_ip or proxy_domain]","[proxy_port]","[proxy_username]","[proxy_password]")
-data = pyzill.get_from_deparment_id(property_id,proxy_url)
-jsondata = json.dumps(data)
-f = open("details.json", "w")
-f.write(jsondata)
-f.close()
+
+try:
+    results = pyzill.for_sale(search_value="Schenectady NY")
+except pyzill.ZillowBlockedError as exc:
+    print("blocked:", exc.status_code)
+    # retry through a residential proxy, or back off
 ```
+
+### Iterating and working around the 500-listing cap
+
+`mapResults` caps at **500 listings per query**. `pagination` does *not*
+increase this cap — it only affects the sidebar `listResults`. To page through
+individual listings use `iter_search`:
+
+```python
+import pyzill
+
+for listing in pyzill.iter_search(pyzill.for_sale, search_value="Schenectady NY"):
+    print(listing["zpid"])
+```
+
+If you hit exactly 500 and need more, split the area into quadrants with
+`split_bbox` and run one search per quadrant:
+
+```python
+import pyzill
+
+quadrants = pyzill.split_bbox(
+    ne_lat=42.85, ne_long=-73.90, sw_lat=42.78, sw_long=-74.00
+)
+for bbox in quadrants:
+    results = pyzill.for_sale(search_value="Schenectady NY", **bbox)
+    print(len(results["mapResults"]))
+```
+
+### Tuning requests
+
+All search functions accept:
+
+- `impersonate` (default `"chrome136"`) — the `curl_cffi` TLS profile.
+- `timeout` (default `30.0` seconds).
+- `max_retries` (default `1`) — retries on 5xx / network errors.
+
+```python
+results = pyzill.for_sale(
+    search_value="Schenectady NY",
+    impersonate="chrome136",
+    timeout=60,
+    max_retries=3,
+)
+```
+
+### Rate limiting
+
+pyzill throttles all requests to Zillow so that consecutive calls are spaced
+apart (default **1.5s** plus up to 0.5s jitter). This is enough to avoid most
+403s from single-shot loops without a proxy:
+
+```python
+import pyzill
+
+for _ in range(5):
+    results = pyzill.for_sale(search_value="Schenectady NY")
+    print(len(results["mapResults"]))
+```
+
+Configure the interval with `ZILLOW_MIN_INTERVAL` (seconds) or at runtime:
+
+```bash
+export ZILLOW_MIN_INTERVAL=3   # wait 3s between requests
+```
+
+```python
+import pyzill
+pyzill.set_min_interval(3)      # or 0 to disable
+print(pyzill.get_min_interval())
+```
+
+For high-volume use, still use a rotating residential proxy — per-process
+throttling cannot hide that all requests come from one IP.
+
+## For homes (details)
+
+Details work unauthenticated — no proxy required.
+
+```python
+import pyzill
+
+data = pyzill.get_from_home_id(348914888)
+print(data["address"])  # {'streetAddress': '27 Washington Ave', ...}
+```
+
+By URL:
+
+```python
+import pyzill
+
+data = pyzill.get_from_home_url(
+    "https://www.zillow.com/homedetails/27-Washington-Ave-Schenectady-NY-12305/348914888_zpid/"
+)
+```
+
+## For departments (apartment complexes)
+
+```python
+import pyzill
+
+data = pyzill.get_from_deparment_id("CgKZT4")
+```
+
+```python
+import pyzill
+
+data = pyzill.get_from_deparment_url(
+    "https://www.zillow.com/apartments/kissimmee-fl/the-nexus-at-overbrook/9DSWrh/"
+)
+```
+
+> Note: the `deparment` misspelling is part of the public API and is kept for
+> backwards compatibility.
+
+## API
+
+| Function | Description |
+|---|---|
+| `for_sale(...)` | For-sale listings inside a bounding box |
+| `for_rent(...)` | For-rent listings (also `is_entire_place`, `is_room`) |
+| `sold(...)` | Recently-sold listings |
+| `iter_search(search_fn, max_items=None, **kwargs)` | Yield individual listings |
+| `split_bbox(ne_lat, ne_long, sw_lat, sw_long)` | Split a bbox into 4 quadrants |
+| `get_from_home_url(url, ...)` / `get_from_home_id(id, ...)` | Home details |
+| `get_from_deparment_url(url, ...)` / `get_from_deparment_id(id, ...)` | Apartment details |
+| `parse_proxy(host, port, user, password)` | Build a proxy URL |
+| `resolve_proxy(proxy_url=None)` | Resolve `proxy_url` with `ZILLOW_PROXY` fallback |
+| `set_min_interval(seconds)` / `get_min_interval()` | Configure request throttling |
+| `ZillowBlockedError` | Raised on non-2xx responses from Zillow |
+
+## Development
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[test]"
+pytest
+```
+
+## License
+
+MIT

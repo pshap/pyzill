@@ -2,6 +2,17 @@ import json
 
 import pytest
 
+from pyzill import ratelimit
+
+
+@pytest.fixture(autouse=True)
+def _disable_rate_limit():
+    """Keep tests fast: no throttling between mocked requests."""
+    original = ratelimit.get_min_interval()
+    ratelimit.set_min_interval(0)
+    yield
+    ratelimit.set_min_interval(original)
+
 
 class FakeResponse:
     """Minimal stand-in for a curl_cffi response object."""

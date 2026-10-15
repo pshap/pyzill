@@ -3,6 +3,7 @@ from curl_cffi import requests
 import time
 
 from pyzill.exceptions import ZillowBlockedError
+from pyzill.ratelimit import wait_for_slot
 from pyzill.utils import resolve_proxy
 
 # Wide bounding box covering the continental US, used as default when no
@@ -61,6 +62,7 @@ def _do_search_request(
     last_exception: Exception | None = None
 
     for attempt in range(max_retries + 1):
+        wait_for_slot()
         try:
             response = requests.put(
                 url=_SEARCH_URL,
