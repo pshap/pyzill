@@ -2,7 +2,44 @@ import time
 
 import pytest
 
-from pyzill import exceptions, search
+from pyzill import CONTINENTAL_US, BBox, exceptions, search
+
+
+def test_bbox_maps_and_splits():
+    bbox = BBox(north=10, east=10, south=0, west=0)
+
+    assert bbox.to_map_bounds() == {"north": 10, "east": 10, "south": 0, "west": 0}
+    assert bbox.split() == (
+        BBox(north=10, east=5, south=5, west=0),
+        BBox(north=10, east=10, south=5, west=5),
+        BBox(north=5, east=5, south=0, west=0),
+        BBox(north=5, east=10, south=0, west=5),
+    )
+
+
+def test_continental_us_is_the_default_bbox():
+    assert search._resolve_bbox(None) == CONTINENTAL_US
+
+
+@pytest.mark.parametrize(
+    ("north", "east", "south", "west"),
+    [(0, 10, 1, 0), (10, 0, 0, 1)],
+)
+def test_bbox_rejects_inverted_bounds(north, east, south, west):
+    with pytest.raises(ValueError, match="north/east"):
+        BBox(north=north, east=east, south=south, west=west)
+
+
+def test_search_accepts_bbox(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
+    search.for_sale(bbox=BBox(north=42.85, east=-73.90, south=42.78, west=-74.00))
+
+    assert fake_http.calls[-1]["json"]["searchQueryState"]["mapBounds"] == {
+        "north": 42.85,
+        "east": -73.90,
+        "south": 42.78,
+        "west": -74.00,
+    }
 
 
 def test_for_sale_success(fake_http, search_success_body):
@@ -10,10 +47,7 @@ def test_for_sale_success(fake_http, search_success_body):
 
     result = search.for_sale(
         search_value="Schenectady NY",
-        ne_lat=42.85,
-        ne_long=-73.90,
-        sw_lat=42.78,
-        sw_long=-74.00,
+        bbox=BBox(north=42.85, east=-73.90, south=42.78, west=-74.00),
         zoom_value=12,
     )
 
@@ -73,31 +107,6 @@ def test_search_defaults_applied(fake_http, search_success_body):
     assert bounds["north"] == 49.38
     assert bounds["south"] == 24.54
     assert "mapZoom" not in query_state
-
-
-@pytest.mark.parametrize(
-    ("ne_lat", "ne_long", "sw_lat", "sw_long"),
-    [
-        (42.85, None, 42.78, -74.00),
-        (42.85, -73.90, None, -74.00),
-    ],
-)
-def test_search_rejects_partial_bbox(fake_http, ne_lat, ne_long, sw_lat, sw_long):
-    fake_http.install("PUT", json_data={})
-
-    with pytest.raises(ValueError, match="all four"):
-        search.search(ne_lat=ne_lat, ne_long=ne_long, sw_lat=sw_lat, sw_long=sw_long)
-
-
-@pytest.mark.parametrize(
-    ("ne_lat", "ne_long", "sw_lat", "sw_long"),
-    [(42.78, -73.90, 42.85, -74.00), (42.85, -74.00, 42.78, -73.90)],
-)
-def test_search_rejects_invalid_bbox(fake_http, ne_lat, ne_long, sw_lat, sw_long):
-    fake_http.install("PUT", json_data={})
-
-    with pytest.raises(ValueError, match="north-east"):
-        search.search(ne_lat=ne_lat, ne_long=ne_long, sw_lat=sw_lat, sw_long=sw_long)
 
 
 def test_search_does_not_mutate_filter_state(fake_http, search_success_body):
@@ -214,7 +223,7 @@ def test_listing_type_filters_match_current_payloads(fake_http, search_success_b
 
 
 def test_split_bbox_quadrants():
-    quadrants = search.split_bbox(ne_lat=10, ne_long=10, sw_lat=0, sw_long=0)
+    quadrants = search.split_bbox(BBox(north=10, east=10, south=0, west=0))
     assert len(quadrants) == 4
     for q in quadrants:
-        assert set(q.keys()) == {"ne_lat", "ne_long", "sw_lat", "sw_long"}
+        assert isinstance(q, BBox)

@@ -50,10 +50,7 @@ import pyzill
 
 results = pyzill.for_sale(
     search_value="Schenectady NY",
-    ne_lat=42.85,
-    ne_long=-73.90,  # north-east corner
-    sw_lat=42.78,
-    sw_long=-74.00,  # south-west corner
+    bbox=pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00),
     zoom_value=12,
 )
 
@@ -66,7 +63,7 @@ print(len(map_results), "listings")
 > tighten the viewport. If you omit the coordinates, pyzill falls back to a
 > continental-US bounding box, so a bare `for_sale(search_value="Schenectady NY")`
 > returns up to 500 listings from across the country — not Schenectady. Always
-> pass a bounding box (or use `split_bbox` to tile a region) for local results.
+> pass a `BBox` (or use `split_bbox` to tile a region) for local results.
 
 ### Search with filters and an explicit bounding box
 
@@ -75,10 +72,7 @@ import pyzill
 
 results = pyzill.for_sale(
     search_value="Schenectady NY",
-    ne_lat=42.85,
-    ne_long=-73.90,
-    sw_lat=42.78,
-    sw_long=-74.00,
+    bbox=pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00),
     zoom_value=12,
     min_beds=2,
     max_beds=4,
@@ -187,7 +181,9 @@ Non-dict entries are skipped by the normalization helpers.
 import pyzill
 
 results = pyzill.for_sale(
-    search_value="12305", ne_lat=42.825, ne_long=-73.925, sw_lat=42.805, sw_long=-73.955, zoom_value=15
+    search_value="12305",
+    bbox=pyzill.BBox(north=42.825, east=-73.925, south=42.805, west=-73.955),
+    zoom_value=15,
 )
 
 for home in pyzill.normalize_listings(results["mapResults"]):

@@ -5,6 +5,8 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- `BBox` and `CONTINENTAL_US` define typed search viewports; search functions
+  accept `bbox=` and `split_bbox` returns `BBox` quadrants.
 - `get_from_department_id` / `get_from_department_url` — correctly-spelled
   names for the apartment-detail functions. `get_from_deparment_id` /
   `get_from_deparment_url` remain as backwards-compatible aliases.

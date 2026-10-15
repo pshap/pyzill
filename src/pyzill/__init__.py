@@ -1,3 +1,4 @@
+from pyzill.bbox import CONTINENTAL_US, BBox
 from pyzill.details import (
     get_from_deparment_id,
     get_from_deparment_url,
@@ -13,6 +14,8 @@ from pyzill.search import for_rent, for_sale, iter_search, sold, split_bbox
 from pyzill.utils import parse_proxy, resolve_proxy
 
 __all__ = [
+    "CONTINENTAL_US",
+    "BBox",
     "Listing",
     "ZillowBlockedError",
     "for_rent",

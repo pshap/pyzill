@@ -3,18 +3,9 @@ from itertools import islice
 from typing import Any, TypedDict, Unpack
 
 from pyzill import http
+from pyzill.bbox import CONTINENTAL_US, BBox
 from pyzill.exceptions import ZillowBlockedError
 from pyzill.normalize import normalize_listing
-
-# Wide bounding box covering the continental US, used as default when no
-# coordinates are supplied.  Note: this does NOT narrow to search_value --
-# Zillow searches the viewport, so omitting coordinates yields national results.
-_DEFAULT_BBOX = {
-    "ne_lat": 49.38,
-    "ne_long": -66.94,
-    "sw_lat": 24.54,
-    "sw_long": -124.79,
-}
 
 _SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
 
@@ -28,10 +19,7 @@ class _SearchParams(TypedDict, total=False):
     max_bathrooms: int | None
     min_price: int | None
     max_price: int | None
-    ne_lat: float | None
-    ne_long: float | None
-    sw_lat: float | None
-    sw_long: float | None
+    bbox: BBox | None
     zoom_value: int | None
     filter_state: dict[str, Any] | None
     proxy_url: str | None
@@ -43,7 +31,7 @@ class _SearchParams(TypedDict, total=False):
 class _QueryStateParams(TypedDict):
     search_value: str
     pagination: int
-    bbox: dict[str, float]
+    bbox: BBox
     zoom_value: int | None
     filter_state: dict[str, Any] | None
     filters: dict[str, dict[str, int] | None]
@@ -76,34 +64,9 @@ def _range_filter(min_value: int | None, max_value: int | None) -> dict[str, int
     return result
 
 
-def _resolve_bbox(
-    ne_lat: float | None,
-    ne_long: float | None,
-    sw_lat: float | None,
-    sw_long: float | None,
-) -> dict[str, float]:
-    """Resolve a complete bbox, or use the continental-US default."""
-    coordinates = (ne_lat, ne_long, sw_lat, sw_long)
-    if all(value is None for value in coordinates):
-        return _DEFAULT_BBOX.copy()
-    if any(value is None for value in coordinates):
-        raise ValueError("all four bbox coordinates must be provided together")
-
-    resolved = {
-        "ne_lat": _required_coordinate(ne_lat),
-        "ne_long": _required_coordinate(ne_long),
-        "sw_lat": _required_coordinate(sw_lat),
-        "sw_long": _required_coordinate(sw_long),
-    }
-    if resolved["ne_lat"] <= resolved["sw_lat"] or resolved["ne_long"] <= resolved["sw_long"]:
-        raise ValueError("north-east bbox coordinates must be greater than south-west coordinates")
-    return resolved
-
-
-def _required_coordinate(value: float | None) -> float:
-    if value is None:
-        raise ValueError("all four bbox coordinates must be provided together")
-    return value
+def _resolve_bbox(bbox: BBox | None) -> BBox:
+    """Use the continental-US viewport when no bbox is supplied."""
+    return CONTINENTAL_US if bbox is None else bbox
 
 
 def _build_search_query_state(**kwargs: Unpack[_QueryStateParams]) -> dict[str, Any]:
@@ -118,12 +81,7 @@ def _build_search_query_state(**kwargs: Unpack[_QueryStateParams]) -> dict[str, 
     query_state: dict[str, Any] = {
         "isMapVisible": True,
         "isListVisible": True,
-        "mapBounds": {
-            "north": bbox["ne_lat"],
-            "east": bbox["ne_long"],
-            "south": bbox["sw_lat"],
-            "west": bbox["sw_long"],
-        },
+        "mapBounds": bbox.to_map_bounds(),
         "filterState": filter_state,
         "pagination": {"currentPage": pagination},
     }
@@ -142,8 +100,8 @@ def for_sale(**kwargs: Any) -> dict[str, Any]:
 
     Accepts the same keyword arguments as :func:`search` (``search_value``,
     ``pagination``, ``min_beds`` / ``max_beds``, ``min_bathrooms`` /
-    ``max_bathrooms``, ``min_price`` / ``max_price``, ``ne_lat`` / ``ne_long``
-    / ``sw_lat`` / ``sw_long``, ``zoom_value``, ``proxy_url``,
+    ``max_bathrooms``, ``min_price`` / ``max_price``, ``bbox``, ``zoom_value``,
+    ``proxy_url``,
     ``impersonate``, ``timeout``, ``max_retries``).
 
     Returns:
@@ -208,7 +166,8 @@ def search(**kwargs: Unpack[_SearchParams]) -> dict[str, Any]:
         min_beds / max_beds: Bedroom filter bounds.
         min_bathrooms / max_bathrooms: Bathroom filter bounds.
         min_price / max_price: Price filter bounds.
-        ne_lat / ne_long / sw_lat / sw_long: Bounding-box corners.
+        bbox: Optional :class:`~pyzill.bbox.BBox` viewport. Defaults to the
+            continental United States.
         zoom_value: Map zoom level.
         filter_state: Raw Zillow filterState dict.
         proxy_url: Proxy URL (residential proxies strongly recommended).
@@ -230,10 +189,7 @@ def search(**kwargs: Unpack[_SearchParams]) -> dict[str, Any]:
     max_bathrooms = kwargs.get("max_bathrooms")
     min_price = kwargs.get("min_price")
     max_price = kwargs.get("max_price")
-    ne_lat = kwargs.get("ne_lat")
-    ne_long = kwargs.get("ne_long")
-    sw_lat = kwargs.get("sw_lat")
-    sw_long = kwargs.get("sw_long")
+    bbox = kwargs.get("bbox")
     zoom_value = kwargs.get("zoom_value")
     filter_state = kwargs.get("filter_state")
     proxy_url = kwargs.get("proxy_url")
@@ -243,7 +199,7 @@ def search(**kwargs: Unpack[_SearchParams]) -> dict[str, Any]:
     query_state = _build_search_query_state(
         search_value=search_value,
         pagination=pagination,
-        bbox=_resolve_bbox(ne_lat, ne_long, sw_lat, sw_long),
+        bbox=_resolve_bbox(bbox),
         zoom_value=zoom_value,
         filter_state=filter_state,
         filters={
@@ -343,31 +299,6 @@ def iter_search(
             yield listing
 
 
-def split_bbox(
-    ne_lat: float,
-    ne_long: float,
-    sw_lat: float,
-    sw_long: float,
-) -> list[dict[str, float]]:
-    """Split a bounding box into 4 quadrants.
-
-    Useful for working around Zillow's 500-result cap on mapResults:
-    run one search per quadrant and combine the results.
-
-    Args:
-        ne_lat: North-east latitude.
-        ne_long: North-east longitude.
-        sw_lat: South-west latitude.
-        sw_long: South-west longitude.
-
-    Returns:
-        list[dict[str, float]]: four dicts with ne_lat/ne_long/sw_lat/sw_long keys.
-    """
-    mid_lat = (ne_lat + sw_lat) / 2
-    mid_long = (ne_long + sw_long) / 2
-    return [
-        {"ne_lat": ne_lat, "ne_long": mid_long, "sw_lat": mid_lat, "sw_long": sw_long},
-        {"ne_lat": ne_lat, "ne_long": ne_long, "sw_lat": mid_lat, "sw_long": mid_long},
-        {"ne_lat": mid_lat, "ne_long": mid_long, "sw_lat": sw_lat, "sw_long": sw_long},
-        {"ne_lat": mid_lat, "ne_long": ne_long, "sw_lat": sw_lat, "sw_long": mid_long},
-    ]
+def split_bbox(bbox: BBox = CONTINENTAL_US) -> tuple[BBox, BBox, BBox, BBox]:
+    """Split a bounding box into four ``BBox`` quadrants."""
+    return bbox.split()
