@@ -69,11 +69,6 @@ def build_proxies(proxy_url: str | None) -> dict[str, str] | None:
     return {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
 
-def is_ok(response: Response) -> bool:
-    """Return True if the response has a 2xx status code."""
-    return _HTTP_OK_MIN <= response.status_code < _HTTP_OK_MAX
-
-
 def request(  # noqa: PLR0913 - central request primitive
     method: str,
     url: str,
@@ -87,9 +82,9 @@ def request(  # noqa: PLR0913 - central request primitive
 ) -> Response:
     """Issue a throttled Zillow request, retrying transient (5xx) failures.
 
-    The raw response is returned for any non-5xx status so callers can apply
-    their own error semantics.  5xx responses are retried up to ``max_retries``
-    times and then raise :class:`ZillowBlockedError`.
+    2xx responses are returned.  All other statuses raise
+    :class:`ZillowBlockedError`; 5xx responses are retried up to
+    ``max_retries`` times first.
 
     Args:
         method: HTTP verb, e.g. ``"GET"`` or ``"PUT"``.
@@ -105,7 +100,7 @@ def request(  # noqa: PLR0913 - central request primitive
         Response: the curl_cffi response object.
 
     Raises:
-        ZillowBlockedError: If a 5xx persists after all retries.
+        ZillowBlockedError: If the response status is not 2xx.
     """
     proxies = build_proxies(proxy_url)
     send = getattr(requests, method.lower())
@@ -133,7 +128,7 @@ def request(  # noqa: PLR0913 - central request primitive
                 continue
             raise
 
-        if response.status_code < _HTTP_SERVER_ERROR_MIN:
+        if _HTTP_OK_MIN <= response.status_code < _HTTP_OK_MAX:
             return response
 
         last_exception = ZillowBlockedError(
@@ -141,7 +136,9 @@ def request(  # noqa: PLR0913 - central request primitive
             url=url,
             body_snippet=response.text or "",
         )
-        if attempt < max_retries:
+        if response.status_code >= _HTTP_SERVER_ERROR_MIN and attempt < max_retries:
             time.sleep(_RETRY_DELAY)
+            continue
+        raise last_exception
 
     raise last_exception

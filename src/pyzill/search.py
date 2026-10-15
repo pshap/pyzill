@@ -239,12 +239,6 @@ def search(  # noqa: PLR0913 - mirrors Zillow's filter surface
         max_retries=max_retries,
         json=input_data,
     )
-    if not http.is_ok(response):
-        raise ZillowBlockedError(
-            status_code=response.status_code,
-            url=_SEARCH_URL,
-            body_snippet=response.text or "",
-        )
     try:
         data = response.json()  # type: ignore[no-untyped-call]
     except ValueError as exc:

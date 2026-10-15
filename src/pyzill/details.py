@@ -9,7 +9,7 @@ from pyzill.parse import parse_body_departments, parse_body_home
 def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> Response:
     """Fetch a detail page and enforce a 2xx response."""
     headers = {**http.build_headers(impersonate), "Sec-Fetch-Site": "none"}
-    response = http.request(
+    return http.request(
         "GET",
         url,
         headers=headers,
@@ -17,8 +17,6 @@ def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> R
         impersonate=impersonate,
         timeout=timeout,
     )
-    response.raise_for_status()  # type: ignore[no-untyped-call]
-    return response
 
 
 def get_from_home_id(
