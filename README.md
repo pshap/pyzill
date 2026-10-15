@@ -258,6 +258,9 @@ throttling cannot hide that all requests come from one IP.
 
 Details work unauthenticated — no proxy required.
 
+Detail functions also accept `proxy_url`, `impersonate`, `timeout`, and
+`max_retries` (default `1`, retrying 5xx responses and curl request errors).
+
 ```python
 import pyzill
 

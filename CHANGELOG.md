@@ -12,12 +12,14 @@ All notable changes to this project are documented here.
   `normalize_listing` / `normalize_listings` (and `iter_search(..., normalize=True)`).
   Zero-dependency static typing for the flat, numeric-or-`None` output;
   `iter_search` now yields `Mapping[str, Any]`.
+- Detail functions accept `max_retries` with the same default and retry policy
+  as search functions.
 
 ### Changed
 - Centralized HTTP handling in a new internal `pyzill.http` module
-  (`build_headers`, `build_proxies`, `is_ok`, `request`). Search and detail
-  functions now share header construction, proxy resolution, throttling, and
-  5xx retry logic.
+  (`build_headers`, `build_proxies`, `get_page`, `put_json`, `request`). Search
+  and detail functions now share header construction, proxy resolution,
+  throttling, and 5xx retry logic.
 - `for_sale`, `for_rent`, and `sold` forward arguments via `**kwargs` instead
   of repeating ~18-parameter signatures; `for_rent` still accepts `is_room`
   and `is_entire_place`.
@@ -28,8 +30,7 @@ All notable changes to this project are documented here.
 - Added [mypy](https://mypy-lang.org/) in **strict** mode, configured in
   `pyproject.toml` (`files = ["src/pyzill", "tests"]`; `tests/` relaxes
   untyped-def/untyped-call rules). Run `mypy`. The source tree is fully typed
-  and passes strict mode; the two unavoidable `no-untyped-call` spots are
-  `curl_cffi`'s own unannotated `Response.json()` / `raise_for_status()`.
+  and passes strict mode.
 
 ## [1.2.0] - 2025-10
 

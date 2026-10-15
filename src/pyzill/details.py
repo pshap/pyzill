@@ -1,17 +1,15 @@
+from collections.abc import Callable
 from typing import Any
-
-from curl_cffi.requests import Response
 
 from pyzill import http
 from pyzill.parse import parse_body_departments, parse_body_home
 
+_Parser = Callable[[bytes], dict[str, Any]]
 
-def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> Response:
-    """Fetch a detail page and enforce a 2xx response."""
-    return http.get_page(
-        url,
-        options=http.RequestOptions(proxy_url=proxy_url, impersonate=impersonate, timeout=timeout),
-    )
+
+def _fetch(url: str, parser: _Parser, options: http.RequestOptions) -> dict[str, Any]:
+    """Fetch and parse one Zillow detail page."""
+    return parser(http.get_page(url, options=options).content)
 
 
 def get_from_home_id(
@@ -19,20 +17,13 @@ def get_from_home_id(
     proxy_url: str | None = None,
     impersonate: str = http.DEFAULT_IMPERSONATE,
     timeout: float = http.DEFAULT_TIMEOUT,
+    max_retries: int = http.DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any]:
-    """Scrape data for a property based on its Zillow property ID (zpid).
-
-    Args:
-        property_id: Zillow property ID (zpid).
-        proxy_url: Proxy URL (falls back to ZILLOW_PROXY env var).
-        impersonate: curl_cffi TLS impersonation profile.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        dict[str, Any]: parsed property information
-    """
-    home_url = f"{http.ZILLOW_HOME}/homedetails/any-title/{property_id}_zpid/"
-    return get_from_home_url(home_url, proxy_url, impersonate, timeout)
+    return _fetch(
+        f"{http.ZILLOW_HOME}/homedetails/any-title/{property_id}_zpid/",
+        parse_body_home,
+        http.RequestOptions(proxy_url, impersonate, timeout, max_retries),
+    )
 
 
 def get_from_department_id(
@@ -40,21 +31,13 @@ def get_from_department_id(
     proxy_url: str | None = None,
     impersonate: str = http.DEFAULT_IMPERSONATE,
     timeout: float = http.DEFAULT_TIMEOUT,
+    max_retries: int = http.DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any]:
-    """Scrape data for an apartment/department based on its Zillow ID.
-
-    Args:
-        department_id: Zillow apartment complex ID.
-        proxy_url: Proxy URL (falls back to ZILLOW_PROXY env var).
-        impersonate: curl_cffi TLS impersonation profile.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        dict[str, Any]: parsed department information
-    """
-    home_url = f"{http.ZILLOW_HOME}/apartments/{department_id}/"
-    response = _get(home_url, proxy_url, impersonate, timeout)
-    return parse_body_departments(response.content)
+    return _fetch(
+        f"{http.ZILLOW_HOME}/apartments/{department_id}/",
+        parse_body_departments,
+        http.RequestOptions(proxy_url, impersonate, timeout, max_retries),
+    )
 
 
 def get_from_department_url(
@@ -62,20 +45,13 @@ def get_from_department_url(
     proxy_url: str | None = None,
     impersonate: str = http.DEFAULT_IMPERSONATE,
     timeout: float = http.DEFAULT_TIMEOUT,
+    max_retries: int = http.DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any]:
-    """Scrape data for an apartment/departement based on its Zillow URL.
-
-    Args:
-        department_url: Full Zillow apartment URL.
-        proxy_url: Proxy URL (falls back to ZILLOW_PROXY env var).
-        impersonate: curl_cffi TLS impersonation profile.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        dict[str, Any]: parsed department information
-    """
-    response = _get(department_url, proxy_url, impersonate, timeout)
-    return parse_body_departments(response.content)
+    return _fetch(
+        department_url,
+        parse_body_departments,
+        http.RequestOptions(proxy_url, impersonate, timeout, max_retries),
+    )
 
 
 def get_from_home_url(
@@ -83,20 +59,13 @@ def get_from_home_url(
     proxy_url: str | None = None,
     impersonate: str = http.DEFAULT_IMPERSONATE,
     timeout: float = http.DEFAULT_TIMEOUT,
+    max_retries: int = http.DEFAULT_MAX_RETRIES,
 ) -> dict[str, Any]:
-    """Scrape a Zillow home-detail URL and parse the property data.
-
-    Args:
-        home_url: Full Zillow home-detail URL.
-        proxy_url: Proxy URL (falls back to ZILLOW_PROXY env var).
-        impersonate: curl_cffi TLS impersonation profile.
-        timeout: Request timeout in seconds.
-
-    Returns:
-        dict[str, Any]: parsed property information
-    """
-    response = _get(home_url, proxy_url, impersonate, timeout)
-    return parse_body_home(response.content)
+    return _fetch(
+        home_url,
+        parse_body_home,
+        http.RequestOptions(proxy_url, impersonate, timeout, max_retries),
+    )
 
 
 # Backwards-compatible aliases for the historical "deparment" misspelling.
