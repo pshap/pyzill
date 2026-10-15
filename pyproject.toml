@@ -17,7 +17,7 @@ dependencies=['bs4','requests','curl_cffi']
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
-dev = ["pytest>=7", "ruff>=0.6"]
+dev = ["pytest>=7", "ruff>=0.6", "mypy>=1.11"]
 
 [project.urls]
 Homepage='https://github.com/johnbalvin/pyzill'
@@ -47,3 +47,15 @@ select = [
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src/pyzill", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_any_generics = false
+warn_return_any = false

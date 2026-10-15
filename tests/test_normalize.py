@@ -120,4 +120,4 @@ def test_normalize_listings_empty():
 
 def test_normalize_listing_rejects_non_dict():
     with pytest.raises(TypeError):
-        normalize.normalize_listing(["not a dict"])
+        normalize.normalize_listing(["not a dict"])  # type: ignore[arg-type]

@@ -1,6 +1,6 @@
 from collections.abc import Callable, Iterator
 from itertools import islice
-from typing import Any
+from typing import Any, cast
 
 from pyzill import http
 from pyzill.exceptions import ZillowBlockedError
@@ -245,8 +245,8 @@ def search(  # noqa: PLR0913 - mirrors Zillow's filter surface
             url=_SEARCH_URL,
             body_snippet=response.text or "",
         )
-    data = response.json()
-    return data.get("cat1", {}).get("searchResults", {})
+    data = response.json()  # type: ignore[no-untyped-call]
+    return cast("dict[str, Any]", data.get("cat1", {}).get("searchResults", {}))
 
 
 def iter_search(

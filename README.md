@@ -309,6 +309,7 @@ pip install -e ".[dev]"
 pytest            # run tests
 ruff check .      # lint
 ruff format .     # format
+mypy              # type-check (strict; config in pyproject.toml)
 ```
 
 ## License

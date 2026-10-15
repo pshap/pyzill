@@ -1,9 +1,11 @@
 import json
+from typing import Any
 
 import pytest
+from curl_cffi import requests as cffi_requests
 from curl_cffi.requests.exceptions import HTTPError
 
-from pyzill import http, ratelimit
+from pyzill import ratelimit
 
 
 @pytest.fixture(autouse=True)
@@ -18,19 +20,26 @@ def _disable_rate_limit():
 class FakeResponse:
     """Minimal stand-in for a curl_cffi response object."""
 
-    def __init__(self, status_code=200, json_data=None, text="", content=b"", headers=None):
+    def __init__(
+        self,
+        status_code: int = 200,
+        json_data: Any = None,
+        text: str = "",
+        content: bytes = b"",
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status_code = status_code
         self._json = json_data
         self.text = text or (json.dumps(json_data) if json_data is not None else "")
         self.content = content or self.text.encode()
         self.headers = headers or {}
 
-    def json(self):
+    def json(self) -> Any:
         if self._json is None:
             raise json.JSONDecodeError("Expecting value", "", 0)
         return self._json
 
-    def raise_for_status(self):
+    def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise HTTPError(f"HTTP Error {self.status_code}", 0, self)
 
@@ -38,11 +47,20 @@ class FakeResponse:
 class _FakeHTTP:
     """Records outgoing pyzill.http request calls and returns canned responses."""
 
-    def __init__(self, monkeypatch):
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._monkeypatch = monkeypatch
-        self.calls: list[dict] = []
+        self.calls: list[dict[str, Any]] = []
 
-    def install(self, method, *, status_code=200, json_data=None, text="", content=b"", headers=None):
+    def install(
+        self,
+        method: str,
+        *,
+        status_code: int = 200,
+        json_data: Any = None,
+        text: str = "",
+        content: bytes = b"",
+        headers: dict[str, str] | None = None,
+    ) -> FakeResponse:
         """Patch ``curl_cffi.requests.<method>`` to return a FakeResponse."""
         response = FakeResponse(
             status_code=status_code,
@@ -52,11 +70,11 @@ class _FakeHTTP:
             headers=headers,
         )
 
-        def handler(**kwargs):
+        def handler(**kwargs: Any) -> FakeResponse:
             self.calls.append({"method": method.lower(), **kwargs})
             return response
 
-        self._monkeypatch.setattr(http.requests, method.lower(), handler)
+        self._monkeypatch.setattr(cffi_requests, method.lower(), handler)
         return response
 
 

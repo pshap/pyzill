@@ -1,10 +1,12 @@
 from typing import Any
 
+from curl_cffi.requests import Response
+
 from pyzill import http
 from pyzill.parse import parse_body_departments, parse_body_home
 
 
-def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> Any:
+def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> Response:
     """Fetch a detail page and enforce a 2xx response."""
     headers = {**http.build_headers(impersonate), "Sec-Fetch-Site": "none"}
     response = http.request(
@@ -15,7 +17,7 @@ def _get(url: str, proxy_url: str | None, impersonate: str, timeout: float) -> A
         impersonate=impersonate,
         timeout=timeout,
     )
-    response.raise_for_status()
+    response.raise_for_status()  # type: ignore[no-untyped-call]
     return response
 
 

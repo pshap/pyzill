@@ -5,9 +5,10 @@ status handling so that search and detail requests stay consistent.
 """
 
 import time
-from typing import Any
+from typing import Any, cast
 
 from curl_cffi import requests
+from curl_cffi.requests import Response
 
 from pyzill.exceptions import ZillowBlockedError
 from pyzill.ratelimit import wait_for_slot
@@ -68,7 +69,7 @@ def build_proxies(proxy_url: str | None) -> dict[str, str] | None:
     return {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
 
-def is_ok(response: Any) -> bool:
+def is_ok(response: Response) -> bool:
     """Return True if the response has a 2xx status code."""
     return _HTTP_OK_MIN <= response.status_code < _HTTP_OK_MAX
 
@@ -83,7 +84,7 @@ def request(  # noqa: PLR0913 - central request primitive
     timeout: float = 30.0,
     max_retries: int = 0,
     json: Any = None,
-) -> Any:
+) -> Response:
     """Issue a throttled Zillow request, retrying transient (5xx) failures.
 
     The raw response is returned for any non-5xx status so callers can apply
@@ -101,7 +102,7 @@ def request(  # noqa: PLR0913 - central request primitive
         json: JSON body to send, or None.
 
     Returns:
-        Any: the curl_cffi response object.
+        Response: the curl_cffi response object.
 
     Raises:
         ZillowBlockedError: If a 5xx persists after all retries.
@@ -109,18 +110,21 @@ def request(  # noqa: PLR0913 - central request primitive
     proxies = build_proxies(proxy_url)
     send = getattr(requests, method.lower())
     body: dict[str, Any] = {} if json is None else {"json": json}
-    last_exception: Exception | None = None
+    last_exception: Exception = RuntimeError("pyzill.http.request sent no requests")
 
     for attempt in range(max_retries + 1):
         wait_for_slot()
         try:
-            response = send(
-                url=url,
-                headers=headers,
-                proxies=proxies,
-                impersonate=impersonate,
-                timeout=timeout,
-                **body,
+            response = cast(
+                "Response",
+                send(
+                    url=url,
+                    headers=headers,
+                    proxies=proxies,
+                    impersonate=impersonate,
+                    timeout=timeout,
+                    **body,
+                ),
             )
         except Exception as exc:
             last_exception = exc

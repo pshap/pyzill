@@ -20,6 +20,13 @@ All notable changes to this project are documented here.
 - `get_from_department_id` now builds `https://www.zillow.com/apartments/<id>/`
   (previously a hardcoded example URL).
 
+### Tooling
+- Added [mypy](https://mypy-lang.org/) in **strict** mode, configured in
+  `pyproject.toml` (`files = ["src/pyzill", "tests"]`; `tests/` relaxes
+  untyped-def/untyped-call rules). Run `mypy`. The source tree is fully typed
+  and passes strict mode; the two unavoidable `no-untyped-call` spots are
+  `curl_cffi`'s own unannotated `Response.json()` / `raise_for_status()`.
+
 ## [1.2.0] - 2025-10
 
 ### Added

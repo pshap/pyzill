@@ -1,6 +1,8 @@
+import time
+
 import pytest
 
-from pyzill import exceptions, http, search
+from pyzill import exceptions, search
 
 
 def test_for_sale_success(fake_http, search_success_body):
@@ -40,7 +42,7 @@ def test_for_sale_403_raises_zillow_blocked_error(fake_http):
 
 def test_search_5xx_retries_then_raises(fake_http, monkeypatch):
     fake_http.install("PUT", status_code=503, text="Service Unavailable")
-    monkeypatch.setattr(http.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(time, "sleep", lambda *a, **k: None)
 
     with pytest.raises(exceptions.ZillowBlockedError):
         search.for_sale(search_value="Schenectady NY", max_retries=2)
