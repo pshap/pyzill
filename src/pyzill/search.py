@@ -10,7 +10,7 @@ from pyzill.normalize import normalize_listing
 _SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
 
 
-class _SearchParams(TypedDict, total=False):
+class SearchParams(TypedDict, total=False):
     search_value: str
     pagination: int
     min_beds: int | None
@@ -26,6 +26,67 @@ class _SearchParams(TypedDict, total=False):
     impersonate: str
     timeout: float
     max_retries: int
+
+
+def for_sale(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
+    """Get listings that are for sale.
+
+    Accepts the same keyword arguments as :func:`search`.
+
+    Returns:
+        dict[str, Any]: keys ``mapResults`` (all listings, capped at 500 per
+        query — narrow the bbox/zoom to get more) and ``listResults``.
+
+    Raises:
+        ZillowBlockedError: If Zillow responds with a non-2xx status.
+    """
+    search_kwargs: SearchParams = {
+        **kwargs,
+        "filter_state": _flags(sortSelection="globalrelevanceex", isAllHomes=True),
+    }
+    return search(**search_kwargs)
+
+
+def for_rent(
+    *,
+    is_room: bool = False,
+    is_entire_place: bool = False,
+    **kwargs: Unpack[SearchParams],
+) -> dict[str, Any]:
+    """Get listings that are for rent.
+
+    Accepts the same keyword arguments as :func:`for_sale`, plus ``is_room``
+    (bool, default False) and ``is_entire_place`` (bool, default False).
+
+    Raises:
+        ZillowBlockedError: If Zillow responds with a non-2xx status.
+    """
+    filter_state = {
+        **_RENT_SOLD_BASE,
+        **_flags(sortSelection="priorityscore", isForRent=True),
+    }
+    if is_room:
+        filter_state["isRoomForRent"] = {"value": True}
+    if not is_entire_place:
+        filter_state["isEntirePlaceForRent"] = {"value": False}
+    search_kwargs: SearchParams = {**kwargs, "filter_state": filter_state}
+    return search(**search_kwargs)
+
+
+def sold(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
+    """Get listings that were sold.
+
+    Accepts the same keyword arguments as :func:`for_sale`.
+
+    Raises:
+        ZillowBlockedError: If Zillow responds with a non-2xx status.
+    """
+    filter_state = {
+        **_RENT_SOLD_BASE,
+        **_flags(sortSelection="globalrelevanceex", isForRent=False, isRecentlySold=True),
+    }
+    search_kwargs: SearchParams = {**kwargs, "filter_state": filter_state}
+    return search(**search_kwargs)
 
 
 class _QueryStateParams(TypedDict):
@@ -95,66 +156,7 @@ def _build_search_query_state(**kwargs: Unpack[_QueryStateParams]) -> dict[str, 
     return query_state
 
 
-def for_sale(**kwargs: Any) -> dict[str, Any]:
-    """Get listings that are for sale.
-
-    Accepts the same keyword arguments as :func:`search` (``search_value``,
-    ``pagination``, ``min_beds`` / ``max_beds``, ``min_bathrooms`` /
-    ``max_bathrooms``, ``min_price`` / ``max_price``, ``bbox``, ``zoom_value``,
-    ``proxy_url``,
-    ``impersonate``, ``timeout``, ``max_retries``).
-
-    Returns:
-        dict[str, Any]: keys ``mapResults`` (all listings, capped at 500 per
-        query — narrow the bbox/zoom to get more) and ``listResults``.
-
-    Raises:
-        ZillowBlockedError: If Zillow responds with a non-2xx status.
-    """
-    return search(
-        filter_state=_flags(sortSelection="globalrelevanceex", isAllHomes=True),
-        **kwargs,
-    )
-
-
-def for_rent(**kwargs: Any) -> dict[str, Any]:
-    """Get listings that are for rent.
-
-    Accepts the same keyword arguments as :func:`for_sale`, plus ``is_room``
-    (bool, default False) and ``is_entire_place`` (bool, default False).
-
-    Raises:
-        ZillowBlockedError: If Zillow responds with a non-2xx status.
-    """
-    is_room = kwargs.pop("is_room", False)
-    is_entire_place = kwargs.pop("is_entire_place", False)
-    filter_state = {
-        **_RENT_SOLD_BASE,
-        **_flags(sortSelection="priorityscore", isForRent=True),
-    }
-    if is_room:
-        filter_state["isRoomForRent"] = {"value": True}
-    if not is_entire_place:
-        filter_state["isEntirePlaceForRent"] = {"value": False}
-    return search(filter_state=filter_state, **kwargs)
-
-
-def sold(**kwargs: Any) -> dict[str, Any]:
-    """Get listings that were sold.
-
-    Accepts the same keyword arguments as :func:`for_sale`.
-
-    Raises:
-        ZillowBlockedError: If Zillow responds with a non-2xx status.
-    """
-    filter_state = {
-        **_RENT_SOLD_BASE,
-        **_flags(sortSelection="globalrelevanceex", isForRent=False, isRecentlySold=True),
-    }
-    return search(filter_state=filter_state, **kwargs)
-
-
-def search(**kwargs: Unpack[_SearchParams]) -> dict[str, Any]:
+def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     """Run a raw Zillow search with a custom filter_state.
 
     Most callers should use :func:`for_sale`, :func:`for_rent`, or

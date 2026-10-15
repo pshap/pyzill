@@ -1,8 +1,16 @@
+import inspect
 import time
 
 import pytest
 
 from pyzill import CONTINENTAL_US, BBox, exceptions, search
+
+
+def test_for_rent_exposes_rental_flags_as_keyword_parameters():
+    parameters = inspect.signature(search.for_rent).parameters
+
+    assert parameters["is_room"].default is False
+    assert parameters["is_entire_place"].default is False
 
 
 def test_bbox_maps_and_splits():
