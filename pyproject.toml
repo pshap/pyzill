@@ -11,6 +11,7 @@ authors = [
 ]
 readme= "README.md"
 license = { text = "MIT" }
+requires-python = ">=3.12"
 keywords=['zillow', 'scraper', 'crawler']
 dependencies=['bs4','requests','curl_cffi']
 
@@ -38,11 +39,11 @@ select = [
     "E", "W", "F", "I", "B", "UP", "C4", "SIM",
     "RUF", "N", "A", "RET", "PIE", "PERF", "FURB", "TID",
     "PGH", "PTH", "ISC", "ICN", "LOG", "G", "RSE", "PLW", "PLE",
-    "DTZ", "ERA", "PT", "S",
+    "DTZ", "ERA", "PT", "S", "PLR", "ARG",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "PLR0913", "PLR0917", "PLR2004", "ARG001", "ARG005"]
 
 [tool.ruff.format]
 quote-style = "double"

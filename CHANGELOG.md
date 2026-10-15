@@ -20,7 +20,14 @@ All notable changes to this project are documented here.
   `ruff check .` and `ruff format .`. Enabled rule sets include `E`, `W`, `F`,
   `I`, `B`, `UP`, `C4`, `SIM`, `RUF`, `N`, `A`, `RET`, `PIE`, `PERF`, `FURB`,
   `TID`, `PGH`, `PTH`, `ISC`, `ICN`, `LOG`, `G`, `RSE`, `PLW`, `PLE`, `DTZ`,
-  `ERA`, `PT`, and `S` (with `assert` ignored under `tests/`).
+  `ERA`, `PT`, `S`, `PLR`, and `ARG`. Test-only false positives (`assert`,
+  magic values, unused fake-HTTP-function arguments) are ignored under
+  `tests/`; legitimate `PLR0913`/`PLR0917` on the filter-heavy public API
+  functions use targeted `noqa` comments.
+
+### Changed
+- Added `requires-python = ">=3.12"` to `pyproject.toml`, matching the Ruff
+  `target-version`.
 
 
 ## [1.1.0] - 2025-10

@@ -20,6 +20,11 @@ _DEFAULT_BBOX = {
 
 _SEARCH_URL = "https://www.zillow.com/async-create-search-page-state"
 
+_HTTP_OK_MIN = 200
+_HTTP_OK_MAX = 300  # exclusive
+_HTTP_CLIENT_ERROR_MIN = 400
+_HTTP_SERVER_ERROR_MIN = 500
+
 
 # Headers matching the default impersonate profile (chrome136).
 # curl_cffi already sets TLS/JA3 and most headers; these fill in the rest.
@@ -79,7 +84,7 @@ def _resolve_bbox(
     }
 
 
-def _build_search_query_state(
+def _build_search_query_state(  # noqa: PLR0913, PLR0917 - assembles many query parts
     search_value: str,
     pagination: int,
     bbox: dict[str, float],
@@ -143,12 +148,12 @@ def _do_search_request(
                 continue
             raise
 
-        if 200 <= response.status_code < 300:
+        if _HTTP_OK_MIN <= response.status_code < _HTTP_OK_MAX:
             return response.json()
 
         # Non-2xx: raise immediately on 4xx (client errors like 403 won't
         # succeed on retry); retry on 5xx.
-        if 400 <= response.status_code < 500:
+        if _HTTP_CLIENT_ERROR_MIN <= response.status_code < _HTTP_SERVER_ERROR_MIN:
             raise ZillowBlockedError(
                 status_code=response.status_code,
                 url=_SEARCH_URL,
@@ -165,7 +170,7 @@ def _do_search_request(
     raise last_exception  # pragma: no cover
 
 
-def for_sale(
+def for_sale(  # noqa: PLR0913, PLR0917 - mirrors Zillow's filter surface
     search_value: str = "",
     pagination: int = 1,
     min_beds: int | None = None,
@@ -238,7 +243,7 @@ def for_sale(
     )
 
 
-def for_rent(
+def for_rent(  # noqa: PLR0913, PLR0917 - mirrors Zillow's filter surface
     search_value: str = "",
     pagination: int = 1,
     is_entire_place: bool = False,
@@ -303,7 +308,7 @@ def for_rent(
     )
 
 
-def sold(
+def sold(  # noqa: PLR0913, PLR0917 - mirrors Zillow's filter surface
     search_value: str = "",
     pagination: int = 1,
     min_beds: int | None = None,
@@ -363,7 +368,7 @@ def sold(
     )
 
 
-def search(
+def search(  # noqa: PLR0913, PLR0917 - mirrors Zillow's filter surface
     search_value: str = "",
     pagination: int = 1,
     min_beds: int | None = None,
