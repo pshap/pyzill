@@ -19,6 +19,21 @@ _DEFAULT_BBOX = {
 _SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
 
 
+def _flags(**values: Any) -> dict[str, dict[str, Any]]:
+    return {key: {"value": value} for key, value in values.items()}
+
+
+_RENT_SOLD_BASE = _flags(
+    isNewConstruction=False,
+    isForSaleForeclosure=False,
+    isForSaleByOwner=False,
+    isForSaleByAgent=False,
+    isComingSoon=False,
+    isAuction=False,
+    isAllHomes=True,
+)
+
+
 def _range_filter(min_value: int | None, max_value: int | None) -> dict[str, int] | None:
     """Build a Zillow ``{min, max}`` range filter, or None if both are unset."""
     if min_value is None and max_value is None:
@@ -110,10 +125,7 @@ def for_sale(**kwargs: Any) -> dict[str, Any]:
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
     return search(
-        filter_state={
-            "sortSelection": {"value": "globalrelevanceex"},
-            "isAllHomes": {"value": True},
-        },
+        filter_state=_flags(sortSelection="globalrelevanceex", isAllHomes=True),
         **kwargs,
     )
 
@@ -130,15 +142,8 @@ def for_rent(**kwargs: Any) -> dict[str, Any]:
     is_room = kwargs.pop("is_room", False)
     is_entire_place = kwargs.pop("is_entire_place", False)
     filter_state = {
-        "sortSelection": {"value": "priorityscore"},
-        "isNewConstruction": {"value": False},
-        "isForSaleForeclosure": {"value": False},
-        "isForSaleByOwner": {"value": False},
-        "isForSaleByAgent": {"value": False},
-        "isForRent": {"value": True},
-        "isComingSoon": {"value": False},
-        "isAuction": {"value": False},
-        "isAllHomes": {"value": True},
+        **_RENT_SOLD_BASE,
+        **_flags(sortSelection="priorityscore", isForRent=True),
     }
     if is_room:
         filter_state["isRoomForRent"] = {"value": True}
@@ -156,16 +161,8 @@ def sold(**kwargs: Any) -> dict[str, Any]:
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
     filter_state = {
-        "sortSelection": {"value": "globalrelevanceex"},
-        "isNewConstruction": {"value": False},
-        "isForSaleForeclosure": {"value": False},
-        "isForSaleByOwner": {"value": False},
-        "isForSaleByAgent": {"value": False},
-        "isForRent": {"value": False},
-        "isComingSoon": {"value": False},
-        "isAuction": {"value": False},
-        "isAllHomes": {"value": True},
-        "isRecentlySold": {"value": True},
+        **_RENT_SOLD_BASE,
+        **_flags(sortSelection="globalrelevanceex", isForRent=False, isRecentlySold=True),
     }
     return search(filter_state=filter_state, **kwargs)
 

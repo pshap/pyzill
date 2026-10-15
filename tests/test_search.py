@@ -173,6 +173,46 @@ def test_sold_sets_sold_filters(fake_http, search_success_body):
     assert filter_state["isForRent"] == {"value": False}
 
 
+def test_listing_type_filters_match_current_payloads(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
+
+    search.for_sale(search_value="x")
+    search.for_rent(search_value="x")
+    search.sold(search_value="x")
+
+    states = [call["json"]["searchQueryState"]["filterState"] for call in fake_http.calls[-3:]]
+    assert states == [
+        {
+            "sortSelection": {"value": "globalrelevanceex"},
+            "isAllHomes": {"value": True},
+        },
+        {
+            "sortSelection": {"value": "priorityscore"},
+            "isNewConstruction": {"value": False},
+            "isForSaleForeclosure": {"value": False},
+            "isForSaleByOwner": {"value": False},
+            "isForSaleByAgent": {"value": False},
+            "isForRent": {"value": True},
+            "isComingSoon": {"value": False},
+            "isAuction": {"value": False},
+            "isAllHomes": {"value": True},
+            "isEntirePlaceForRent": {"value": False},
+        },
+        {
+            "sortSelection": {"value": "globalrelevanceex"},
+            "isNewConstruction": {"value": False},
+            "isForSaleForeclosure": {"value": False},
+            "isForSaleByOwner": {"value": False},
+            "isForSaleByAgent": {"value": False},
+            "isForRent": {"value": False},
+            "isComingSoon": {"value": False},
+            "isAuction": {"value": False},
+            "isAllHomes": {"value": True},
+            "isRecentlySold": {"value": True},
+        },
+    ]
+
+
 def test_split_bbox_quadrants():
     quadrants = search.split_bbox(ne_lat=10, ne_long=10, sw_lat=0, sw_long=0)
     assert len(quadrants) == 4
