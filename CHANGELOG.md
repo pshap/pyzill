@@ -11,13 +11,15 @@ All notable changes to this project are documented here.
   names for the apartment-detail functions. `get_from_deparment_id` /
   `get_from_deparment_url` remain as backwards-compatible aliases.
 - `Listing` — a `TypedDict` describing the normalized shape produced by
-  `normalize_listing` / `normalize_listings` (and `iter_search(..., normalize=True)`).
+  `normalize_listing` / `normalize_listings`.
   Zero-dependency static typing for the flat, numeric-or-`None` output;
   `iter_search` now yields `Mapping[str, Any]`.
 - Detail functions accept `max_retries` with the same default and retry policy
   as search functions.
 - Normalization skips non-dict listing entries consistently in
-  `normalize_listing`, `normalize_listings`, and normalized iteration.
+  `normalize_listing` and `normalize_listings`.
+- Added explicit `iter_sale`, `iter_rent`, and `iter_sold` helpers; `iter_search`
+  remains the for-sale shorthand.
 
 ### Changed
 - Centralized HTTP handling in a new internal `pyzill.http` module

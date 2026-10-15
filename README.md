@@ -130,12 +130,13 @@ except pyzill.ZillowBlockedError as exc:
 
 `mapResults` caps at **500 listings per query**. `pagination` does *not*
 increase this cap — it only affects the sidebar `listResults`. To page through
-individual listings use `iter_search`:
+individual for-sale listings use `iter_search` (or use the explicit
+`iter_sale`, `iter_rent`, and `iter_sold` variants):
 
 ```python
 import pyzill
 
-for listing in pyzill.iter_search(pyzill.for_sale, search_value="Schenectady NY"):
+for listing in pyzill.iter_sale(search_value="Schenectady NY"):
     print(listing["zpid"])
 ```
 
@@ -145,9 +146,11 @@ If you hit exactly 500 and need more, split the area into quadrants with
 ```python
 import pyzill
 
-quadrants = pyzill.split_bbox(ne_lat=42.85, ne_long=-73.90, sw_lat=42.78, sw_long=-74.00)
+quadrants = pyzill.split_bbox(
+    pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00)
+)
 for bbox in quadrants:
-    results = pyzill.for_sale(search_value="Schenectady NY", **bbox)
+    results = pyzill.for_sale(search_value="Schenectady NY", bbox=bbox)
     print(len(results["mapResults"]))
 ```
 
@@ -213,12 +216,12 @@ Use `parse_price` on its own to coerce a single value:
 None
 ```
 
-`iter_search` can normalize on the fly:
+Normalize iterator output explicitly with `normalize_listings`:
 
 ```python
 import pyzill
 
-for home in pyzill.iter_search(pyzill.for_sale, normalize=True, search_value="12305"):
+for home in pyzill.normalize_listings(pyzill.iter_sale(search_value="12305")):
     print(home["price"])
 ```
 

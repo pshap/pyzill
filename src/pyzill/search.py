@@ -5,7 +5,6 @@ from typing import Any, TypedDict, Unpack
 from pyzill import http
 from pyzill.bbox import CONTINENTAL_US, BBox
 from pyzill.exceptions import ZillowBlockedError
-from pyzill.normalize import normalize_listing
 
 _SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
 
@@ -254,16 +253,24 @@ def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     return search_results
 
 
-def iter_search(
-    search_fn: Callable[..., dict[str, Any]] = for_sale,
-    max_items: int | None = None,
-    normalize: bool = False,
-    **kwargs: Any,
+def _iter_search(
+    search_fn: Callable[..., dict[str, Any]],
+    *,
+    max_items: int | None,
+    kwargs: dict[str, Any],
 ) -> Iterator[Mapping[str, Any]]:
-    """Yield individual mapResults listings from a search function.
+    map_results = search_fn(**kwargs).get("mapResults", [])
+    for listing in islice(map_results, max_items):
+        if isinstance(listing, Mapping):
+            yield listing
 
-    Wraps :func:`for_sale`, :func:`for_rent`, or :func:`sold` and yields
-    one listing dict at a time from ``mapResults``.
+
+def iter_search(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
+    """Yield individual for-sale listings from ``mapResults``.
+
+    Use :func:`iter_sale`, :func:`iter_rent`, or :func:`iter_sold` when the
+    listing type should be explicit. Apply :func:`normalize_listings` to the
+    iterator when normalized output is needed.
 
     Note:
         Zillow caps ``mapResults`` at **500 listings per query**.  The
@@ -274,31 +281,32 @@ def iter_search(
         below can generate those quadrants for you).
 
     Args:
-        search_fn: One of :func:`for_sale`, :func:`for_rent`, or
-            :func:`sold`.  Defaults to :func:`for_sale`.
         max_items: Stop after yielding this many listings (None = all).
-        normalize: When True, yield :func:`~pyzill.normalize.normalize_listing`
-            output (flat, numeric-or-None fields) instead of raw Zillow dicts.
         **kwargs: Passed directly to the search function.
 
     Yields:
-        Mapping[str, Any]: one listing from mapResults — a raw Zillow mapping,
-        or a :class:`~pyzill.normalize.Listing` when ``normalize=True``.
+        Mapping[str, Any]: one raw listing from mapResults.
 
     Example:
-        >>> for listing in pyzill.iter_search(
-        ...     pyzill.for_sale, search_value="Schenectady NY"
-        ... ):
+        >>> for listing in pyzill.iter_search(search_value="Schenectady NY"):
         ...     print(listing["address"])
     """
-    map_results = search_fn(**kwargs).get("mapResults", [])
-    for listing in islice(map_results, max_items):
-        if normalize:
-            normalized = normalize_listing(listing)
-            if normalized is not None:
-                yield normalized
-        elif isinstance(listing, Mapping):
-            yield listing
+    yield from _iter_search(for_sale, max_items=max_items, kwargs=kwargs)
+
+
+def iter_sale(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
+    """Yield individual for-sale listings from ``mapResults``."""
+    yield from _iter_search(for_sale, max_items=max_items, kwargs=kwargs)
+
+
+def iter_rent(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
+    """Yield individual for-rent listings from ``mapResults``."""
+    yield from _iter_search(for_rent, max_items=max_items, kwargs=kwargs)
+
+
+def iter_sold(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
+    """Yield individual sold listings from ``mapResults``."""
+    yield from _iter_search(sold, max_items=max_items, kwargs=kwargs)
 
 
 def split_bbox(bbox: BBox = CONTINENTAL_US) -> tuple[BBox, BBox, BBox, BBox]:

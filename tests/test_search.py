@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from pyzill import CONTINENTAL_US, BBox, exceptions, search
+from pyzill import CONTINENTAL_US, BBox, exceptions, normalize_listings, search
 
 
 def test_for_rent_exposes_rental_flags_as_keyword_parameters():
@@ -143,10 +143,10 @@ def test_proxy_env_fallback(fake_http, monkeypatch, search_success_body):
 def test_iter_search_yields_and_limits(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
 
-    items = list(search.iter_search(search.for_sale, search_value="x"))
+    items = list(search.iter_sale(search_value="x"))
     assert len(items) == 2
 
-    items = list(search.iter_search(search.for_sale, max_items=1, search_value="x"))
+    items = list(search.iter_sale(max_items=1, search_value="x"))
     assert len(items) == 1
     assert items[0]["zpid"] == 348914888
 
@@ -159,10 +159,10 @@ def test_iter_search_default_fn(fake_http, search_success_body):
     assert items[0]["zpid"] == 348914888
 
 
-def test_iter_search_normalize(fake_http, search_success_body):
+def test_normalize_listings_can_normalize_iteration(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
 
-    items = list(search.iter_search(search.for_sale, normalize=True, search_value="x"))
+    items = list(normalize_listings(search.iter_sale(search_value="x")))
     assert len(items) == 2
     # normalized shape: flat keys, numeric-or-None
     assert items[0]["zpid"] == 348914888

@@ -10,7 +10,16 @@ from pyzill.details import (
 from pyzill.exceptions import ZillowBlockedError
 from pyzill.normalize import Listing, normalize_listing, normalize_listings, parse_price
 from pyzill.ratelimit import get_min_interval, set_min_interval
-from pyzill.search import for_rent, for_sale, iter_search, sold, split_bbox
+from pyzill.search import (
+    for_rent,
+    for_sale,
+    iter_rent,
+    iter_sale,
+    iter_search,
+    iter_sold,
+    sold,
+    split_bbox,
+)
 from pyzill.utils import parse_proxy, resolve_proxy
 
 __all__ = [
@@ -27,7 +36,10 @@ __all__ = [
     "get_from_home_id",
     "get_from_home_url",
     "get_min_interval",
+    "iter_rent",
+    "iter_sale",
     "iter_search",
+    "iter_sold",
     "normalize_listing",
     "normalize_listings",
     "parse_price",
