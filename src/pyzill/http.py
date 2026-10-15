@@ -5,10 +5,10 @@ status handling so that search and detail requests stay consistent.
 """
 
 import time
-from typing import Any, cast
+from typing import Any, Literal
 
 from curl_cffi import requests
-from curl_cffi.requests import Response
+from curl_cffi.requests import ProxySpec, Response
 from curl_cffi.requests.exceptions import RequestException
 
 from pyzill.exceptions import ZillowBlockedError
@@ -60,14 +60,14 @@ def build_headers(impersonate: str = DEFAULT_IMPERSONATE) -> dict[str, str]:
     }
 
 
-def build_proxies(proxy_url: str | None) -> dict[str, str] | None:
+def build_proxies(proxy_url: str | None) -> ProxySpec | None:
     """Resolve ``proxy_url`` (with ``ZILLOW_PROXY`` fallback) into a proxies dict."""
     proxy_url = resolve_proxy(proxy_url)
     return {"http": proxy_url, "https": proxy_url} if proxy_url else None
 
 
 def request(  # noqa: PLR0913 - central request primitive
-    method: str,
+    method: Literal["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "TRACE", "PATCH", "QUERY"],
     url: str,
     *,
     headers: dict[str, str],
@@ -100,23 +100,19 @@ def request(  # noqa: PLR0913 - central request primitive
         ZillowBlockedError: If the response status is not 2xx.
     """
     proxies = build_proxies(proxy_url)
-    send = getattr(requests, method.lower())
-    body: dict[str, Any] = {} if json is None else {"json": json}
     last_exception: Exception = RuntimeError("pyzill.http.request sent no requests")
 
     for attempt in range(max_retries + 1):
         wait_for_slot()
         try:
-            response = cast(
-                "Response",
-                send(
-                    url=url,
-                    headers=headers,
-                    proxies=proxies,
-                    impersonate=impersonate,
-                    timeout=timeout,
-                    **body,
-                ),
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=headers,
+                proxies=proxies,
+                impersonate=impersonate,
+                timeout=timeout,
+                json=json,
             )
         except RequestException:
             if attempt < max_retries:

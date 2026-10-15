@@ -29,7 +29,7 @@ def test_request_retries_request_exceptions(monkeypatch) -> None:
         attempts += 1
         raise RequestException("network down")
 
-    monkeypatch.setattr(cffi_requests, "get", fail)
+    monkeypatch.setattr(cffi_requests, "request", fail)
     monkeypatch.setattr(time, "sleep", lambda *args, **kwargs: None)
 
     with pytest.raises(RequestException):
@@ -46,7 +46,7 @@ def test_request_does_not_retry_other_exceptions(monkeypatch) -> None:
         attempts += 1
         raise RuntimeError("unexpected")
 
-    monkeypatch.setattr(cffi_requests, "get", fail)
+    monkeypatch.setattr(cffi_requests, "request", fail)
     monkeypatch.setattr(time, "sleep", lambda *args, **kwargs: None)
 
     with pytest.raises(RuntimeError):

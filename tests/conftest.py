@@ -61,7 +61,7 @@ class _FakeHTTP:
         content: bytes = b"",
         headers: dict[str, str] | None = None,
     ) -> FakeResponse:
-        """Patch ``curl_cffi.requests.<method>`` to return a FakeResponse."""
+        """Patch ``curl_cffi.requests.request`` to return a FakeResponse."""
         response = FakeResponse(
             status_code=status_code,
             json_data=json_data,
@@ -71,10 +71,15 @@ class _FakeHTTP:
         )
 
         def handler(**kwargs: Any) -> FakeResponse:
-            self.calls.append({"method": method.lower(), **kwargs})
+            call = dict(kwargs)
+            actual_method = str(call["method"]).lower()
+            if actual_method != method.lower():
+                raise AssertionError(f"expected {method}, got {actual_method}")
+            call["method"] = actual_method
+            self.calls.append(call)
             return response
 
-        self._monkeypatch.setattr(cffi_requests, method.lower(), handler)
+        self._monkeypatch.setattr(cffi_requests, "request", handler)
         return response
 
 
