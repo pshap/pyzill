@@ -56,11 +56,6 @@ def _read_min_interval() -> float:
 _limiter = RateLimiter(min_interval=_read_min_interval())
 
 
-def wait_for_slot() -> None:
-    """Wait until it is safe to issue the next Zillow request."""
-    _limiter.wait()
-
-
 def set_min_interval(min_interval: float) -> None:
     """Set the global minimum interval (seconds) between Zillow requests.
 

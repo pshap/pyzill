@@ -13,7 +13,7 @@ from curl_cffi.requests import ProxySpec, Response
 from curl_cffi.requests.exceptions import RequestException
 
 from pyzill.exceptions import ZillowBlockedError
-from pyzill.ratelimit import wait_for_slot
+from pyzill.ratelimit import _limiter
 from pyzill.utils import resolve_proxy
 
 ZILLOW_HOME = "https://www.zillow.com"
@@ -158,7 +158,7 @@ def request(  # noqa: PLR0913 - central request primitive
     last_exception: Exception = RuntimeError("pyzill.http.request sent no requests")
 
     for attempt in range(max_retries + 1):
-        wait_for_slot()
+        _limiter.wait()
         try:
             response = requests.request(
                 method=method,
