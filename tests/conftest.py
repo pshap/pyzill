@@ -22,7 +22,7 @@ class FakeResponse:
         self.status_code = status_code
         self._json = json_data
         self.text = text or (json.dumps(json_data) if json_data is not None else "")
-        self.content = content if content else self.text.encode()
+        self.content = content or self.text.encode()
         self.headers = headers or {}
 
     def json(self):

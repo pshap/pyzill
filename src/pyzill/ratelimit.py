@@ -29,7 +29,7 @@ class RateLimiter:
             return
         with self._lock:
             now = time.monotonic()
-            target = self.min_interval + random.uniform(0, self.jitter)
+            target = self.min_interval + random.uniform(0, self.jitter)  # noqa: S311 (jitter, not crypto)
             elapsed = now - self._last
             if elapsed < target:
                 time.sleep(target - elapsed)

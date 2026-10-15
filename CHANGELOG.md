@@ -17,7 +17,10 @@ All notable changes to this project are documented here.
 ### Tooling
 - Added [Ruff](https://docs.astral.sh/ruff/) for linting and formatting, with
   config in `pyproject.toml` and a `dev` optional-dependency group. Run
-  `ruff check .` and `ruff format .`.
+  `ruff check .` and `ruff format .`. Enabled rule sets include `E`, `W`, `F`,
+  `I`, `B`, `UP`, `C4`, `SIM`, `RUF`, `N`, `A`, `RET`, `PIE`, `PERF`, `FURB`,
+  `TID`, `PGH`, `PTH`, `ISC`, `ICN`, `LOG`, `G`, `RSE`, `PLW`, `PLE`, `DTZ`,
+  `ERA`, `PT`, and `S` (with `assert` ignored under `tests/`).
 
 
 ## [1.1.0] - 2025-10

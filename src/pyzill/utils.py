@@ -1,8 +1,8 @@
 import os
-from re import compile
+import re
 from urllib.parse import quote, urlparse
 
-regex_space = compile(r"[\s ]+")
+regex_space = re.compile(r"[\s ]+")
 
 
 def remove_space(value: str) -> str:
@@ -41,8 +41,7 @@ def parse_proxy(ip_or_domain: str, port: str, username: str, password: str) -> s
     """
     encoded_username = quote(username, safe="")
     encoded_password = quote(password, safe="")
-    proxy_url = f"http://{encoded_username}:{encoded_password}@{ip_or_domain}:{port}"
-    return proxy_url
+    return f"http://{encoded_username}:{encoded_password}@{ip_or_domain}:{port}"
 
 
 def resolve_proxy(proxy_url: str | None = None) -> str | None:

@@ -34,7 +34,15 @@ target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "W", "F", "I", "B", "UP", "C4", "SIM"]
+select = [
+    "E", "W", "F", "I", "B", "UP", "C4", "SIM",
+    "RUF", "N", "A", "RET", "PIE", "PERF", "FURB", "TID",
+    "PGH", "PTH", "ISC", "ICN", "LOG", "G", "RSE", "PLW", "PLE",
+    "DTZ", "ERA", "PT", "S",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
 
 [tool.ruff.format]
 quote-style = "double"

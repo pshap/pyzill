@@ -4,7 +4,7 @@ from pyzill import normalize
 
 
 @pytest.mark.parametrize(
-    "value,expected",
+    ("value", "expected"),
     [
         ("$329,900", 329900),
         ("$1,200,000", 1200000),

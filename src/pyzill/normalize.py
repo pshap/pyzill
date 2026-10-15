@@ -49,7 +49,7 @@ def parse_price(value: Any) -> int | None:
     num = _to_number(value)
     if num is None:
         return None
-    price = int(round(num))
+    price = round(num)
     return price if price > 0 else None
 
 

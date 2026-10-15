@@ -2,7 +2,7 @@ from html import unescape
 from json import loads
 from typing import Any
 
-from bs4 import BeautifulSoup  # type: ignore
+from bs4 import BeautifulSoup  # type: ignore[import-untyped]
 
 from pyzill.utils import get_nested_value, remove_space
 
@@ -16,8 +16,8 @@ def parse_body_home(body: bytes) -> dict[str, Any]:
     Returns:
         dict[str, Any]: parsed property information
     """
-    componentProps = parse_body(body)
-    data_raw = get_nested_value(componentProps, "gdpClientCache")
+    component_props = parse_body(body)
+    data_raw = get_nested_value(component_props, "gdpClientCache")
     property_json = loads(data_raw)
     parsed_data = {}
     for data in property_json.values():
@@ -35,9 +35,8 @@ def parse_body_deparments(body: bytes) -> dict[str, Any]:
     Returns:
         dict[str, Any]: parsed property information
     """
-    componentProps = parse_body(body)
-    department_json = get_nested_value(componentProps, "initialReduxState.gdp")
-    return department_json
+    component_props = parse_body(body)
+    return get_nested_value(component_props, "initialReduxState.gdp")
 
 
 def parse_body(body: bytes) -> dict[str, Any]:
@@ -51,8 +50,9 @@ def parse_body(body: bytes) -> dict[str, Any]:
     """
     soup = BeautifulSoup(body, "html.parser")
     selection = soup.select_one("#__NEXT_DATA__")
-    if selection:
-        htmlData = selection.getText()
-        htmlData = remove_space(unescape(htmlData))
-        data = loads(htmlData)
-        return get_nested_value(data, "props.pageProps.componentProps")
+    if not selection:
+        return {}
+    html_data = selection.getText()
+    html_data = remove_space(unescape(html_data))
+    data = loads(html_data)
+    return get_nested_value(data, "props.pageProps.componentProps")

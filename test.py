@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 
 import pyzill
 
@@ -33,5 +34,4 @@ results_rent = pyzill.for_rent(
     zoom_value=15,
     proxy_url=proxy_url,
 )
-with open("./jsondata_rent2.json", "w") as f:
-    f.write(json.dumps(results_rent))
+Path("./jsondata_rent2.json").write_text(json.dumps(results_rent))

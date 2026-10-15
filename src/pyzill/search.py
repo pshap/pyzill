@@ -52,6 +52,66 @@ def _headers(impersonate: str) -> dict[str, str]:
     }
 
 
+def _range_filter(min_value: int | None, max_value: int | None) -> dict[str, int] | None:
+    """Build a Zillow ``{min, max}`` range filter, or None if both are unset."""
+    if min_value is None and max_value is None:
+        return None
+    result: dict[str, int] = {}
+    if min_value is not None:
+        result["min"] = min_value
+    if max_value is not None:
+        result["max"] = max_value
+    return result
+
+
+def _resolve_bbox(
+    ne_lat: float | None,
+    ne_long: float | None,
+    sw_lat: float | None,
+    sw_long: float | None,
+) -> dict[str, float]:
+    """Fill in any missing bbox corner from the continental-US default."""
+    return {
+        "ne_lat": _DEFAULT_BBOX["ne_lat"] if ne_lat is None else ne_lat,
+        "ne_long": _DEFAULT_BBOX["ne_long"] if ne_long is None else ne_long,
+        "sw_lat": _DEFAULT_BBOX["sw_lat"] if sw_lat is None else sw_lat,
+        "sw_long": _DEFAULT_BBOX["sw_long"] if sw_long is None else sw_long,
+    }
+
+
+def _build_search_query_state(
+    search_value: str,
+    pagination: int,
+    bbox: dict[str, float],
+    zoom_value: int | None,
+    filter_state: dict[str, Any] | None,
+    filters: dict[str, dict[str, int] | None],
+) -> dict[str, Any]:
+    """Assemble the ``searchQueryState`` payload from its parts."""
+    if filter_state is None:
+        filter_state = {}
+    query_state: dict[str, Any] = {
+        "isMapVisible": True,
+        "isListVisible": True,
+        "mapBounds": {
+            "north": bbox["ne_lat"],
+            "east": bbox["ne_long"],
+            "south": bbox["sw_lat"],
+            "west": bbox["sw_long"],
+        },
+        "filterState": filter_state,
+        "pagination": {"currentPage": pagination},
+    }
+    if zoom_value is not None:
+        query_state["mapZoom"] = zoom_value
+    if search_value:
+        query_state["usersSearchTerm"] = search_value
+    for key, value in filters.items():
+        if value is not None:
+            filter_state[key] = value
+    return query_state
+
+
 def _do_search_request(
     input_data: dict[str, Any],
     proxy_url: str | None,
@@ -348,33 +408,20 @@ def search(
     Raises:
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
-    if ne_lat is None:
-        ne_lat = _DEFAULT_BBOX["ne_lat"]
-    if ne_long is None:
-        ne_long = _DEFAULT_BBOX["ne_long"]
-    if sw_lat is None:
-        sw_lat = _DEFAULT_BBOX["sw_lat"]
-    if sw_long is None:
-        sw_long = _DEFAULT_BBOX["sw_long"]
-
-    if filter_state is None:
-        filter_state = {}
-
-    input_data: dict[str, Any] = {
-        "searchQueryState": {
-            "isMapVisible": True,
-            "isListVisible": True,
-            "mapBounds": {
-                "north": ne_lat,
-                "east": ne_long,
-                "south": sw_lat,
-                "west": sw_long,
-            },
-            "filterState": filter_state,
-            "pagination": {
-                "currentPage": pagination,
-            },
+    query_state = _build_search_query_state(
+        search_value=search_value,
+        pagination=pagination,
+        bbox=_resolve_bbox(ne_lat, ne_long, sw_lat, sw_long),
+        zoom_value=zoom_value,
+        filter_state=filter_state,
+        filters={
+            "beds": _range_filter(min_beds, max_beds),
+            "baths": _range_filter(min_bathrooms, max_bathrooms),
+            "price": _range_filter(min_price, max_price),
         },
+    )
+    input_data: dict[str, Any] = {
+        "searchQueryState": query_state,
         "wants": {
             "cat1": ["listResults", "mapResults"],
             "cat2": ["total"],
@@ -382,36 +429,6 @@ def search(
         "requestId": 10,
         "isDebugRequest": False,
     }
-    if zoom_value is not None:
-        input_data["searchQueryState"]["mapZoom"] = zoom_value
-
-    if search_value:
-        input_data["searchQueryState"]["usersSearchTerm"] = search_value
-
-    if min_beds is not None or max_beds is not None:
-        beds: dict[str, int] = {}
-        if min_beds is not None:
-            beds["min"] = min_beds
-        if max_beds is not None:
-            beds["max"] = max_beds
-        input_data["searchQueryState"]["filterState"]["beds"] = beds
-
-    if min_bathrooms is not None or max_bathrooms is not None:
-        baths: dict[str, int] = {}
-        if min_bathrooms is not None:
-            baths["min"] = min_bathrooms
-        if max_bathrooms is not None:
-            baths["max"] = max_bathrooms
-        input_data["searchQueryState"]["filterState"]["baths"] = baths
-
-    if min_price is not None or max_price is not None:
-        price: dict[str, int] = {}
-        if min_price is not None:
-            price["min"] = min_price
-        if max_price is not None:
-            price["max"] = max_price
-        input_data["searchQueryState"]["filterState"]["price"] = price
-
     data = _do_search_request(
         input_data=input_data,
         proxy_url=proxy_url,
