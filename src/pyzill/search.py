@@ -30,15 +30,19 @@ class SearchParams(TypedDict, total=False):
 def for_sale(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     """Get listings that are for sale.
 
-    Accepts the same keyword arguments as :func:`search`.
+    Accepts the same keyword arguments as :func:`search`, except
+    ``filter_state`` (which it builds itself; pass ``filter_state`` to
+    :func:`search` for custom filters).
 
     Returns:
         dict[str, Any]: keys ``mapResults`` (all listings, capped at 500 per
         query — narrow the bbox/zoom to get more) and ``listResults``.
 
     Raises:
+        ValueError: If ``filter_state`` is passed.
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
+    _reject_filter_state(kwargs)
     search_kwargs: SearchParams = {
         **kwargs,
         "filter_state": _flags(sortSelection="globalrelevanceex", isAllHomes=True),
@@ -56,10 +60,13 @@ def for_rent(
 
     Accepts the same keyword arguments as :func:`for_sale`, plus ``is_room``
     (bool, default False) and ``is_entire_place`` (bool, default False).
+    Does not accept ``filter_state`` (see :func:`for_sale`).
 
     Raises:
+        ValueError: If ``filter_state`` is passed.
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
+    _reject_filter_state(kwargs)
     filter_state = {
         **_RENT_SOLD_BASE,
         **_flags(sortSelection="priorityscore", isForRent=True),
@@ -75,11 +82,15 @@ def for_rent(
 def sold(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     """Get listings that were sold.
 
-    Accepts the same keyword arguments as :func:`for_sale`.
+    Accepts the same keyword arguments as :func:`for_sale`, except
+    ``filter_state`` (which it builds itself; pass ``filter_state`` to
+    :func:`search` for custom filters).
 
     Raises:
+        ValueError: If ``filter_state`` is passed.
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
+    _reject_filter_state(kwargs)
     filter_state = {
         **_RENT_SOLD_BASE,
         **_flags(sortSelection="globalrelevanceex", isForRent=False, isRecentlySold=True),
@@ -99,6 +110,19 @@ class _QueryStateParams(TypedDict):
 
 def _flags(**values: Any) -> dict[str, dict[str, Any]]:
     return {key: {"value": value} for key, value in values.items()}
+
+
+def _reject_filter_state(kwargs: Mapping[str, Any]) -> None:
+    """Reject caller-supplied ``filter_state`` on the built-in search variants.
+
+    ``for_sale``/``for_rent``/``sold`` build their own filter state; a caller
+    passing ``filter_state`` would be silently overwritten, so we reject it
+    explicitly.  Use :func:`search` for custom filters.
+    """
+    if "filter_state" in kwargs:
+        raise ValueError(
+            "for_sale/for_rent/sold build their own filter_state; pass custom filters to search() instead"
+        )
 
 
 _RENT_SOLD_BASE = _flags(

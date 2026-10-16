@@ -235,3 +235,11 @@ def test_split_bbox_quadrants():
     assert len(quadrants) == 4
     for q in quadrants:
         assert isinstance(q, BBox)
+
+
+@pytest.mark.parametrize("fn", [search.for_sale, search.for_rent, search.sold])
+def test_listing_type_functions_reject_filter_state(fake_http, fn):
+    fake_http.install("PUT", json_data={"cat1": {"searchResults": {}}})
+
+    with pytest.raises(ValueError, match="filter_state"):
+        fn(filter_state={"isAllHomes": {"value": True}})
