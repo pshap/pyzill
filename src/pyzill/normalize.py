@@ -49,6 +49,8 @@ class Listing(TypedDict):
 # Anything that is not a digit, minus sign or decimal point.
 _NOT_NUMBER = re.compile(r"[^0-9.\-]")
 _PRICE_SUFFIXES = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
+# Trailing rental / "starting at" adornments attached to a price.
+_RENTAL_SUFFIX = re.compile(r"(?:/month(?:ly)?|/mo|\+)\s*$", re.IGNORECASE)
 
 
 def _to_number(value: Any) -> int | float | None:
@@ -84,6 +86,13 @@ def parse_price(value: Any) -> int | None:
     """
     if isinstance(value, str):
         cleaned = value.strip().replace(",", "").replace("$", "")
+        # Strip trailing rental ("/mo", "/month") and "starting at" ("+")
+        # adornments before the letter check, so "$2,500/mo" parses as 2500.
+        while True:
+            stripped = _RENTAL_SUFFIX.sub("", cleaned).strip()
+            if stripped == cleaned:
+                break
+            cleaned = stripped
         suffix = cleaned[-1].upper() if cleaned else ""
         if suffix in _PRICE_SUFFIXES:
             numeric_text = cleaned[:-1].strip()
@@ -95,7 +104,7 @@ def parse_price(value: Any) -> int | None:
         elif re.search(r"[A-Za-z]", cleaned):
             return None
         else:
-            num = _to_number(value)
+            num = _to_number(cleaned)
     else:
         num = _to_number(value)
     if num is None:

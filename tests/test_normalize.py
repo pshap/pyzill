@@ -32,6 +32,20 @@ def test_parse_price(value, expected):
     assert normalize.parse_price(value) == expected
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("$2,500/mo", 2500),
+        ("$2,500+/mo", 2500),
+        ("$1,800+", 1800),
+        ("$1.2M", 1_200_000),
+        ("$450K", 450_000),
+    ],
+)
+def test_parse_price_rental_and_suffix_forms(value, expected):
+    assert normalize.parse_price(value) == expected
+
+
 def test_normalize_listing_full():
     raw = {
         "zpid": "32462766",
