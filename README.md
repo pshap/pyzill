@@ -87,6 +87,10 @@ for listing in results["mapResults"]:
 `for_rent` and `sold` take the same arguments. `for_rent` also accepts
 `is_entire_place` and `is_room`.
 
+`for_sale`, `for_rent`, and `sold` build their own `filter_state`, so they
+**reject** a caller-supplied `filter_state` with a `ValueError`. Use `search()`
+when you need a custom `filter_state`.
+
 ### Proxy configuration
 
 Search is much more reliable through a residential proxy. Pass one explicitly:
@@ -207,12 +211,21 @@ from pyzill import Listing
 home: Listing = pyzill.normalize_listing(results["mapResults"][0])
 ```
 
-Use `parse_price` on its own to coerce a single value:
+Use `parse_price` on its own to coerce a single value. It handles K/M/B
+suffixes and rental adornments (`/mo`, `/month`, trailing `+`):
 
 ```python
 >>> pyzill.parse_price("$1,200,000")
 1200000
+>>> pyzill.parse_price("$550K")
+550000
+>>> pyzill.parse_price("$2,500/mo")   # rental price
+2500
+>>> pyzill.parse_price("$1,800+")     # "starting at" price
+1800
 >>> pyzill.parse_price("$0")   # Zillow uses 0 for "unknown"
+None
+>>> pyzill.parse_price("Contact for price")
 None
 ```
 
@@ -303,6 +316,7 @@ data = pyzill.get_from_apartment_url("https://www.zillow.com/apartments/kissimme
 | `for_sale(...)` | For-sale listings inside a bounding box |
 | `for_rent(...)` | For-rent listings (also `is_entire_place`, `is_room`) |
 | `sold(...)` | Recently-sold listings |
+| `search(...)` | Raw search with a custom `filter_state` (the three above reject `filter_state`) |
 | `iter_search(max_items=None, **kwargs)` / `iter_sale(...)` / `iter_rent(...)` / `iter_sold(...)` | Yield individual listings |
 | `split_bbox(bbox)` | Split a `BBox` into 4 quadrants |
 | `get_from_home_url(url, ...)` / `get_from_home_id(id, ...)` | Home details |
