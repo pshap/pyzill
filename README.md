@@ -25,7 +25,7 @@ Zillow's anti-bot stack (PerimeterX) is aggressive. What works today:
 | Capability | Status | Notes |
 |---|---|---|
 | `get_from_home_url` / `get_from_home_id` | ✅ Works unauthenticated | No proxy required in testing |
-| `get_from_department_url` / `get_from_department_id` | ✅ Works unauthenticated | No proxy required in testing |
+| `get_from_apartment_url` / `get_from_apartment_id` | ✅ Works unauthenticated | No proxy required in testing |
 | `for_sale` / `for_rent` / `sold` | ⚠️ Works, but flaky without a proxy | Rapid repeated requests from one IP get **403** |
 
 **Search endpoints are rate-limited per IP.** A single request often
