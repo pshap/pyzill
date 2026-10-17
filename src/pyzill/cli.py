@@ -255,6 +255,10 @@ def main(  # noqa: PLR0913, PLR0917
 # --------------------------------------------------------------------------- #
 
 
+# Concise column set for --format table (normalized listings, in order).
+_TABLE_COLUMNS = ("address", "price", "beds", "baths", "area", "city", "state", "home_type", "status")
+
+
 def _cell(value: Any) -> str:
     """Turn any value into a display string (None -> '', nested -> JSON)."""
     if value is None:
@@ -296,7 +300,11 @@ def _render_csv(rows: list[dict[str, Any]]) -> str:
 
 
 def _build_table(rows: list[dict[str, Any]]) -> Table:
-    columns = _columns(rows)
+    # Normalized listings carry 21 fields (URLs, coords, ids); showing all of
+    # them makes an unreadable wall at any normal terminal width. Display a
+    # concise subset, falling back to whatever keys exist for other shapes.
+    display = [col for col in _TABLE_COLUMNS if any(col in row for row in rows)]
+    columns = display or _columns(rows)
     table = Table(title="Listings")
     for col in columns:
         table.add_column(col)

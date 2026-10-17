@@ -261,6 +261,13 @@ class TestOutputFormats:
         result = runner.invoke(app, ["search", "sale", "12305", "--format", "table"])
         assert result.exit_code == 0
 
+    def test_table_uses_concise_columns(self, fake_http, search_success_body):
+        fake_http.install("PUT", json_data=search_success_body)
+        result = runner.invoke(app, ["search", "sale", "12305", "--format", "table"])
+        assert result.exit_code == 0
+        assert "address" in result.stdout
+        assert "zpid" not in result.stdout  # concise display set, not all 21 fields
+
     def test_output_to_file(self, fake_http, search_success_body, tmp_path):
         fake_http.install("PUT", json_data=search_success_body)
         output_file = tmp_path / "output.json"
