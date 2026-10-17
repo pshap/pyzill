@@ -9,10 +9,12 @@ import json
 import os
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import Enum
 from functools import cached_property
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Any, NoReturn, cast
 
@@ -116,35 +118,49 @@ def _redact(message: str) -> str:
     return _USERINFO_RE.sub("***@", message)
 
 
+def _stderr_line(style: str, label: str, message: str) -> None:
+    """Print one diagnostic line to stderr, redacting credentials."""
+    _ctx.stderr_console.print(f"[{style}]{label}[/] {escape(_redact(message))}")
+
+
 def error(message: str, code: int = 1) -> NoReturn:
     """Print error to stderr and exit."""
-    _ctx.stderr_console.print(f"[red]Error:[/red] {escape(_redact(message))}")
+    _stderr_line("red", "Error:", message)
     raise typer.Exit(code)
 
 
 def warn(message: str) -> None:
     """Print warning to stderr."""
     if not _ctx.quiet:
-        _ctx.stderr_console.print(f"[yellow]Warning:[/yellow] {escape(message)}")
+        _stderr_line("yellow", "Warning:", message)
 
 
 def debug(message: str) -> None:
     """Print debug message to stderr."""
     if _ctx.verbose:
-        _ctx.stderr_console.print(f"[dim]Debug:[/dim] {escape(message)}")
+        _stderr_line("dim", "Debug:", message)
 
 
 def version_callback(value: bool) -> None:
     """Show version and exit."""
     if value:
-        from importlib.metadata import version
-
         try:
             ver = version("pyzill")
-        except Exception:
+        except PackageNotFoundError:
             ver = "unknown"
         typer.echo(f"pyzill {ver}")
         raise typer.Exit
+
+
+@contextmanager
+def _network_errors(failure: str) -> Iterator[None]:
+    """Turn library failures into clean exit-1 errors."""
+    try:
+        yield
+    except ZillowBlockedError as e:
+        error(f"Zillow blocked the request: {e}", code=1)
+    except Exception as e:
+        error(f"{failure}: {e}", code=1)
 
 
 @app.callback()
@@ -214,7 +230,7 @@ def main(  # noqa: PLR0913, PLR0917
     _ctx = Context(
         quiet=quiet,
         verbose=verbose,
-        no_color=no_color or "NO_COLOR" in os.environ or "PYZILL_NO_COLOR" in os.environ,
+        no_color=no_color or any(name in os.environ for name in ("NO_COLOR", "PYZILL_NO_COLOR")),
         proxy=proxy,
         impersonate=impersonate or DEFAULT_IMPERSONATE,
         timeout=timeout,
@@ -244,8 +260,16 @@ def _cell(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, dict | list):
-        return json.dumps(value, ensure_ascii=False)
+        return _dumps(value)
     return str(value)
+
+
+def _dumps(obj: Any) -> str:
+    """JSON-serialize strictly (no NaN/Infinity), which downstream parsers accept."""
+    try:
+        return json.dumps(obj, ensure_ascii=False, allow_nan=False)
+    except ValueError as e:
+        error(f"Output is not valid JSON: {e}", code=1)
 
 
 def _require_rows(data: Any, output_format: OutputFormat) -> list[dict[str, Any]]:
@@ -256,10 +280,7 @@ def _require_rows(data: Any, output_format: OutputFormat) -> list[dict[str, Any]
 
 def _columns(rows: list[dict[str, Any]]) -> list[str]:
     """Union of keys across all rows, in first-seen order."""
-    columns: dict[str, None] = {}
-    for row in rows:
-        columns.update(dict.fromkeys(row))
-    return list(columns)
+    return list(dict.fromkeys(col for row in rows for col in row))
 
 
 def _render_csv(rows: list[dict[str, Any]]) -> str:
@@ -322,12 +343,12 @@ def write_output(
         output = None  # stdout
 
     if output_format is OutputFormat.json:
-        _emit(json.dumps(data, ensure_ascii=False), output)
+        _emit(_dumps(data), output)
         return
 
     if output_format is OutputFormat.jsonl:
         items = data if isinstance(data, list) else [data]
-        _emit("\n".join(json.dumps(item, ensure_ascii=False) for item in items), output)
+        _emit("\n".join(_dumps(item) for item in items), output)
         return
 
     # csv and table both need a list of rows. An empty result is not an error.
@@ -341,9 +362,9 @@ def write_output(
         table = _build_table(rows)
         if output:
             # Render to text so --output works for tables too.
-            console = Console(file=io.StringIO(), no_color=True, force_terminal=False, width=200)
-            console.print(table)
-            _emit(cast(io.StringIO, console.file).getvalue(), output)
+            buffer = io.StringIO()
+            Console(file=buffer, no_color=True, force_terminal=False, width=200).print(table)
+            _emit(buffer.getvalue(), output)
         else:
             _ctx.stdout_console.print(table)
 
@@ -456,7 +477,7 @@ def run_search(  # noqa: PLR0913
     http_kwargs = _ctx.http_kwargs
     debug(f"{search_fn.__name__}: query={query!r} bbox={bbox}")
 
-    try:
+    with _network_errors("Search failed"):
         result = search_fn(
             search_value=query,
             bbox=bbox,
@@ -470,10 +491,6 @@ def run_search(  # noqa: PLR0913
             **extra,
             **http_kwargs,
         )
-    except ZillowBlockedError as e:
-        error(f"Zillow blocked the request: {e}", code=1)
-    except Exception as e:
-        error(f"Search failed: {e}", code=1)
 
     data = result if raw else normalize_listings(extract_listings(result))
     write_output(data, output_format, output)
@@ -572,12 +589,8 @@ def run_detail(
     http_kwargs = _ctx.http_kwargs
     debug(f"{fetch.__name__}: {value!r}")
 
-    try:
+    with _network_errors("Detail fetch failed"):
         result = fetch(value, **http_kwargs)
-    except ZillowBlockedError as e:
-        error(f"Zillow blocked the request: {e}", code=1)
-    except Exception as e:
-        error(f"Detail fetch failed: {e}", code=1)
 
     write_output(result, output_format, output)
 
@@ -613,6 +626,23 @@ def detail_apartment(
 # --------------------------------------------------------------------------- #
 
 
+def _read_input(source: str) -> str:
+    """Read text from a file path, or from stdin when source is '-'."""
+    if source == "-":
+        try:
+            return typer.get_text_stream("stdin").read()
+        except (OSError, UnicodeDecodeError) as e:
+            error(f"Failed to read stdin: {e}", code=1)
+
+    path = Path(source)
+    if not path.exists():
+        error(f"Input file not found: {source}", code=2)
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        error(f"Failed to read {source}: {e}", code=1)
+
+
 @app.command("normalize")
 def normalize(
     input_or_dash: Annotated[
@@ -623,19 +653,7 @@ def normalize(
     output: OutputOpt = None,
 ) -> None:
     """Normalize raw listing data from file or stdin."""
-    if input_or_dash == "-":
-        try:
-            text = typer.get_text_stream("stdin").read()
-        except (OSError, UnicodeDecodeError) as e:
-            error(f"Failed to read stdin: {e}", code=1)
-    else:
-        input_path = Path(input_or_dash)
-        if not input_path.exists():
-            error(f"Input file not found: {input_or_dash}", code=2)
-        try:
-            text = input_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as e:
-            error(f"Failed to read {input_or_dash}: {e}", code=1)
+    text = _read_input(input_or_dash)
 
     try:
         data = json.loads(text)
