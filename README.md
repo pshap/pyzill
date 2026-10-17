@@ -50,19 +50,16 @@ pyzill includes a command-line interface for quick searches and data extraction 
 ### Basic Commands
 
 ```bash
-# Search for-sale listings (default: normalized JSON output)
-pyzill search sale "Schenectady NY" \
-  --north 42.85 --south 42.78 --east -73.90 --west -74.00 \
-  --zoom 12
+# Search for-sale listings (place name is geocoded automatically)
+pyzill search sale "Schenectady NY" --min-beds 2 --max-price 400000
 
-# Search for-rent listings
-pyzill search rent "12305" \
+# Or give an explicit bounding box (skips geocoding)
+pyzill search sale "12305" \
   --north 42.825 --south 42.805 --east -73.925 --west -73.955 \
   --zoom 15
 
-# Search sold listings
-pyzill search sold "Schenectady NY" \
-  --north 42.85 --south 42.78 --east -73.90 --west -74.00
+# Search for-rent listings
+pyzill search rent "12305" --room
 
 # Fetch home details by zpid or URL
 pyzill detail home 348914888
@@ -75,6 +72,9 @@ pyzill detail apartment "https://www.zillow.com/apartments/kissimmee-fl/the-nexu
 # Normalize raw listing data from file or stdin
 pyzill normalize listings.json
 cat raw_search.json | pyzill normalize -
+
+# Offline re-slice of previously saved search results (no network)
+pyzill query listings.json --where 'city==Schenectady' --where 'ppsf>=130' --sort ppsf:asc
 ```
 
 ### Output Formats
@@ -113,8 +113,89 @@ pyzill search sale "12305" --min-beds 2 --max-beds 4 --min-bathrooms 1
 
 # Rental-specific filters
 pyzill search rent "12305" --room              # rooms for rent
-pyzill search rent "12305" --entire-place     # entire places for rent
+pyzill search rent "12305" --entire-place      # entire places for rent
 ```
+
+### Geocoded search
+
+You don't need to know the bounding box. If you omit
+`--north/--south/--east/--west`, the CLI geocodes the search query with the
+OpenStreetMap Nominatim service and uses the returned viewport:
+
+```bash
+pyzill search sale "Schenectady NY" --max-price 400000 --min-beds 3
+```
+
+- Results are cached on disk (`~/.cache/pyzill/geocode.json`, override with
+  `XDG_CACHE_HOME`) so repeated searches for the same place are instant.
+- Pass an explicit bbox to skip geocoding entirely.
+- `--proxy` is honored for the geocode request too.
+- If geocoding fails, the CLI exits with code 1 and tells you to pass an
+  explicit bbox.
+
+### Offline re-slicing (`query`)
+
+`pyzill query` filters previously saved search results on your machine —
+no network, no rate limit, no 403 risk. Fetch once, slice many times:
+
+```bash
+# Fetch and save
+pyzill search sale "Schenectady NY" --output listings.json
+
+# Re-slice offline as many times as you like
+pyzill query listings.json --where 'city==Schenectady' --where 'area>=1000'
+pyzill query listings.json --where 'home_type==SINGLE_FAMILY' --sort price:asc --limit 20
+pyzill query listings.json --where 'ppsf>=130' --where 'ppsf<=200' --format csv
+cat listings.json | pyzill query - --where 'zipcode==12308' --format table
+```
+
+**Filtering** — repeat `--where FIELD OP VALUE` for AND logic:
+
+| Operator | Meaning |
+|---|---|
+| `==` or `=` | equals |
+| `!=` | not equals |
+| `>`, `>=`, `<`, `<=` | numeric order |
+| `~` | case-insensitive substring |
+
+- Numbers compare numerically; `--where 'price>=200000'` and
+  `--where 'price>=$200,000'` both work.
+- Fields with `==`/`=`/`!=` compare numerically when both sides look numeric,
+  so `zipcode==12308` matches the string `"12308"`.
+- Strings compare case-insensitively, so `city==schenectady` matches
+  `"Schenectady"`.
+- `null` / `none` match missing values.
+
+**Fields** — the normalized listing fields (`zpid`, `price`, `beds`, `baths`,
+`area`, `address`, `city`, `state`, `zipcode`, `latitude`, `longitude`,
+`home_type`, `status`, `status_type`, `detail_url`, `image_url`, `zestimate`,
+`rent_zestimate`) plus one computed field: `ppsf` (price per square foot,
+rounded to 2 decimals; listings without price or area are excluded by
+`ppsf` filters).
+
+**Sorting** — `--sort FIELD:asc` or `--sort FIELD:desc` (default `asc`);
+missing values always sort last.
+
+**Columns** — `--cols zpid,price,beds,area,ppsf` selects and orders output
+columns in table and CSV formats.
+
+### Exploring detail responses
+
+Detail responses are large nested JSON blobs. Two flags help you find your
+way around before you write code:
+
+```bash
+# List top-level fields with their types
+pyzill detail home 32463997 --keys
+
+# Extract one field or nested path (dotted, with [n] list indices)
+pyzill detail home 32463997 --path address.city          # -> "Schenectady"
+pyzill detail home 32463997 --path address               # -> full dict
+pyzill detail home 32463997 --path "homeInsights[0].insights[0].phrases"
+```
+
+`--keys` and `--path` cannot be combined (usage error, exit 2). `--path`
+exits 1 with a message showing where the path broke if the field is missing.
 
 ### Raw vs Normalized Output
 

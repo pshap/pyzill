@@ -1,0 +1,150 @@
+"""Tests for the Nominatim geocoding helper."""
+
+import json
+from typing import Any
+
+import pytest
+
+from pyzill.bbox import BBox
+from pyzill.geocode import GeoResult, _expand_viewport, default_cache_path, geocode
+
+
+class _Resp:
+    def __init__(self, payload: Any) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> Any:
+        return self._payload
+
+
+@pytest.fixture
+def cache_path(tmp_path):
+    return tmp_path / "geocode.json"
+
+
+def _install_get(monkeypatch: pytest.MonkeyPatch, payload: Any = None, exc: Exception | None = None) -> list[dict]:
+    calls: list[dict] = []
+
+    def fake_get(url: str, **kwargs: Any) -> _Resp:
+        calls.append(kwargs)
+        if exc is not None:
+            raise exc
+        return _Resp(payload or [])
+
+    monkeypatch.setattr("pyzill.geocode.requests.get", fake_get)
+    return calls
+
+
+HIT = [
+    {
+        "display_name": "Schenectady, New York, United States",
+        "boundingbox": ["42.7634", "42.8438", "-73.9834", "-73.8931"],
+    }
+]
+
+
+class TestGeocode:
+    def test_successful_lookup(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, HIT)
+        result = geocode("Schenectady NY", cache_path=cache_path)
+        assert isinstance(result, GeoResult)
+        assert result.bbox == BBox(north=42.8438, south=42.7634, east=-73.8931, west=-73.9834)
+        assert "Schenectady" in result.display_name
+
+    def test_result_cached_on_disk(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, HIT)
+        geocode("Schenectady NY", cache_path=cache_path)
+        calls = _install_get(monkeypatch, HIT)
+        result = geocode("schenectady ny", cache_path=cache_path)  # case-insensitive key
+        assert calls == []  # served from cache
+        assert result.display_name.startswith("Schenectady")
+
+    def test_cache_survives_corruption(self, monkeypatch, cache_path):
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text("{not json")
+        _install_get(monkeypatch, HIT)
+        result = geocode("Schenectady NY", cache_path=cache_path)
+        assert result.bbox.north == 42.8438
+
+    def test_no_result_raises(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, [])
+        with pytest.raises(ValueError, match="No geocoding result"):
+            geocode("zzzznowhere", cache_path=cache_path)
+
+    def test_network_error_raises_with_hint(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, exc=OSError("DNS failure"))
+        with pytest.raises(ValueError, match="--north"):
+            geocode("Schenectady NY", cache_path=cache_path)
+
+    def test_empty_place_raises(self, cache_path):
+        with pytest.raises(ValueError, match="empty"):
+            geocode("   ", cache_path=cache_path)
+
+    def test_small_viewport_expanded(self, monkeypatch, cache_path):
+        # Address-level hit: ~10m box gets grown to a neighbourhood.
+        tiny = [{"display_name": "1 Main St", "boundingbox": ["42.7900", "42.7901", "-73.9400", "-73.9399"]}]
+        _install_get(monkeypatch, tiny)
+        result = geocode("1 Main St, Schenectady NY", cache_path=cache_path)
+        assert result.bbox.north - result.bbox.south == pytest.approx(0.02)
+        assert result.bbox.east - result.bbox.west == pytest.approx(0.02)
+
+    def test_cache_write_failure_not_fatal(self, monkeypatch, tmp_path):
+        _install_get(monkeypatch, HIT)
+        ro_dir = tmp_path / "ro"
+        ro_dir.mkdir()
+        ro_dir.chmod(0o500)
+        try:
+            result = geocode("Schenectady NY", cache_path=ro_dir / "sub" / "geocode.json")
+            assert result.bbox.north == 42.8438
+        finally:
+            ro_dir.chmod(0o700)
+
+    def test_default_cache_path_respects_xdg(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+        assert default_cache_path() == tmp_path / "pyzill" / "geocode.json"
+        monkeypatch.delenv("XDG_CACHE_HOME")
+        assert "pyzill" in str(default_cache_path())
+
+
+class TestExpandViewport:
+    @pytest.mark.parametrize(
+        ("north", "south", "east", "west"),
+        [
+            (42.7901, 42.7900, -73.9399, -73.9400),  # both too small
+            (42.8438, 42.7634, -73.8931, -73.9834),  # already large: untouched
+        ],
+    )
+    def test_expand(self, north, south, east, west):
+        n, s, e, w = _expand_viewport(north, south, east, west)
+        assert n > s
+        assert e > w
+        if north - south < 0.02:
+            assert n - s == pytest.approx(0.02)
+        else:
+            assert (n, s) == (north, south)
+
+
+def test_cache_entry_roundtrip(tmp_path, monkeypatch):
+    """Stored entries come back as GeoResults without a network call."""
+    cache = tmp_path / "geocode.json"
+    cache.write_text(
+        json.dumps(
+            {
+                "schenectady ny": {
+                    "display_name": "cached",
+                    "north": 42.9,
+                    "south": 42.7,
+                    "east": -73.8,
+                    "west": -74.0,
+                }
+            }
+        )
+    )
+    calls = _install_get(monkeypatch, HIT)
+    result = geocode("Schenectady NY", cache_path=cache)
+    assert calls == []
+    assert result.display_name == "cached"
+    assert result.bbox.north == 42.9

@@ -38,6 +38,8 @@ from pyzill import (
     sold,
 )
 from pyzill.exceptions import ZillowBlockedError
+from pyzill.geocode import geocode
+from pyzill.normalize import Listing
 
 DEFAULT_IMPERSONATE = "chrome136"
 
@@ -287,10 +289,10 @@ def _columns(rows: list[dict[str, Any]]) -> list[str]:
     return list(dict.fromkeys(col for row in rows for col in row))
 
 
-def _render_csv(rows: list[dict[str, Any]]) -> str:
-    if not rows:
+def _render_csv(rows: list[dict[str, Any]], columns: list[str] | None = None) -> str:
+    if not rows and columns is None:
         return ""
-    columns = _columns(rows)
+    columns = columns or _columns(rows)
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
     writer.writeheader()
@@ -299,12 +301,14 @@ def _render_csv(rows: list[dict[str, Any]]) -> str:
     return buffer.getvalue()
 
 
-def _build_table(rows: list[dict[str, Any]]) -> Table:
+def _build_table(rows: list[dict[str, Any]], columns: list[str] | None = None) -> Table:
     # Normalized listings carry 21 fields (URLs, coords, ids); showing all of
-    # them makes an unreadable wall at any normal terminal width. Display a
-    # concise subset, falling back to whatever keys exist for other shapes.
-    display = [col for col in _TABLE_COLUMNS if any(col in row for row in rows)]
-    columns = display or _columns(rows)
+    # them makes an unreadable wall at any normal terminal width. An explicit
+    # --cols selection wins; otherwise display a concise subset, falling back
+    # to whatever keys exist for other shapes.
+    if columns is None:
+        display = [col for col in _TABLE_COLUMNS if any(col in row for row in rows)]
+        columns = display or _columns(rows)
     table = Table(title="Listings")
     for col in columns:
         table.add_column(col)
@@ -345,6 +349,7 @@ def write_output(
     data: Any,
     output_format: OutputFormat,
     output: str | None = None,
+    columns: list[str] | None = None,
 ) -> None:
     """Write data to stdout or file in specified format."""
     if output == "-":
@@ -365,9 +370,9 @@ def write_output(
         warn("No listings found")
 
     if output_format is OutputFormat.csv:
-        _emit(_render_csv(rows), output)
+        _emit(_render_csv(rows, columns), output)
     elif rows:
-        table = _build_table(rows)
+        table = _build_table(rows, columns)
         if output:
             # Render to text so --output works for tables too.
             buffer = io.StringIO()
@@ -381,7 +386,7 @@ def write_output(
 # Shared option definitions (declared once, reused by every command)
 # --------------------------------------------------------------------------- #
 
-Query = Annotated[str, typer.Argument(help="Search query (e.g., 'Schenectady NY' or ZIP)")]
+Query = Annotated[str, typer.Argument(help="Search query: place name (geocoded), ZIP, or address")]
 North = Annotated[float | None, typer.Option("--north", help="Bounding box north latitude")]
 South = Annotated[float | None, typer.Option("--south", help="Bounding box south latitude")]
 East = Annotated[float | None, typer.Option("--east", help="Bounding box east longitude")]
@@ -483,6 +488,16 @@ def run_search(  # noqa: PLR0913
 
     bbox = build_bbox(north, south, east, west)
     http_kwargs = _ctx.http_kwargs
+    if bbox is None:
+        # No explicit viewport: resolve the query text to one via Nominatim so
+        # we never silently fall back to a continental-US search.
+        debug(f"Geocoding {query!r}")
+        try:
+            geo = geocode(query, proxy_url=http_kwargs.get("proxy_url"))
+        except ValueError as e:
+            error(str(e), code=1)
+        debug(f"Geocoded {query!r} -> {geo.display_name}")
+        bbox = geo.bbox
     debug(f"{search_fn.__name__}: query={query!r} bbox={bbox}")
 
     with _network_errors("Search failed"):
@@ -583,16 +598,71 @@ def search_sold(  # noqa: PLR0913, PLR0917
 # Details
 # --------------------------------------------------------------------------- #
 
+_KEYS = Annotated[bool, typer.Option("--keys", help="List available fields instead of dumping the record")]
+_PATH = Annotated[
+    str | None,
+    typer.Option("--path", help="Extract one field by dotted path, e.g. 'address.city' or 'priceHistory[0].price'"),
+]
 
-def run_detail(
+
+def _path_segments(path: str) -> list[str | int]:
+    """Split a dotted path into keys and list indices ('a.b[0].c' -> a, b, 0, c)."""
+    segments: list[str | int] = []
+    for part in path.split("."):
+        name, _, rest = part.partition("[")
+        if name:
+            segments.append(name)
+        while rest:
+            rest = rest.removeprefix("[")
+            index, close, rest = rest.partition("]")
+            if not close or not index.isdigit():
+                error(f"Bad --path {path!r}: expected [n] list indices", code=2)
+            segments.append(int(index))
+    if not segments:
+        error("--path must not be empty", code=2)
+    return segments
+
+
+def _extract_path(data: Any, path: str) -> Any:
+    """Walk a dotted path through nested dicts/lists; error when it goes missing."""
+    current = data
+    walked: list[str] = []
+    for segment in _path_segments(path):
+        label = f"[{segment}]" if isinstance(segment, int) else segment
+        if isinstance(segment, int):
+            ok = isinstance(current, list) and segment < len(current)
+        else:
+            ok = isinstance(current, dict) and segment in current
+        if not ok:
+            here = ".".join(walked) or "(root)"
+            error(f"--path {path!r} not found: no {label!r} at {here}", code=1)
+        current = current[segment]
+        walked.append(str(label))
+    return current
+
+
+def _emit_keys(data: Any, output: str | None = None) -> None:
+    """Print 'key: type' lines for a detail record (or the dict at --path)."""
+    if not isinstance(data, dict):
+        error(f"--keys needs an object (got {type(data).__name__}); try --path to reach one", code=2)
+    width = max((len(key) for key in data), default=0)
+    lines = [f"{key.ljust(width)}  {type(value).__name__}" for key, value in data.items()]
+    _emit("\n".join(lines), output)
+
+
+def run_detail(  # noqa: PLR0913, PLR0917
     fetch: Callable[..., Any],
     value: str | int,
     output_format: OutputFormat,
     output: str | None,
+    keys: bool = False,
+    path: str | None = None,
 ) -> None:
     """Everything the home/apartment detail commands have in common."""
     if output_format is not OutputFormat.json:
         error("Detail commands only support JSON format", code=2)
+    if keys and path:
+        error("--keys and --path can't be used together", code=2)
 
     http_kwargs = _ctx.http_kwargs
     debug(f"{fetch.__name__}: {value!r}")
@@ -600,7 +670,12 @@ def run_detail(
     with _network_errors("Detail fetch failed"):
         result = fetch(value, **http_kwargs)
 
-    write_output(result, output_format, output)
+    if path:
+        write_output(_extract_path(result, path), output_format, output)
+    elif keys:
+        _emit_keys(result, output)
+    else:
+        write_output(result, output_format, output)
 
 
 @detail_app.command("home")
@@ -608,13 +683,15 @@ def detail_home(
     url_or_id: Annotated[str, typer.Argument(help="Zillow home URL or zpid")],
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
+    keys: _KEYS = False,
+    path: _PATH = None,
 ) -> None:
     """Fetch home details by URL or zpid."""
     value = url_or_id.strip()
     if value.isdigit():
-        run_detail(get_from_home_id, int(value), output_format, output)
+        run_detail(get_from_home_id, int(value), output_format, output, keys=keys, path=path)
     else:
-        run_detail(get_from_home_url, value, output_format, output)
+        run_detail(get_from_home_url, value, output_format, output, keys=keys, path=path)
 
 
 @detail_app.command("apartment")
@@ -622,11 +699,145 @@ def detail_apartment(
     url_or_id: Annotated[str, typer.Argument(help="Zillow apartment URL or apartment ID")],
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
+    keys: _KEYS = False,
+    path: _PATH = None,
 ) -> None:
     """Fetch apartment details by URL or apartment ID."""
     value = url_or_id.strip()
     fetch = get_from_apartment_url if value.startswith("http") else get_from_apartment_id
-    run_detail(fetch, value, output_format, output)
+    run_detail(fetch, value, output_format, output, keys=keys, path=path)
+
+
+# --------------------------------------------------------------------------- #
+# Query (offline re-slice of saved results; no network)
+# --------------------------------------------------------------------------- #
+
+# Normalized listing fields, plus ppsf (computed from price/area on the fly).
+_QUERY_FIELDS = frozenset(Listing.__annotations__) | {"ppsf"}
+
+_WHERE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(>=|<=|!=|==|=|>|<|~)\s*(.+?)\s*$")
+_SORT_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?::\s*(asc|desc))?\s*$", re.IGNORECASE)
+
+
+def _coerce_value(text: str) -> Any:
+    """Turn a --where right-hand side into a number, None, or string."""
+    t = text.strip().strip("'\"")
+    if t.lower() in ("null", "none"):
+        return None
+    try:
+        cleaned = t.replace("$", "").replace(",", "")
+        num = float(cleaned)
+    except ValueError:
+        return t
+    return int(num) if num.is_integer() else num
+
+
+def _parse_where(expr: str) -> tuple[str, str, Any]:
+    """Parse one 'FIELD OP VALUE' expression into a condition tuple."""
+    match = _WHERE_RE.match(expr)
+    if not match:
+        error(f"Bad --where {expr!r}. Use: FIELD OP VALUE with OP in >= <= > < == != ~", code=2)
+    field, op, raw = match.groups()
+    if field not in _QUERY_FIELDS:
+        error(f"Unknown field {field!r} in --where. Fields: {', '.join(sorted(_QUERY_FIELDS))}", code=2)
+    return field, op, _coerce_value(raw)
+
+
+def _field_value(row: dict[str, Any], field: str) -> Any:
+    """Read a field from a row, computing ppsf on demand."""
+    if field == "ppsf":
+        price, area = row.get("price"), row.get("area")
+        if price and area:
+            return round(price / area, 2)
+        return None
+    return row.get(field)
+
+
+def _order_match(have: Any, op: str, want: Any) -> bool:
+    """Apply an ordering operator, treating incomparable types as non-matching."""
+    try:
+        return bool({">": have > want, "<": have < want, ">=": have >= want, "<=": have <= want}[op])
+    except TypeError:
+        return False
+
+
+def _where_match(row: dict[str, Any], cond: tuple[str, str, Any]) -> bool:
+    field, op, want = cond
+    have = _field_value(row, field)
+    if op in ("==", "="):
+        if isinstance(have, str) or isinstance(want, str):
+            # 'zipcode==12305' coerces to int; rows may store "12305".
+            return str(have).lower() == str(want).lower() if have is not None and want is not None else have is want
+        return bool(have == want)
+    if op == "!=":
+        return not _where_match(row, (field, "==", want))
+    if have is None or want is None:
+        return False
+    if op == "~":
+        return str(want).lower() in str(have).lower()
+    return _order_match(have, op, want)
+
+
+def _apply_sort(rows: list[dict[str, Any]], spec: str) -> list[dict[str, Any]]:
+    """Sort by 'FIELD' or 'FIELD:asc|:desc'; rows missing the field go last."""
+    match = _SORT_RE.match(spec)
+    if not match:
+        error(f"Bad --sort {spec!r}. Use FIELD or FIELD:asc / FIELD:desc", code=2)
+    field, direction = match.groups()
+    if field not in _QUERY_FIELDS:
+        error(f"Unknown field {field!r} in --sort. Fields: {', '.join(sorted(_QUERY_FIELDS))}", code=2)
+    reverse = (direction or "asc").lower() == "desc"
+    present = [r for r in rows if _field_value(r, field) is not None]
+    missing = [r for r in rows if _field_value(r, field) is None]
+    present.sort(key=lambda r: _field_value(r, field), reverse=reverse)
+    return present + missing
+
+
+@app.command("query")
+def query(  # noqa: PLR0913, PLR0917
+    input_or_dash: Annotated[str, typer.Argument(help="Saved search JSON file, or '-' for stdin")],
+    where: Annotated[
+        list[str] | None,
+        typer.Option("--where", help="Filter: FIELD OP VALUE (repeatable; OP: >= <= > < == != ~)"),
+    ] = None,
+    sort: Annotated[str | None, typer.Option("--sort", help="Sort by FIELD or FIELD:asc / FIELD:desc")] = None,
+    cols: Annotated[str | None, typer.Option("--cols", help="Comma-separated columns to output")] = None,
+    limit: Annotated[int | None, typer.Option("--limit", help="Maximum rows to output")] = None,
+    output_format: FormatOpt = OutputFormat.json,
+    output: OutputOpt = None,
+) -> None:
+    """Re-filter and sort saved search results without hitting Zillow."""
+    if limit is not None and limit < 1:
+        error("--limit must be at least 1", code=2)
+
+    text = _read_input(input_or_dash)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        error(f"Invalid JSON input: {e}", code=1)
+    if not isinstance(data, list):
+        error("query input must be a JSON array of listings (run 'pyzill normalize' first if it isn't)", code=2)
+    rows = [row for row in data if isinstance(row, dict)]
+    if data and not rows:
+        error("query input contains no listing objects", code=2)
+
+    conditions = [_parse_where(expr) for expr in (where or [])]
+    if conditions:
+        rows = [row for row in rows if all(_where_match(row, cond) for cond in conditions)]
+    if sort:
+        rows = _apply_sort(rows, sort)
+    if cols:
+        selected = [col.strip() for col in cols.split(",") if col.strip()]
+        unknown = [col for col in selected if col not in _QUERY_FIELDS]
+        if unknown:
+            error(f"Unknown column(s): {', '.join(unknown)}. Fields: {', '.join(sorted(_QUERY_FIELDS))}", code=2)
+        rows = [{col: _field_value(row, col) for col in selected} for row in rows]
+    else:
+        selected = None
+    if limit is not None:
+        rows = rows[:limit]
+
+    write_output(rows, output_format, output, columns=selected)
 
 
 # --------------------------------------------------------------------------- #

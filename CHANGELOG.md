@@ -6,14 +6,33 @@ All notable changes to this project are documented here.
 
 ### Added
 - Command-line interface: `pyzill search sale|rent|sold`, `pyzill detail
-  home|apartment`, and `pyzill normalize`, with bbox/price/bed/bath filters,
-  `--raw`, json/jsonl/csv/table output to stdout or file, and global
-  `--quiet`/`--verbose`/`--no-color`/`--proxy`/`--impersonate`/`--timeout`/
+  home|apartment`, `pyzill query`, and `pyzill normalize`, with bbox/price/
+  bed/bath filters, `--raw`, json/jsonl/csv/table output to stdout or file, and
+  global `--quiet`/`--verbose`/`--no-color`/`--proxy`/`--impersonate`/`--timeout`/
   `--max-retries`/`--rate-limit`/`--version`. Environment variables
   `PYZILL_PROXY`, `PYZILL_IMPERSONATE`, and `PYZILL_RATE_LIMIT` mirror the
   corresponding flags. Exit codes: 0 success (including zero results), 1
   operational failure, 2 invalid invocation. Available as the `pyzill`
   console script and `python -m pyzill`.
+- Geocoded search: `search` without an explicit bounding box geocodes the
+  query via OpenStreetMap Nominatim and uses the returned viewport. Results
+  are cached on disk (`~/.cache/pyzill/geocode.json`); the proxy setting is
+  honored for the geocode request. Geocoding failure exits 1 with a hint to
+  pass an explicit bbox.
+- `pyzill query FILE` — offline re-slicing of saved search results (file
+  path or `-` for stdin; no network). Repeatable `--where FIELD OP VALUE`
+  for AND logic (`==`, `!=`, `>`, `>=`, `<`, `<=`, `~` contains; numbers
+  compare numerically, including `$`/`,`-adorned literals and the computed
+  `ppsf` field; strings compare case-insensitively; `null`/`none` match
+  missing). `--sort FIELD:asc|desc` (missing values last), `--cols
+  a,b,c` column selection, `--limit N`, plus the standard format/output
+  options.
+- `pyzill detail home|apartment ID --keys` lists top-level fields with
+  types; `--path address.city` (dotted paths with `[n]` list indices)
+  extracts one value. `--keys` and `--path` are mutually exclusive
+  (exit 2); a missing path exits 1 showing where the walk broke.
+- Table output honors an explicit `--cols` selection in `query`
+  (previously the concise-column subset always won).
 - `BBox` and `CONTINENTAL_US` define typed search viewports; search functions
   accept `bbox=` and `split_bbox` returns `BBox` quadrants.
 - `get_from_apartment_id` / `get_from_apartment_url` — canonical names for
