@@ -31,6 +31,7 @@ class RequestOptions:
     timeout: float = DEFAULT_TIMEOUT
     max_retries: int = DEFAULT_MAX_RETRIES
 
+
 _HTTP_OK_MIN = 200
 _HTTP_OK_MAX = 300  # exclusive
 _HTTP_SERVER_ERROR_MIN = 500

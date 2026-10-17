@@ -11,20 +11,16 @@ def test_next_data_preserves_html_entity_text() -> None:
         "props": {
             "pageProps": {
                 "componentProps": {
-                    "value": 'literal &quot; text and &amp; text',
+                    "value": "literal &quot; text and &amp; text",
                 }
             }
         }
     }
-    body = (
-        '<script id="__NEXT_DATA__" type="application/json">'
-        f"{json.dumps(payload)}"
-        "</script>"
-    ).encode()
+    body = (f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(payload)}</script>').encode()
 
     parsed = parse_body(body)
 
-    assert parsed["value"] == 'literal &quot; text and &amp; text'
+    assert parsed["value"] == "literal &quot; text and &amp; text"
 
 
 def test_parse_body_rejects_pages_without_next_data() -> None:
@@ -40,11 +36,7 @@ def test_parse_body_rejects_invalid_json() -> None:
 
 
 def test_parse_body_home_rejects_missing_gdp_cache() -> None:
-    body = (
-        b'<script id="__NEXT_DATA__" type="application/json">'
-        b'{"props":{"pageProps":{"componentProps":{}}}}'
-        b"</script>"
-    )
+    body = b'<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"componentProps":{}}}}</script>'
 
     with pytest.raises(ZillowBlockedError):
         parse_body_home(body)

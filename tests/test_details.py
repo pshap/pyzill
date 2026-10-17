@@ -56,10 +56,13 @@ def test_get_from_apartment_url(fake_http, department_detail_body):
     assert data["id"] == "CgKZT4"
 
 
-@pytest.mark.parametrize("alias", [
-    details.get_from_department_id,
-    details.get_from_deparment_id,
-])
+@pytest.mark.parametrize(
+    "alias",
+    [
+        details.get_from_department_id,
+        details.get_from_deparment_id,
+    ],
+)
 def test_department_id_aliases_warn(fake_http, department_detail_body, alias):
     fake_http.install("GET", content=department_detail_body)
 
@@ -67,10 +70,13 @@ def test_department_id_aliases_warn(fake_http, department_detail_body, alias):
         assert alias("CgKZT4")["id"] == "CgKZT4"
 
 
-@pytest.mark.parametrize("alias", [
-    details.get_from_department_url,
-    details.get_from_deparment_url,
-])
+@pytest.mark.parametrize(
+    "alias",
+    [
+        details.get_from_department_url,
+        details.get_from_deparment_url,
+    ],
+)
 def test_department_url_aliases_warn(fake_http, department_detail_body, alias):
     fake_http.install("GET", content=department_detail_body)
 

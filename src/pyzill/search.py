@@ -120,9 +120,7 @@ def _reject_filter_state(kwargs: Mapping[str, Any]) -> None:
     explicitly.  Use :func:`search` for custom filters.
     """
     if "filter_state" in kwargs:
-        raise ValueError(
-            "for_sale/for_rent/sold build their own filter_state; pass custom filters to search() instead"
-        )
+        raise ValueError("for_sale/for_rent/sold build their own filter_state; pass custom filters to search() instead")
 
 
 _RENT_SOLD_BASE = _flags(

@@ -130,9 +130,7 @@ def test_normalize_listing_falls_back_to_hdp_home_info():
 
 
 def test_normalize_listing_coerces_coordinate_strings():
-    out = normalize.normalize_listing(
-        {"zpid": "1", "latLong": {"latitude": "42.5", "longitude": "-73.9"}}
-    )
+    out = normalize.normalize_listing({"zpid": "1", "latLong": {"latitude": "42.5", "longitude": "-73.9"}})
 
     assert out["latitude"] == 42.5
     assert out["longitude"] == -73.9
