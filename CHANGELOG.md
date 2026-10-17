@@ -5,6 +5,15 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- Command-line interface: `pyzill search sale|rent|sold`, `pyzill detail
+  home|apartment`, and `pyzill normalize`, with bbox/price/bed/bath filters,
+  `--raw`, json/jsonl/csv/table output to stdout or file, and global
+  `--quiet`/`--verbose`/`--no-color`/`--proxy`/`--impersonate`/`--timeout`/
+  `--max-retries`/`--rate-limit`/`--version`. Environment variables
+  `PYZILL_PROXY`, `PYZILL_IMPERSONATE`, and `PYZILL_RATE_LIMIT` mirror the
+  corresponding flags. Exit codes: 0 success (including zero results), 1
+  operational failure, 2 invalid invocation. Available as the `pyzill`
+  console script and `python -m pyzill`.
 - `BBox` and `CONTINENTAL_US` define typed search viewports; search functions
   accept `bbox=` and `split_bbox` returns `BBox` quadrants.
 - `get_from_apartment_id` / `get_from_apartment_url` — canonical names for

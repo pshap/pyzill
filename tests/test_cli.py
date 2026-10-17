@@ -312,9 +312,7 @@ class TestGlobalOptions:
 
     def test_proxy_option(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
-        result = runner.invoke(
-            app, ["--proxy", "http://user:pass@proxy:8080", "search", "sale", "12305"]
-        )
+        result = runner.invoke(app, ["--proxy", "http://user:pass@proxy:8080", "search", "sale", "12305"])
         assert result.exit_code == 0
 
     def test_impersonate_option(self, fake_http, search_success_body):
@@ -355,10 +353,46 @@ class TestEnvVarPrecedence:
     def test_cli_overrides_env(self, fake_http, search_success_body, monkeypatch):
         fake_http.install("PUT", json_data=search_success_body)
         monkeypatch.setenv("PYZILL_PROXY", "http://env:pass@proxy:8080")
-        result = runner.invoke(
-            app, ["--proxy", "http://cli:pass@proxy:9090", "search", "sale", "12305"]
-        )
+        result = runner.invoke(app, ["--proxy", "http://cli:pass@proxy:9090", "search", "sale", "12305"])
         assert result.exit_code == 0
+
+
+class TestProxyValidation:
+    """The root callback rejects bad proxies before any request."""
+
+    def test_invalid_scheme_is_usage_error_and_redacted(self):
+        result = runner.invoke(app, ["--proxy", "ftp://user:SECRETPW@host:1", "search", "sale", "12305"])
+        assert result.exit_code == 2
+        assert "Invalid proxy" in result.stderr
+        assert "SECRETPW" not in result.stderr
+
+    def test_invalid_zillow_proxy_env_is_redacted(self, monkeypatch):
+        monkeypatch.setenv("ZILLOW_PROXY", "ftp://user:SECRETPW@host:1")
+        result = runner.invoke(app, ["search", "sale", "12305"])
+        assert result.exit_code == 2
+        assert "Invalid proxy" in result.stderr
+        assert "SECRETPW" not in result.stderr
+
+
+class TestRateLimit:
+    """--rate-limit and PYZILL_RATE_LIMIT configure the shared limiter."""
+
+    def test_rate_limit_option_applied(self, fake_http, search_success_body):
+        from pyzill import get_min_interval
+
+        fake_http.install("PUT", json_data=search_success_body)
+        result = runner.invoke(app, ["--rate-limit", "2.5", "search", "sale", "12305"])
+        assert result.exit_code == 0
+        assert get_min_interval() == 2.5
+
+    def test_rate_limit_env_var(self, fake_http, search_success_body, monkeypatch):
+        from pyzill import get_min_interval
+
+        fake_http.install("PUT", json_data=search_success_body)
+        monkeypatch.setenv("PYZILL_RATE_LIMIT", "3.5")
+        result = runner.invoke(app, ["search", "sale", "12305"])
+        assert result.exit_code == 0
+        assert get_min_interval() == 3.5
 
 
 class TestNormalizeInputShapes:
@@ -410,10 +444,12 @@ class TestModuleInvocation:
 
     def test_module_invocation_works(self):
         import subprocess
+        from pathlib import Path
 
+        repo_root = Path(__file__).resolve().parents[1]
         result = subprocess.run(
             [sys.executable, "-m", "pyzill", "--help"],
-            cwd="/home/pshap/projects/realestate/pyzill",
+            cwd=repo_root,
             capture_output=True,
             text=True,
             check=False,

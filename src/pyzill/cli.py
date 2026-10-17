@@ -7,6 +7,7 @@ import csv
 import io
 import json
 import os
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from pyzill import (
     get_from_home_url,
     normalize_listings,
     resolve_proxy,
+    set_min_interval,
     sold,
 )
 from pyzill.exceptions import ZillowBlockedError
@@ -89,8 +91,14 @@ class Context:
     @property
     def http_kwargs(self) -> dict[str, Any]:
         """Keyword arguments every pyzill network call accepts."""
+        try:
+            proxy_url = resolve_proxy(self.proxy)
+        except ValueError as e:
+            # Backstop; the root callback validates the proxy before any
+            # command runs. Keeps a bad ZILLOW_PROXY from becoming a traceback.
+            error(f"Invalid proxy: {e}", code=2)
         return {
-            "proxy_url": resolve_proxy(self.proxy),
+            "proxy_url": proxy_url,
             "impersonate": self.impersonate,
             "timeout": self.timeout,
             "max_retries": self.max_retries,
@@ -99,10 +107,18 @@ class Context:
 
 _ctx: Context = Context()
 
+# user:password@ inside a URL (proxy credentials, etc.)
+_USERINFO_RE = re.compile(r"(?<=://)[^/@\s]+@")
+
+
+def _redact(message: str) -> str:
+    """Strip credentials from any URLs embedded in a message."""
+    return _USERINFO_RE.sub("***@", message)
+
 
 def error(message: str, code: int = 1) -> NoReturn:
     """Print error to stderr and exit."""
-    _ctx.stderr_console.print(f"[red]Error:[/red] {escape(message)}")
+    _ctx.stderr_console.print(f"[red]Error:[/red] {escape(_redact(message))}")
     raise typer.Exit(code)
 
 
@@ -169,6 +185,14 @@ def main(  # noqa: PLR0913, PLR0917
         int,
         typer.Option("--max-retries", help="Retries on 5xx errors (default: 1)"),
     ] = 1,
+    rate_limit: Annotated[
+        float | None,
+        typer.Option(
+            "--rate-limit",
+            help="Minimum seconds between requests (default: ZILLOW_MIN_INTERVAL or 1.5; 0 disables)",
+            envvar="PYZILL_RATE_LIMIT",
+        ),
+    ] = None,
     version: Annotated[  # noqa: ARG001
         bool,
         typer.Option(
@@ -196,6 +220,18 @@ def main(  # noqa: PLR0913, PLR0917
         timeout=timeout,
         max_retries=max_retries,
     )
+
+    # Validate the proxy (explicit, PYZILL_PROXY, or ZILLOW_PROXY) up front so
+    # a bad URL is a clean usage error, not a traceback mid-command. The
+    # ValueError message quotes the full URL, so route it through error()'s
+    # credential redaction.
+    try:
+        resolve_proxy(proxy)
+    except ValueError as e:
+        error(f"Invalid proxy: {e}", code=2)
+
+    if rate_limit is not None:
+        set_min_interval(rate_limit)
 
 
 # --------------------------------------------------------------------------- #
@@ -268,7 +304,11 @@ def _emit(content: str, output: str | None) -> None:
     except BrokenPipeError:
         # e.g. `pyzill ... | head`. Point stdout at devnull so Python doesn't
         # complain again while shutting down.
-        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, sys.stdout.fileno())
+        finally:
+            os.close(devnull)
         raise typer.Exit(0) from None
 
 

@@ -140,6 +140,9 @@ pyzill --impersonate chrome120 search sale "12305"
 # Request timeout and retries
 pyzill --timeout 60 --max-retries 3 search sale "12305"
 
+# Rate limit (seconds between requests; 0 disables throttling)
+pyzill --rate-limit 2.5 search sale "12305"
+
 # Quiet mode (suppress progress and diagnostics)
 pyzill --quiet search sale "12305"
 
@@ -159,8 +162,8 @@ The CLI respects these environment variables:
 
 - `PYZILL_PROXY` - Proxy URL (overridden by `--proxy`)
 - `PYZILL_IMPERSONATE` - TLS impersonation profile (overridden by `--impersonate`)
-- `PYZILL_RATE_LIMIT` - Request interval in seconds
-- `NO_COLOR` - Disable colors (same as `--no-color`)
+- `PYZILL_RATE_LIMIT` - Request interval in seconds (overridden by `--rate-limit`)
+- `NO_COLOR` / `PYZILL_NO_COLOR` - Disable colors (same as `--no-color`)
 
 Example:
 
@@ -291,9 +294,7 @@ If you hit exactly 500 and need more, split the area into quadrants with
 ```python
 import pyzill
 
-quadrants = pyzill.split_bbox(
-    pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00)
-)
+quadrants = pyzill.split_bbox(pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00))
 for bbox in quadrants:
     results = pyzill.for_sale(search_value="Schenectady NY", bbox=bbox)
     print(len(results["mapResults"]))
