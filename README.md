@@ -43,6 +43,147 @@ detects this and raises `pyzill.ZillowBlockedError` (never a bare
 pip install pyzill
 ```
 
+## CLI Usage
+
+pyzill includes a command-line interface for quick searches and data extraction without writing Python code.
+
+### Basic Commands
+
+```bash
+# Search for-sale listings (default: normalized JSON output)
+pyzill search sale "Schenectady NY" \
+  --north 42.85 --south 42.78 --east -73.90 --west -74.00 \
+  --zoom 12
+
+# Search for-rent listings
+pyzill search rent "12305" \
+  --north 42.825 --south 42.805 --east -73.925 --west -73.955 \
+  --zoom 15
+
+# Search sold listings
+pyzill search sold "Schenectady NY" \
+  --north 42.85 --south 42.78 --east -73.90 --west -74.00
+
+# Fetch home details by zpid or URL
+pyzill detail home 348914888
+pyzill detail home "https://www.zillow.com/homedetails/27-Washington-Ave/348914888_zpid/"
+
+# Fetch apartment details
+pyzill detail apartment CgKZT4
+pyzill detail apartment "https://www.zillow.com/apartments/kissimmee-fl/the-nexus-at-overbrook/9DSWrh/"
+
+# Normalize raw listing data from file or stdin
+pyzill normalize listings.json
+cat raw_search.json | pyzill normalize -
+```
+
+### Output Formats
+
+The CLI supports multiple output formats:
+
+```bash
+# JSON (default)
+pyzill search sale "12305" --format json
+
+# JSON Lines (one JSON object per line)
+pyzill search sale "12305" --format jsonl
+
+# CSV
+pyzill search sale "12305" --format csv
+
+# Human-readable table
+pyzill search sale "12305" --format table
+```
+
+Output to a file:
+
+```bash
+pyzill search sale "12305" --output results.json
+pyzill search sale "12305" --output -  # stdout (default)
+```
+
+### Search Filters
+
+```bash
+# Price range
+pyzill search sale "12305" --min-price 100000 --max-price 500000
+
+# Bedrooms and bathrooms
+pyzill search sale "12305" --min-beds 2 --max-beds 4 --min-bathrooms 1
+
+# Rental-specific filters
+pyzill search rent "12305" --room              # rooms for rent
+pyzill search rent "12305" --entire-place     # entire places for rent
+```
+
+### Raw vs Normalized Output
+
+```bash
+# Raw search response (includes mapResults and listResults structure)
+pyzill search sale "12305" --raw
+
+# Normalized listings (default: flat dict with numeric-or-None values)
+pyzill search sale "12305"
+```
+
+### Global Options
+
+Global options must come before the command:
+
+```bash
+# Proxy configuration
+pyzill --proxy "http://user:pass@proxy:8080" search sale "12305"
+
+# TLS impersonation profile
+pyzill --impersonate chrome120 search sale "12305"
+
+# Request timeout and retries
+pyzill --timeout 60 --max-retries 3 search sale "12305"
+
+# Quiet mode (suppress progress and diagnostics)
+pyzill --quiet search sale "12305"
+
+# Verbose mode (additional diagnostics)
+pyzill --verbose search sale "12305"
+
+# Disable colors
+pyzill --no-color search sale "12305"
+
+# Show version
+pyzill --version
+```
+
+### Environment Variables
+
+The CLI respects these environment variables:
+
+- `PYZILL_PROXY` - Proxy URL (overridden by `--proxy`)
+- `PYZILL_IMPERSONATE` - TLS impersonation profile (overridden by `--impersonate`)
+- `PYZILL_RATE_LIMIT` - Request interval in seconds
+- `NO_COLOR` - Disable colors (same as `--no-color`)
+
+Example:
+
+```bash
+export PYZILL_PROXY="http://user:pass@proxy:8080"
+pyzill search sale "12305"  # uses proxy from environment
+```
+
+### Exit Codes
+
+- `0` - Success (including zero results, --help, --version)
+- `1` - Operational failures (network errors, blocked requests, file I/O)
+- `2` - Invalid invocation (missing arguments, invalid options, unsupported combinations)
+
+### Module Invocation
+
+You can also invoke the CLI as a Python module:
+
+```bash
+python -m pyzill search sale "12305"
+python -m pyzill --version
+```
+
 ## Quick start
 
 ```python
