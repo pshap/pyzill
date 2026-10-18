@@ -126,6 +126,13 @@ def test_search_does_not_mutate_filter_state(fake_http, search_success_body):
     assert filter_state == {"isAllHomes": {"value": True}}
 
 
+def test_search_rejects_unknown_runtime_keywords():
+    with pytest.raises(TypeError, match="bogus") as exc_info:
+        search.for_sale(search_value="x", min_bed=2, bogus=1)  # type: ignore[call-arg]
+
+    assert "min_beds" in str(exc_info.value)
+
+
 def test_proxy_env_fallback(fake_http, monkeypatch, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
     monkeypatch.setenv("ZILLOW_PROXY", "http://user:pass@proxy.example:8080")

@@ -14,6 +14,15 @@ def test_build_headers_derives_chrome_version() -> None:
     assert '"Chromium";v="145"' in headers["Sec-Ch-Ua"]
 
 
+@pytest.mark.parametrize(
+    "options_factory",
+    [lambda: http.RequestOptions(max_retries=-1), lambda: http.RequestOptions(timeout=0)],
+)
+def test_request_options_reject_invalid_limits(options_factory) -> None:
+    with pytest.raises(ValueError, match=r"timeout|retries"):
+        options_factory()
+
+
 def test_http_helpers_build_request_specific_headers(fake_http) -> None:
     fake_http.install("GET")
     http.get_page("https://www.zillow.com/", options=http.RequestOptions())

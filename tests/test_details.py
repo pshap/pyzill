@@ -56,6 +56,16 @@ def test_get_from_apartment_url(fake_http, department_detail_body):
     assert data["id"] == "CgKZT4"
 
 
+@pytest.mark.parametrize("fetch", [details.get_from_home_url, details.get_from_apartment_url])
+def test_detail_url_rejects_non_zillow_hosts(monkeypatch, fake_http, fetch):
+    monkeypatch.setattr("pyzill.details.http.get_page", lambda *args, **kwargs: pytest.fail("unexpected fetch"))
+
+    with pytest.raises(ValueError, match=r"zillow\.com"):
+        fetch("https://example.com/fake-zillow-page")
+
+    assert fake_http.calls == []
+
+
 @pytest.mark.parametrize(
     "alias",
     [

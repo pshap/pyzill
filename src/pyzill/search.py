@@ -27,6 +27,17 @@ class SearchParams(TypedDict, total=False):
     max_retries: int
 
 
+_SEARCH_PARAM_NAMES = frozenset(SearchParams.__annotations__)
+
+
+def _validate_search_kwargs(kwargs: Mapping[str, Any]) -> None:
+    unknown = kwargs.keys() - _SEARCH_PARAM_NAMES
+    if unknown:
+        valid = ", ".join(sorted(_SEARCH_PARAM_NAMES))
+        invalid = ", ".join(sorted(unknown))
+        raise TypeError(f"Unexpected search keyword(s): {invalid}. Valid keywords: {valid}")
+
+
 def for_sale(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     """Get listings that are for sale.
 
@@ -204,6 +215,7 @@ def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     Raises:
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
+    _validate_search_kwargs(kwargs)
     search_value = kwargs.get("search_value", "")
     pagination = kwargs.get("pagination", 1)
     min_beds = kwargs.get("min_beds")

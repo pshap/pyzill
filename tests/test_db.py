@@ -1,5 +1,7 @@
 """Tests for pyzill.db module."""
 
+import itertools
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +45,7 @@ def test_connect_creates_schema(tmp_path: Path):
 
     # Check user_version is set
     cursor = conn.execute("PRAGMA user_version")
-    assert cursor.fetchone()[0] == 1
+    assert cursor.fetchone()[0] == 2
 
     conn.close()
 
@@ -96,15 +98,15 @@ def test_upsert_new_listing(tmp_path: Path):
     cursor = conn.execute("SELECT * FROM listings WHERE zpid = 123")
     row = cursor.fetchone()
     assert row is not None
-    assert row[1] == 250000  # price
-    assert row[6] == "123 Main St"  # address
+    assert row[2] == 250000  # price
+    assert row[7] == "123 Main St"  # address
 
     # Verify price history was created
     cursor = conn.execute("SELECT * FROM price_history WHERE zpid = 123")
     hist = cursor.fetchone()
     assert hist is not None
-    assert hist[1] == 250000  # price
-    assert hist[2] == "2026-10-01T12:00:00Z"  # seen_utc
+    assert hist[2] == 250000  # price
+    assert hist[3] == "2026-10-01T12:00:00Z"  # seen_utc
 
     conn.close()
 
@@ -256,7 +258,7 @@ def test_upsert_float_zpid_cast(tmp_path: Path):
 
 
 def test_upsert_no_price_change(tmp_path: Path):
-    """Test upsert_listings doesn't add price history when price unchanged."""
+    """Unchanged priced sightings remain recorded without a price-change count."""
     db_path = tmp_path / "test.db"
     conn = connect(db_path)
 
@@ -271,7 +273,7 @@ def test_upsert_no_price_change(tmp_path: Path):
     assert stats.price_changes == 0
 
     cursor = conn.execute("SELECT COUNT(*) FROM price_history WHERE zpid = 123")
-    assert cursor.fetchone()[0] == 1  # Only initial entry
+    assert cursor.fetchone()[0] == 2  # Both priced sightings
 
     conn.close()
 
@@ -362,9 +364,9 @@ def test_get_price_history(tmp_path: Path):
 
     history = get_price_history(conn, 123)
     assert len(history) == 3
-    assert history[0] == {"price": 250000, "seen_utc": "2026-10-01T12:00:00Z"}
-    assert history[1] == {"price": 260000, "seen_utc": "2026-10-02T12:00:00Z"}
-    assert history[2] == {"price": 270000, "seen_utc": "2026-10-03T12:00:00Z"}
+    assert history[0] == {"price": 250000, "seen_utc": "2026-10-01T12:00:00Z", "kind": "sale"}
+    assert history[1] == {"price": 260000, "seen_utc": "2026-10-02T12:00:00Z", "kind": "sale"}
+    assert history[2] == {"price": 270000, "seen_utc": "2026-10-03T12:00:00Z", "kind": "sale"}
 
     conn.close()
 
@@ -446,5 +448,101 @@ def test_roundtrip(tmp_path: Path):
     assert listing_123 is not None
     assert listing_123["price"] == 260000
     assert listing_123["last_seen_utc"] == "2026-10-02T12:00:00Z"
+
+    conn.close()
+
+
+def test_v1_database_migrates_kind_columns_and_history(tmp_path: Path):
+    db_path = tmp_path / "v1.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(
+        """
+        CREATE TABLE listings (
+            zpid INTEGER PRIMARY KEY,
+            first_seen_utc TEXT NOT NULL,
+            last_seen_utc TEXT NOT NULL
+        );
+        CREATE TABLE price_history (
+            zpid INTEGER NOT NULL REFERENCES listings(zpid) ON DELETE CASCADE,
+            price INTEGER NOT NULL,
+            seen_utc TEXT NOT NULL,
+            PRIMARY KEY (zpid, seen_utc)
+        );
+        INSERT INTO listings VALUES (1, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z');
+        INSERT INTO price_history VALUES (1, 100, '2026-01-01T00:00:00Z');
+        PRAGMA user_version = 1;
+        """
+    )
+    legacy.close()
+
+    conn = connect(db_path)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("SELECT kind FROM listings WHERE zpid = 1").fetchone()[0] == "sale"
+    assert conn.execute("SELECT kind FROM price_history WHERE zpid = 1").fetchone()[0] == "sale"
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] > 0
+    conn.close()
+
+
+def test_kind_transition_does_not_mix_price_history(tmp_path: Path):
+    conn = connect(tmp_path / "kind.db")
+    upsert_listings(conn, [{"zpid": 1, "price": 300000}], kind="sale", seen_utc="2026-10-01T00:00:00Z")
+
+    stats = upsert_listings(conn, [{"zpid": 1, "price": 2200}], kind="rent", seen_utc="2026-10-02T00:00:00Z")
+
+    listing = conn.execute("SELECT price, kind FROM listings WHERE zpid = 1").fetchone()
+    assert listing == (2200, "rent")
+    assert stats.price_changes == 0
+    assert get_price_history(conn, 1) == [
+        {"price": 300000, "seen_utc": "2026-10-01T00:00:00Z", "kind": "sale"},
+        {"price": 2200, "seen_utc": "2026-10-02T00:00:00Z", "kind": "rent"},
+    ]
+    conn.close()
+
+
+def test_sparse_sighting_preserves_known_fields_and_price(tmp_path: Path):
+    conn = connect(tmp_path / "sparse.db")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 100, "city": "Albany", "beds": 3}],
+        seen_utc="2026-10-01T00:00:00Z",
+    )
+
+    upsert_listings(conn, [{"zpid": 1, "price": None}], seen_utc="2026-10-02T00:00:00Z")
+
+    assert conn.execute("SELECT price, city, beds FROM listings WHERE zpid = 1").fetchone() == (100, "Albany", 3.0)
+    assert len(get_price_history(conn, 1)) == 1
+    conn.close()
+
+
+def test_out_of_order_sightings_are_order_independent(tmp_path: Path):
+    sightings = [
+        ("2026-09-01T00:00:00Z", 90, "Early"),
+        ("2026-10-01T00:00:00Z", 95, "Middle"),
+        ("2026-10-10T00:00:00Z", 100, "Latest"),
+    ]
+    final_states: list[tuple[int, str, str, str]] = []
+    histories: list[list[dict[str, Any]]] = []
+
+    for order in itertools.permutations(sightings):
+        conn = connect(tmp_path / f"order-{len(final_states)}.db")
+        for seen_utc, price, city in order:
+            upsert_listings(conn, [{"zpid": 1, "price": price, "city": city}], seen_utc=seen_utc)
+        listing = conn.execute(
+            "SELECT price, city, first_seen_utc, last_seen_utc FROM listings WHERE zpid = 1"
+        ).fetchone()
+        final_states.append(listing)
+        histories.append(get_price_history(conn, 1))
+        conn.close()
+
+    assert all(state == (100, "Latest", "2026-09-01T00:00:00Z", "2026-10-10T00:00:00Z") for state in final_states)
+    assert all(history == histories[0] for history in histories)
+
+
+def test_db_stats_memory_database_has_no_file_size():
+    conn = connect(":memory:")
+
+    assert db_stats(conn).db_size_bytes == 0
 
     conn.close()

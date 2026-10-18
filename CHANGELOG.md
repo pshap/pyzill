@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Database sightings now preserve known fields on sparse updates, maintain
+  order-independent first/last-seen and current-state values, and isolate
+  sale/rent/sold price history by kind. Schema version 2 migrates existing
+  version 1 stores; `db import --kind` labels imported sightings.
+- Runtime search calls reject unknown keyword arguments, request options reject
+  invalid retry/timeout values, home detail inputs and library detail URLs are
+  restricted to valid Zillow targets, and `--where` numeric coercion no longer
+  treats `nan`, `inf`, or scientific notation as numbers.
+- In-memory database statistics now report zero file bytes. SQLite connections
+  use WAL and a busy timeout.
+
 ## [1.3.0] - 2026-10
 
 ### Added

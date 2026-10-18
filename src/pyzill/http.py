@@ -31,6 +31,12 @@ class RequestOptions:
     timeout: float = DEFAULT_TIMEOUT
     max_retries: int = DEFAULT_MAX_RETRIES
 
+    def __post_init__(self) -> None:
+        if self.timeout <= 0:
+            raise ValueError("timeout must be greater than 0")
+        if self.max_retries < 0:
+            raise ValueError("max_retries must be at least 0")
+
 
 _HTTP_OK_MIN = 200
 _HTTP_OK_MAX = 300  # exclusive
@@ -155,6 +161,7 @@ def request(  # noqa: PLR0913 - central request primitive
     Raises:
         ZillowBlockedError: If the response status is not 2xx.
     """
+    RequestOptions(proxy_url, impersonate, timeout, max_retries)
     proxies = build_proxies(proxy_url)
     last_exception: Exception = RuntimeError("pyzill.http.request sent no requests")
 

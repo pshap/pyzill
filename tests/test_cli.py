@@ -191,6 +191,18 @@ class TestDetailCommands:
         result = runner.invoke(app, ["detail", "home"])
         assert result.exit_code == 2
 
+    @pytest.mark.parametrize("value", ["garbage", "https://example.com/listing"])
+    def test_detail_home_rejects_invalid_input(self, value, fake_http):
+        fake_http.install("GET")
+        result = runner.invoke(app, ["detail", "home", value])
+        assert result.exit_code == 2
+        assert fake_http.calls == []
+
+    @pytest.mark.parametrize(("option", "value"), [("--max-retries", "-1"), ("--timeout", "0")])
+    def test_global_request_limits_reject_invalid_values(self, option, value):
+        result = runner.invoke(app, [option, value, "detail", "home", "123"])
+        assert result.exit_code == 2
+
     def test_detail_rejects_non_json_format(self, fake_http, home_detail_body):
         fake_http.install("GET", content=home_detail_body)
         result = runner.invoke(app, ["detail", "home", "348914888", "--format", "csv"])
@@ -508,6 +520,31 @@ class TestGeocodeIntegration:
         assert result.exit_code == 0
         assert _GEO_STUB.calls == ["Schenectady NY"]
 
+
+def test_where_coercion_only_accepts_strict_numeric_literals():
+    from pyzill.cli import _coerce_value
+
+    assert _coerce_value("-$1,234.50") == -1234.5
+    assert _coerce_value("nan") == "nan"
+    assert _coerce_value("inf") == "inf"
+    assert _coerce_value("1e3") == "1e3"
+
+
+def test_db_import_accepts_kind(tmp_path):
+    rows_file = tmp_path / "rent.json"
+    rows_file.write_text(json.dumps([{"zpid": 1, "price": 2200}]))
+    db_path = tmp_path / "rent.db"
+
+    result = runner.invoke(app, ["db", "import", str(rows_file), "--kind", "rent", "--db", str(db_path)])
+
+    assert result.exit_code == 0
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    assert conn.execute("SELECT kind FROM listings WHERE zpid = 1").fetchone()[0] == "rent"
+    assert conn.execute("SELECT kind FROM price_history WHERE zpid = 1").fetchone()[0] == "rent"
+    conn.close()
+
     def test_explicit_bbox_skips_geocode(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
         result = runner.invoke(
@@ -798,7 +835,7 @@ class TestDatabaseCommands:
         input_file = tmp_path / "input.json"
         input_file.write_text(json.dumps(rows))
         result2 = runner.invoke(
-            app, ["db", "import", str(input_file), "--fetched-at", "2026-10-02T12:00:00Z", "--db", str(db_path)]
+            app, ["db", "import", str(input_file), "--fetched-at", "2026-10-19T12:00:00Z", "--db", str(db_path)]
         )
         assert result2.exit_code == 0
         assert "1 price changes" in result2.stderr

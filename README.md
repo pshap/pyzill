@@ -198,6 +198,7 @@ pyzill db sync sold "Albany NY"
 # Import from a saved file (offline ingest)
 pyzill db import listings.json
 pyzill db import - --fetched-at 2026-10-17T12:00:00Z  # stdin with custom timestamp
+pyzill db import rentals.json --kind rent
 
 # Query the database (reuses --where/--sort/--cols/--limit from pyzill query)
 pyzill db query --where 'city==Schenectady' --where 'last_seen_utc>=2026-10-01' --sort price:asc
@@ -213,13 +214,14 @@ pyzill db stats
 **Database path resolution** — `--db PATH` > `PYZILL_DB` env var > `./pyzill.db`. The schema is created automatically on first use (no init command needed).
 
 **Schema** — The database tracks:
-- `listings` table: all listing fields plus `first_seen_utc` (never overwritten) and `last_seen_utc` (refreshed on each sighting)
-- `price_history` table: append-only price change timeline keyed by `(zpid, seen_utc)`
+- `listings` table: one current row per zpid, including the latest `kind` (`sale`, `rent`, or `sold`), plus `first_seen_utc` and `last_seen_utc`
+- `price_history` table: append-only priced sightings keyed by `(zpid, kind, seen_utc)` so rent and sale prices never compare as changes
 
 **Upsert semantics** (one transaction per sync/import):
-- New zpid → insert row + initial price_history row (if price known)
-- Existing zpid → overwrite listing fields, bump `last_seen_utc`, keep `first_seen_utc`
-- Price changed (old and new both known, or price newly appearing) → append price_history row
+- New zpid → insert row and its first priced sighting
+- Existing zpid → preserve known fields when a sighting omits them; `price: null` keeps the last known price of that kind
+- Older sightings extend history but cannot overwrite current listing state; first/last-seen timestamps track the actual minimum/maximum
+- A kind change updates the current listing kind and is not reported as a price change
 - Rows without zpid are skipped and counted
 
 **Timestamps** are fixed-width UTC ISO strings (`%Y-%m-%dT%H:%M:%SZ`) — sortable lexicographically, so the existing `--where`/`--sort` machinery works on them unchanged.

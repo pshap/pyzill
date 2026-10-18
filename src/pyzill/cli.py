@@ -12,13 +12,14 @@ import re
 import sqlite3
 import sys
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import cached_property
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Any, NoReturn, cast
+from urllib.parse import urlsplit
 
 import typer
 from rich.console import Console
@@ -209,11 +210,11 @@ def main(  # noqa: PLR0913, PLR0917
     ] = DEFAULT_IMPERSONATE,
     timeout: Annotated[
         float,
-        typer.Option("--timeout", help="Request timeout in seconds (default: 30)"),
+        typer.Option("--timeout", min=0, help="Request timeout in seconds (must be greater than 0; default: 30)"),
     ] = 30.0,
     max_retries: Annotated[
         int,
-        typer.Option("--max-retries", help="Retries on 5xx errors (default: 1)"),
+        typer.Option("--max-retries", min=0, help="Retries on 5xx errors (default: 1)"),
     ] = 1,
     rate_limit: Annotated[
         float | None,
@@ -238,6 +239,9 @@ def main(  # noqa: PLR0913, PLR0917
     Search for-sale/for-rent/sold listings and fetch property details.
     """
     global _ctx  # noqa: PLW0603
+
+    if timeout <= 0:
+        error("--timeout must be greater than 0", code=2)
 
     # Typer already applies the PYZILL_PROXY / PYZILL_IMPERSONATE env vars (see
     # `envvar=` above), so there is no need to read them again by hand.
@@ -755,10 +759,13 @@ def detail_home(
 ) -> None:
     """Fetch home details by URL or zpid."""
     value = url_or_id.strip()
-    if value.isdigit():
-        run_detail(get_from_home_id, int(value), output_format, output, keys=keys, path=path)
-    else:
+    zpid_match = re.fullmatch(r"(\d+)(?:_zpid)?", value)
+    if zpid_match:
+        run_detail(get_from_home_id, int(zpid_match.group(1)), output_format, output, keys=keys, path=path)
+    elif value.startswith("https://") and urlsplit(value).hostname == "www.zillow.com":
         run_detail(get_from_home_url, value, output_format, output, keys=keys, path=path)
+    else:
+        error("Home detail input must be a zpid or an https://www.zillow.com URL", code=2)
 
 
 @detail_app.command("apartment")
@@ -794,11 +801,11 @@ def _coerce_value(text: str) -> Any:
     t = text.strip().strip("'\"")
     if t.lower() in ("null", "none"):
         return None
-    try:
-        cleaned = t.replace("$", "").replace(",", "")
-        num = float(cleaned)
-    except ValueError:
+    numeric_literal = re.fullmatch(r"[+-]?\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", t)
+    if not numeric_literal:
         return t
+    cleaned = t.replace("$", "").replace(",", "")
+    num = float(cleaned)
     return int(num) if num.is_integer() else num
 
 
@@ -975,15 +982,14 @@ def _upsert_and_report(
     verb: str,
     *,
     seen_utc: str | None = None,
+    kind: str = "sale",
 ) -> None:
     """Upsert rows in one transaction and print the sync summary to stderr."""
-    conn = _connect_db(db_path)
     try:
-        stats = upsert_listings(conn, rows, seen_utc=seen_utc)
+        with closing(_connect_db(db_path)) as conn:
+            stats = upsert_listings(conn, rows, seen_utc=seen_utc, kind=kind)  # type: ignore[arg-type]
     except sqlite3.Error as e:
-        conn.close()
         error(f"Database write failed: {e}", code=1)
-    conn.close()
     total = stats.added + stats.updated
     _stderr_line(
         "green",
@@ -1061,7 +1067,7 @@ def db_sync(  # noqa: PLR0913, PLR0917
         warn("No listings found")
         return
 
-    _upsert_and_report(rows, db_path, "Synced")
+    _upsert_and_report(rows, db_path, "Synced", kind=kind)
 
 
 @db_app.command("import")
@@ -1071,9 +1077,15 @@ def db_import(
         str | None,
         typer.Option("--fetched-at", help="Timestamp for this batch (default: now)"),
     ] = None,
+    kind: Annotated[
+        str,
+        typer.Option("--kind", help="Listing kind for this import: sale, rent, or sold"),
+    ] = "sale",
     db_path: _DbPath = None,
 ) -> None:
     """Import listings from a saved JSON file (raw response or normalized array)."""
+    if kind not in ("sale", "rent", "sold"):
+        error("Invalid kind. Use: sale, rent, or sold", code=2)
     text = _read_input(input_or_dash)
     try:
         data = json.loads(text)
@@ -1103,7 +1115,7 @@ def db_import(
     else:
         fetched_at = utc_now()
 
-    _upsert_and_report(cast(list[dict[str, Any]], normalized), db_path, "Imported", seen_utc=fetched_at)
+    _upsert_and_report(cast(list[dict[str, Any]], normalized), db_path, "Imported", seen_utc=fetched_at, kind=kind)
 
 
 @db_app.command("query")
@@ -1123,9 +1135,8 @@ def db_query(  # noqa: PLR0913, PLR0917
     if limit is not None and limit < 1:
         error("--limit must be at least 1", code=2)
 
-    conn = _connect_db(db_path, must_exist=True)
-    rows = load_listings(conn)
-    conn.close()
+    with closing(_connect_db(db_path, must_exist=True)) as conn:
+        rows = load_listings(conn)
 
     if not rows:
         warn("No listings in database")
@@ -1141,9 +1152,8 @@ def db_history(
     db_path: _DbPath = None,
 ) -> None:
     """Show price history for a single listing."""
-    conn = _connect_db(db_path, must_exist=True)
-    history = get_price_history(conn, zpid)
-    conn.close()
+    with closing(_connect_db(db_path, must_exist=True)) as conn:
+        history = get_price_history(conn, zpid)
 
     if not history:
         warn(f"No price history found for zpid {zpid}")
@@ -1156,9 +1166,8 @@ def db_history(
 @db_app.command("stats")
 def db_stats_cmd(db_path: _DbPath = None) -> None:
     """Show database statistics."""
-    conn = _connect_db(db_path, must_exist=True)
-    stats = db_stats(conn)
-    conn.close()
+    with closing(_connect_db(db_path, must_exist=True)) as conn:
+        stats = db_stats(conn)
 
     # Format size as human-readable
     size_mb = stats.db_size_bytes / (1024 * 1024)
