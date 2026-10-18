@@ -20,6 +20,7 @@ class SearchParams(TypedDict, total=False):
     min_price: int | None
     max_price: int | None
     bbox: BBox | None
+    allow_nationwide: bool
     zoom_value: int | None
     filter_state: dict[str, Any] | None
     proxy_url: str | None
@@ -51,7 +52,8 @@ def for_sale(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         query — narrow the bbox/zoom to get more) and ``listResults``.
 
     Raises:
-        ValueError: If ``filter_state`` is passed.
+        ValueError: If ``filter_state`` is passed, or if ``bbox`` is omitted
+            without ``allow_nationwide=True``.
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
     _reject_filter_state(kwargs)
@@ -75,7 +77,8 @@ def for_rent(
     Does not accept ``filter_state`` (see :func:`for_sale`).
 
     Raises:
-        ValueError: If ``filter_state`` is passed.
+        ValueError: If ``filter_state`` is passed, or if ``bbox`` is omitted
+            without ``allow_nationwide=True``.
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
     _reject_filter_state(kwargs)
@@ -99,7 +102,8 @@ def sold(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     :func:`search` for custom filters).
 
     Raises:
-        ValueError: If ``filter_state`` is passed.
+        ValueError: If ``filter_state`` is passed, or if ``bbox`` is omitted
+            without ``allow_nationwide=True``.
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
     _reject_filter_state(kwargs)
@@ -158,9 +162,22 @@ def _range_filter(min_value: int | None, max_value: int | None) -> dict[str, int
     return result
 
 
-def _resolve_bbox(bbox: BBox | None) -> BBox:
-    """Use the continental-US viewport when no bbox is supplied."""
-    return CONTINENTAL_US if bbox is None else bbox
+def _resolve_bbox(bbox: BBox | None, allow_nationwide: bool = False) -> BBox:
+    """Return the search viewport, refusing to default to a nationwide one.
+
+    A missing bbox used to silently fall back to the continental US, so a
+    bare ``for_sale(search_value="12305")`` searched the whole country.
+    Callers must now either pass ``bbox=`` or opt in with
+    ``allow_nationwide=True``.
+    """
+    if bbox is not None:
+        return bbox
+    if allow_nationwide:
+        return CONTINENTAL_US
+    raise ValueError(
+        "bbox is required: pass bbox=... to bound the search, "
+        "or allow_nationwide=True to explicitly search the continental United States"
+    )
 
 
 def _build_search_query_state(**kwargs: Unpack[_QueryStateParams]) -> dict[str, Any]:
@@ -201,8 +218,11 @@ def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         min_beds / max_beds: Bedroom filter bounds.
         min_bathrooms / max_bathrooms: Bathroom filter bounds.
         min_price / max_price: Price filter bounds.
-        bbox: Optional :class:`~pyzill.bbox.BBox` viewport. Defaults to the
-            continental United States.
+        bbox: :class:`~pyzill.bbox.BBox` viewport for the search. Required
+            unless ``allow_nationwide=True`` is passed.
+        allow_nationwide: Opt in to the continental-US default viewport when
+            ``bbox`` is omitted (default False). A missing bbox otherwise
+            raises ``ValueError``.
         zoom_value: Map zoom level.
         filter_state: Raw Zillow filterState dict.
         proxy_url: Proxy URL (residential proxies strongly recommended).
@@ -214,6 +234,7 @@ def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         dict[str, Any]: listing of properties in JSON format
 
     Raises:
+        ValueError: If ``bbox`` is omitted and ``allow_nationwide`` is not True.
         ZillowBlockedError: If Zillow responds with a non-2xx status.
     """
     _validate_search_kwargs(kwargs)
@@ -225,7 +246,7 @@ def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     max_bathrooms = kwargs.get("max_bathrooms")
     min_price = kwargs.get("min_price")
     max_price = kwargs.get("max_price")
-    bbox = kwargs.get("bbox")
+    bbox = _resolve_bbox(kwargs.get("bbox"), kwargs.get("allow_nationwide", False))
     zoom_value = kwargs.get("zoom_value")
     filter_state = kwargs.get("filter_state")
     proxy_url = kwargs.get("proxy_url")
@@ -235,7 +256,7 @@ def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     query_state = _build_search_query_state(
         search_value=search_value,
         pagination=pagination,
-        bbox=_resolve_bbox(bbox),
+        bbox=bbox,
         zoom_value=zoom_value,
         filter_state=filter_state,
         filters={

@@ -25,8 +25,40 @@ def test_bbox_maps_and_splits():
     )
 
 
-def test_continental_us_is_the_default_bbox():
-    assert search._resolve_bbox(None) == CONTINENTAL_US
+def test_missing_bbox_requires_explicit_nationwide_opt_in():
+    with pytest.raises(ValueError, match="bbox is required"):
+        search._resolve_bbox(None)
+
+    assert search._resolve_bbox(None, allow_nationwide=True) == CONTINENTAL_US
+
+
+def test_search_without_bbox_raises_before_any_request(fake_http):
+    fake_http.install("PUT", json_data={})
+
+    with pytest.raises(ValueError, match="bbox is required"):
+        search.for_sale(search_value="12305")
+
+    assert fake_http.calls == []
+
+
+def test_allow_nationwide_sends_continental_us_bounds(fake_http, search_success_body):
+    fake_http.install("PUT", json_data=search_success_body)
+
+    search.for_sale(search_value="12305", allow_nationwide=True)
+
+    query_state = fake_http.calls[-1]["json"]["searchQueryState"]
+    assert query_state["mapBounds"] == CONTINENTAL_US.to_map_bounds()
+
+
+@pytest.mark.parametrize("fn", [search.for_rent, search.sold])
+def test_rent_and_sold_also_require_bbox_or_nationwide_opt_in(fn):
+    with pytest.raises(ValueError, match="bbox is required"):
+        fn(search_value="x")
+
+
+def test_iter_sale_propagates_missing_bbox_error():
+    with pytest.raises(ValueError, match="bbox is required"):
+        list(search.iter_sale(search_value="x"))
 
 
 @pytest.mark.parametrize(
@@ -75,7 +107,7 @@ def test_for_sale_403_raises_zillow_blocked_error(fake_http):
     fake_http.install("PUT", status_code=403, text=px_html, headers={"server": "PerimeterX"})
 
     with pytest.raises(exceptions.ZillowBlockedError) as exc_info:
-        search.for_sale(search_value="Schenectady NY")
+        search.for_sale(search_value="Schenectady NY", allow_nationwide=True)
 
     err = exc_info.value
     assert err.status_code == 403
@@ -86,14 +118,14 @@ def test_search_missing_results_raises_zillow_blocked_error(fake_http):
     fake_http.install("PUT", json_data={"cat1": {}})
 
     with pytest.raises(exceptions.ZillowBlockedError):
-        search.for_sale(search_value="Schenectady NY")
+        search.for_sale(search_value="Schenectady NY", allow_nationwide=True)
 
 
 def test_search_invalid_json_raises_zillow_blocked_error(fake_http):
     fake_http.install("PUT", text="not json")
 
     with pytest.raises(exceptions.ZillowBlockedError):
-        search.for_sale(search_value="Schenectady NY")
+        search.for_sale(search_value="Schenectady NY", allow_nationwide=True)
 
 
 def test_search_5xx_retries_then_raises(fake_http, monkeypatch):
@@ -101,14 +133,14 @@ def test_search_5xx_retries_then_raises(fake_http, monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda *a, **k: None)
 
     with pytest.raises(exceptions.ZillowBlockedError):
-        search.for_sale(search_value="Schenectady NY", max_retries=2)
+        search.for_sale(search_value="Schenectady NY", allow_nationwide=True, max_retries=2)
 
     assert len(fake_http.calls) == 3  # initial + 2 retries
 
 
 def test_search_defaults_applied(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
-    search.search(search_value="anywhere")
+    search.search(search_value="anywhere", allow_nationwide=True)
 
     query_state = fake_http.calls[-1]["json"]["searchQueryState"]
     bounds = query_state["mapBounds"]
@@ -121,7 +153,7 @@ def test_search_does_not_mutate_filter_state(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
     filter_state = {"isAllHomes": {"value": True}}
 
-    search.search(filter_state=filter_state, min_beds=2)
+    search.search(filter_state=filter_state, min_beds=2, allow_nationwide=True)
 
     assert filter_state == {"isAllHomes": {"value": True}}
 
@@ -137,23 +169,23 @@ def test_proxy_env_fallback(fake_http, monkeypatch, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
     monkeypatch.setenv("ZILLOW_PROXY", "http://user:pass@proxy.example:8080")
 
-    search.for_sale(search_value="x")
+    search.for_sale(search_value="x", allow_nationwide=True)
     assert fake_http.calls[-1]["proxies"] == {
         "http": "http://user:pass@proxy.example:8080",
         "https": "http://user:pass@proxy.example:8080",
     }
 
-    search.for_sale(search_value="x", proxy_url="http://explicit:1@proxy.example:9090")
+    search.for_sale(search_value="x", allow_nationwide=True, proxy_url="http://explicit:1@proxy.example:9090")
     assert fake_http.calls[-1]["proxies"]["http"] == "http://explicit:1@proxy.example:9090"
 
 
 def test_iter_search_yields_and_limits(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
 
-    items = list(search.iter_sale(search_value="x"))
+    items = list(search.iter_sale(search_value="x", allow_nationwide=True))
     assert len(items) == 2
 
-    items = list(search.iter_sale(max_items=1, search_value="x"))
+    items = list(search.iter_sale(max_items=1, search_value="x", allow_nationwide=True))
     assert len(items) == 1
     assert items[0]["zpid"] == 348914888
 
@@ -161,7 +193,7 @@ def test_iter_search_yields_and_limits(fake_http, search_success_body):
 def test_iter_search_default_fn(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
 
-    items = list(search.iter_search(search_value="x", max_items=1))
+    items = list(search.iter_search(search_value="x", max_items=1, allow_nationwide=True))
     assert len(items) == 1
     assert items[0]["zpid"] == 348914888
 
@@ -198,7 +230,7 @@ def test_tiled_search_reports_cap_at_max_depth():
 def test_normalize_listings_can_normalize_iteration(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
 
-    items = list(normalize_listings(search.iter_sale(search_value="x")))
+    items = list(normalize_listings(search.iter_sale(search_value="x", allow_nationwide=True)))
     assert len(items) == 2
     # normalized shape: flat keys, numeric-or-None
     assert items[0]["zpid"] == 348914888
@@ -209,7 +241,7 @@ def test_normalize_listings_can_normalize_iteration(fake_http, search_success_bo
 
 def test_for_rent_sets_rent_filters(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
-    search.for_rent(search_value="x", is_room=True, is_entire_place=True)
+    search.for_rent(search_value="x", allow_nationwide=True, is_room=True, is_entire_place=True)
 
     filter_state = fake_http.calls[-1]["json"]["searchQueryState"]["filterState"]
     assert filter_state["isForRent"] == {"value": True}
@@ -219,7 +251,7 @@ def test_for_rent_sets_rent_filters(fake_http, search_success_body):
 
 def test_sold_sets_sold_filters(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
-    search.sold(search_value="x")
+    search.sold(search_value="x", allow_nationwide=True)
 
     filter_state = fake_http.calls[-1]["json"]["searchQueryState"]["filterState"]
     assert filter_state["isRecentlySold"] == {"value": True}
@@ -229,9 +261,9 @@ def test_sold_sets_sold_filters(fake_http, search_success_body):
 def test_listing_type_filters_match_current_payloads(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
 
-    search.for_sale(search_value="x")
-    search.for_rent(search_value="x")
-    search.sold(search_value="x")
+    search.for_sale(search_value="x", allow_nationwide=True)
+    search.for_rent(search_value="x", allow_nationwide=True)
+    search.sold(search_value="x", allow_nationwide=True)
 
     states = [call["json"]["searchQueryState"]["filterState"] for call in fake_http.calls[-3:]]
     assert states == [

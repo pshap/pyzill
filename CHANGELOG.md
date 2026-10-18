@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Search functions (`for_sale`, `for_rent`, `sold`, `search`, and the
+  `iter_*` helpers) no longer fall back to a continental-US viewport when
+  `bbox` is omitted. A missing bbox now raises `ValueError` unless the caller
+  passes `allow_nationwide=True`. Previously a bare
+  `for_sale(search_value="12305")` silently searched the whole country.
+  Resolve a viewport with `pyzill.geocode.geocode(...)`, build a
+  `pyzill.BBox`, or opt in with `allow_nationwide=True`.
+
 ### Fixed
 - Database sightings now preserve known fields on sparse updates, maintain
   order-independent first/last-seen and current-state values, and isolate

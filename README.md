@@ -354,10 +354,11 @@ print(len(map_results), "listings")
 
 > **Coordinates define the results.** Zillow searches the `mapBounds`
 > viewport you pass. `search_value` labels the search but does **not**
-> tighten the viewport. If you omit the coordinates, pyzill falls back to a
-> continental-US bounding box, so a bare `for_sale(search_value="Schenectady NY")`
-> returns up to 500 listings from across the country — not Schenectady. Always
-> pass a `BBox` (or use `split_bbox` to tile a region) for local results.
+> tighten the viewport. Omitting `bbox` raises `ValueError` — a missing bbox
+> is an explicit choice, not a silent country-wide search. Either pass a
+> `BBox` (or use `split_bbox` to tile a region), resolve one with
+> `pyzill.geocode.geocode("Schenectady NY")`, or opt in to the
+> continental-US viewport with `allow_nationwide=True`.
 
 ### Search with filters and an explicit bounding box
 
@@ -383,7 +384,8 @@ for listing in results["mapResults"]:
 
 `for_sale`, `for_rent`, and `sold` build their own `filter_state`, so they
 **reject** a caller-supplied `filter_state` with a `ValueError`. Use `search()`
-when you need a custom `filter_state`.
+when you need a custom `filter_state`. All search functions **require** a
+`bbox` unless you pass `allow_nationwide=True`.
 
 ### Proxy configuration
 
@@ -392,8 +394,9 @@ Search is much more reliable through a residential proxy. Pass one explicitly:
 ```python
 import pyzill
 
+bbox = pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00)
 proxy_url = pyzill.parse_proxy("proxy.example.com", "8080", "username", "password")
-results = pyzill.for_sale(search_value="Schenectady NY", proxy_url=proxy_url)
+results = pyzill.for_sale(search_value="Schenectady NY", bbox=bbox, proxy_url=proxy_url)
 ```
 
 Or set `PYZILL_PROXY` once and omit `proxy_url` (`ZILLOW_PROXY` remains a
@@ -407,7 +410,8 @@ export PYZILL_PROXY="http://user:pass@proxy.example.com:8080"
 ```python
 import pyzill
 
-results = pyzill.for_sale(search_value="Schenectady NY")  # uses PYZILL_PROXY
+bbox = pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00)
+results = pyzill.for_sale(search_value="Schenectady NY", bbox=bbox)  # uses PYZILL_PROXY
 ```
 
 An explicit `proxy_url` argument always wins over environment settings. Supported
@@ -418,8 +422,9 @@ schemes: `http`, `https`, `socks5`, `socks5h`.
 ```python
 import pyzill
 
+bbox = pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00)
 try:
-    results = pyzill.for_sale(search_value="Schenectady NY")
+    results = pyzill.for_sale(search_value="Schenectady NY", bbox=bbox)
 except pyzill.ZillowBlockedError as exc:
     print("blocked:", exc.status_code)
     # retry through a residential proxy, or back off
@@ -435,7 +440,8 @@ individual for-sale listings use `iter_search` (or use the explicit
 ```python
 import pyzill
 
-for listing in pyzill.iter_sale(search_value="Schenectady NY"):
+bbox = pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00)
+for listing in pyzill.iter_sale(search_value="Schenectady NY", bbox=bbox):
     print(listing["zpid"])
 ```
 
@@ -472,6 +478,7 @@ All search functions accept:
 ```python
 results = pyzill.for_sale(
     search_value="Schenectady NY",
+    bbox=pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00),
     impersonate="chrome136",
     timeout=60,
     max_retries=3,
@@ -539,7 +546,8 @@ Normalize iterator output explicitly with `normalize_listings`:
 ```python
 import pyzill
 
-for home in pyzill.normalize_listings(pyzill.iter_sale(search_value="12305")):
+bbox = pyzill.BBox(north=42.825, east=-73.925, south=42.805, west=-73.955)
+for home in pyzill.normalize_listings(pyzill.iter_sale(search_value="12305", bbox=bbox)):
     print(home["price"])
 ```
 
@@ -552,8 +560,9 @@ apart (default **1.5s** plus up to 0.5s jitter). This is enough to avoid most
 ```python
 import pyzill
 
+bbox = pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00)
 for _ in range(5):
-    results = pyzill.for_sale(search_value="Schenectady NY")
+    results = pyzill.for_sale(search_value="Schenectady NY", bbox=bbox)
     print(len(results["mapResults"]))
 ```
 
@@ -619,7 +628,7 @@ data = pyzill.get_from_apartment_url("https://www.zillow.com/apartments/kissimme
 
 | Function | Description |
 |---|---|
-| `for_sale(...)` | For-sale listings inside a bounding box |
+| `for_sale(...)` | For-sale listings inside a bounding box (bbox required unless `allow_nationwide=True`) |
 | `for_rent(...)` | For-rent listings (also `is_entire_place`, `is_room`) |
 | `sold(...)` | Recently-sold listings |
 | `search(...)` | Raw search with a custom `filter_state` (the three above reject `filter_state`) |
