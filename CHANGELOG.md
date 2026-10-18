@@ -61,6 +61,18 @@ All notable changes to this project are documented here.
   `pyzill.BBox`, or opt in with `allow_nationwide=True`.
 
 ### Fixed
+- `--where` now keeps identifier and descriptive fields as strings, preserving
+  leading-zero ZIP codes in JSON and database queries. Quoted literals remain
+  strings; only numeric listing fields are coerced.
+- Normalization treats zero area as unknown and prefers positive nested beds,
+  baths, and living area over top-level zero sentinels while retaining valid
+  zero-bed studios.
+- Opening a current-schema database no longer starts a write transaction;
+  read-only DB commands use read-only SQLite connections. Price history now
+  records only the first price and actual price changes.
+- Search response shape/JSON failures raise `ZillowParseError`, PerimeterX
+  challenge pages raise `ZillowBlockedError`, and server errors no longer
+  inherit from the block exception.
 - Database sightings now preserve known fields on sparse updates, maintain
   order-independent first/last-seen and current-state values, and isolate
   sale/rent/sold price history by kind. Schema version 2 migrates existing

@@ -30,5 +30,11 @@ class ZillowBlockedError(ZillowError):
         super().__init__(f"Zillow returned HTTP {status_code} for {url}.{hint} Body starts with: {self.body_snippet!r}")
 
 
-class ZillowServerError(ZillowBlockedError):
+class ZillowServerError(ZillowError):
     """Zillow returned a server-side HTTP error after retries."""
+
+    def __init__(self, status_code: int, url: str, body_snippet: str = "") -> None:
+        self.status_code = status_code
+        self.url = url
+        self.body_snippet = body_snippet[:500]
+        super().__init__(f"Zillow returned HTTP {status_code} for {url}. Body starts with: {self.body_snippet!r}")

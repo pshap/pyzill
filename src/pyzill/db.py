@@ -16,6 +16,7 @@ __all__ = [
     "DBStats",
     "SyncStats",
     "connect",
+    "connect_readonly",
     "db_stats",
     "default_db_path",
     "get_price_history",
@@ -178,7 +179,6 @@ def connect(path: Path | str) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA journal_mode = WAL")
 
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
     if version > _SCHEMA_VERSION:
@@ -187,26 +187,38 @@ def connect(path: Path | str) -> sqlite3.Connection:
             f"Database schema version {version} is newer than supported version {_SCHEMA_VERSION}"
         )
 
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        if version == 0:
-            conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
-            conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
-            conn.execute(_CREATE_INDEX_SQL)
-            version = _SCHEMA_VERSION
-        while version < _SCHEMA_VERSION:
-            migration = _MIGRATIONS.get(version)
-            if migration is None:
-                raise sqlite3.DatabaseError(f"No migration available from schema version {version}")
-            migration(conn)
-            version += 1
-        conn.execute(f"PRAGMA user_version = {version}")
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        conn.close()
-        raise
+    if version < _SCHEMA_VERSION:
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("BEGIN IMMEDIATE")
+            if version == 0:
+                conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
+                conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
+                conn.execute(_CREATE_INDEX_SQL)
+                version = _SCHEMA_VERSION
+            while version < _SCHEMA_VERSION:
+                migration = _MIGRATIONS.get(version)
+                if migration is None:
+                    raise sqlite3.DatabaseError(f"No migration available from schema version {version}")
+                migration(conn)
+                version += 1
+            conn.execute(f"PRAGMA user_version = {version}")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            conn.close()
+            raise
 
+    return conn
+
+
+def connect_readonly(path: Path | str) -> sqlite3.Connection:
+    """Open an existing database without schema writes or migration attempts."""
+    uri = f"{Path(path).resolve().as_uri()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute("PRAGMA query_only = ON")
     return conn
 
 
@@ -390,7 +402,7 @@ def upsert_listings(
         listing_params.append(
             (zpid, kind, price_int, *(row.get(column) for column in _DATA_COLUMNS), seen_utc, seen_utc)
         )
-        if price_int is not None:
+        if price_int is not None and prior_prices.get(zpid) != price_int:
             history_params.append((zpid, kind, price_int, seen_utc))
 
     conn.executemany(_LISTING_UPSERT_SQL, listing_params)

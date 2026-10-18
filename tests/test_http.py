@@ -58,6 +58,8 @@ def test_request_distinguishes_server_failure(fake_http, monkeypatch) -> None:
     with pytest.raises(ZillowServerError):
         http.request("GET", "https://www.zillow.com/", headers={}, max_retries=0)
 
+    assert not issubclass(ZillowServerError, ZillowBlockedError)
+
 
 def test_request_honors_retry_after_for_429(fake_http, monkeypatch) -> None:
     fake_http.install("GET", status_code=429, text="Slow down", headers={"Retry-After": "2"})

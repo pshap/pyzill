@@ -24,6 +24,10 @@ from pyzill.normalize import Listing
 
 _QUERY_FIELDS = frozenset(Listing.__annotations__) | {"ppsf"}
 _DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc"}
+_NUMERIC_FIELDS = frozenset(
+    {"price", "beds", "baths", "area", "ppsf", "zestimate", "rent_zestimate", "latitude", "longitude"}
+)
+_QUOTED_LITERAL_LENGTH = 2
 _WHERE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(>=|<=|!=|==|=|>|<|~)\s*(.+?)\s*$")
 _SORT_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?::\s*(asc|desc))?\s*$", re.IGNORECASE)
 
@@ -32,11 +36,15 @@ class QueryValidationError(ValueError):
     """Invalid query expression or unrecognized listing field."""
 
 
-def coerce_value(text: str) -> Any:
+def coerce_value(text: str, field: str | None = None) -> Any:
     """Convert a query literal to a finite-format number, null, or string."""
-    value = text.strip().strip("'\"")
-    if value.lower() in ("null", "none"):
+    literal = text.strip()
+    quoted = len(literal) >= _QUOTED_LITERAL_LENGTH and literal[0] in "'\"" and literal[-1] == literal[0]
+    value = literal[1:-1] if quoted else literal
+    if not quoted and value.lower() in ("null", "none"):
         return None
+    if quoted or (field is not None and field not in _NUMERIC_FIELDS):
+        return value
     if not re.fullmatch(r"[+-]?\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", value):
         return value
     number = float(value.replace("$", "").replace(",", ""))
@@ -50,7 +58,7 @@ def _parse_where(expression: str, valid_fields: frozenset[str]) -> tuple[str, st
     field, operator, raw_value = match.groups()
     if field not in valid_fields:
         raise QueryValidationError(f"Unknown field {field!r} in --where. Fields: {', '.join(sorted(valid_fields))}")
-    return field, operator, coerce_value(raw_value)
+    return field, operator, coerce_value(raw_value, field)
 
 
 def _field_value(row: dict[str, Any], field: str) -> Any:

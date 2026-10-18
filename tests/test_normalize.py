@@ -100,14 +100,30 @@ def test_normalize_listing_missing_fields_are_none():
     assert out["status_type"] is None
 
 
-def test_normalize_preserves_zero_beds_and_area_and_requires_integer_zpid():
+def test_normalize_preserves_zero_beds_but_drops_zero_area_and_requires_integer_zpid():
     out = normalize.normalize_listing({"zpid": "123.0", "beds": 0, "area": 0})
 
     assert out["zpid"] == 123
     assert type(out["zpid"]) is int
     assert out["beds"] == 0
-    assert out["area"] == 0
+    assert out["area"] is None
     assert normalize.normalize_listing({"zpid": "123.5"})["zpid"] is None
+
+
+def test_normalize_zero_sentinels_fall_back_to_positive_nested_values():
+    out = normalize.normalize_listing(
+        {
+            "zpid": "123",
+            "beds": 0,
+            "baths": 0,
+            "area": 0,
+            "hdpData": {"homeInfo": {"bedrooms": 2, "bathrooms": 1.5, "livingArea": 1200}},
+        }
+    )
+
+    assert out["beds"] == 2
+    assert out["baths"] == 1.5
+    assert out["area"] == 1200
 
 
 def test_normalize_listing_falls_back_to_hdp_home_info():

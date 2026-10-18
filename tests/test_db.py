@@ -11,6 +11,7 @@ from hypothesis import strategies as st
 
 from pyzill.db import (
     connect,
+    connect_readonly,
     db_stats,
     default_db_path,
     get_price_history,
@@ -70,6 +71,21 @@ def test_connect_idempotent(tmp_path: Path):
     cursor = conn2.execute("SELECT COUNT(*) FROM listings")
     assert cursor.fetchone()[0] == 1
     conn2.close()
+
+
+def test_readonly_connection_does_not_wait_for_writer(tmp_path: Path):
+    db_path = tmp_path / "locked.db"
+    writer = connect(db_path)
+    upsert_listings(writer, [{"zpid": 1, "price": 100}], seen_utc="2026-10-01T00:00:00Z")
+    writer.execute("BEGIN IMMEDIATE")
+
+    try:
+        reader = connect_readonly(db_path)
+        assert reader.execute("SELECT price FROM listings WHERE zpid = 1").fetchone() == (100,)
+        reader.close()
+    finally:
+        writer.rollback()
+        writer.close()
 
 
 def test_upsert_new_listing(tmp_path: Path):
@@ -305,7 +321,7 @@ def test_upsert_no_price_change(tmp_path: Path):
     assert stats.price_changes == 0
 
     cursor = conn.execute("SELECT COUNT(*) FROM price_history WHERE zpid = 123")
-    assert cursor.fetchone()[0] == 2  # Both priced sightings
+    assert cursor.fetchone()[0] == 1  # Unchanged prices do not add history
 
     conn.close()
 
@@ -715,10 +731,12 @@ def test_upsert_permutation_invariance(sightings: list[tuple[str, int]]) -> None
     """Applying complete sightings in any batch order converges to the same state.
 
     The listings row must end at the newest sighting (price/city from the max
-    timestamp, first_seen at the min, last_seen at the max), and price_history
-    must hold exactly one row per sighting — for every permutation of batch
-    order. Stats are not asserted: price_changes is a documented per-batch
-    heuristic and is legitimately order-sensitive.
+    timestamp, first_seen at the min, and last_seen at the max) for every
+    permutation of batch order. Chronological history stores the first price
+    and subsequent price changes; full history reconstruction for out-of-order
+    sightings requires the sightings table. Stats are not asserted:
+    price_changes is a documented per-batch heuristic and is legitimately
+    order-sensitive.
     """
     baseline = _apply_batches(sorted(sightings))
     newest_ts, newest_price = max(sightings)
@@ -728,8 +746,12 @@ def test_upsert_permutation_invariance(sightings: list[tuple[str, int]]) -> None
     assert listing[0] == newest_price
     assert listing[2] == oldest_ts
     assert listing[3] == newest_ts
-    assert [row["price"] for row in history] == [price for _, price in sorted(sightings)]
-    assert [row["seen_utc"] for row in history] == [ts for ts, _ in sorted(sightings)]
+    changes = [
+        (ts, price)
+        for index, (ts, price) in enumerate(sorted(sightings))
+        if index == 0 or price != sorted(sightings)[index - 1][1]
+    ]
+    assert [(row["seen_utc"], row["price"]) for row in history] == changes
 
     for order in itertools.permutations(sightings):
-        assert _apply_batches(list(order)) == baseline
+        assert _apply_batches(list(order))[0] == listing

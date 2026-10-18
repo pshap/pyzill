@@ -3,7 +3,7 @@ import time
 import pytest
 
 from pyzill import details, http
-from pyzill.exceptions import ZillowBlockedError, ZillowNotFoundError
+from pyzill.exceptions import ZillowNotFoundError, ZillowServerError
 
 
 def test_get_from_home_id(fake_http, home_detail_body):
@@ -24,7 +24,7 @@ def test_details_use_default_retries(fake_http, monkeypatch):
     fake_http.install("GET", status_code=503, text="Service Unavailable")
     monkeypatch.setattr(time, "sleep", lambda *args, **kwargs: None)
 
-    with pytest.raises(ZillowBlockedError):
+    with pytest.raises(ZillowServerError):
         details.get_from_home_url("https://www.zillow.com/homedetails/bad_zpid/")
 
     assert len(fake_http.calls) == http.DEFAULT_MAX_RETRIES + 1

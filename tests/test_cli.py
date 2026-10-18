@@ -733,11 +733,37 @@ class TestQueryCommand:
         assert {r["zpid"] for r in rows} == {2, 4}
 
     def test_where_string_equality_with_numeric_literal(self, saved):
-        # zipcode is stored as a string; ==12304 coerces the literal to int.
         result = runner.invoke(app, ["query", str(saved), "--where", "zipcode==12304"])
         assert result.exit_code == 0
         rows = json.loads(result.stdout)
         assert [r["zpid"] for r in rows] == [1]
+
+    def test_where_preserves_leading_zero_zipcodes(self, tmp_path):
+        path = tmp_path / "zipcodes.json"
+        path.write_text(json.dumps([{"zpid": 1, "zipcode": "02134"}]))
+
+        for expression in ("zipcode==02134", 'zipcode=="02134"'):
+            result = runner.invoke(app, ["query", str(path), "--where", expression])
+            assert result.exit_code == 0
+            assert [row["zpid"] for row in json.loads(result.stdout)] == [1]
+
+    def test_db_query_preserves_leading_zero_zipcodes_during_write(self, tmp_path):
+        from pyzill.db import connect, upsert_listings
+
+        db_path = tmp_path / "zipcodes.db"
+        writer = connect(db_path)
+        upsert_listings(writer, [{"zpid": 1, "zipcode": "02134"}], seen_utc="2026-10-01T00:00:00Z")
+        writer.execute("BEGIN IMMEDIATE")
+        try:
+            result = runner.invoke(
+                app,
+                ["db", "query", "--where", "zipcode==02134", "--db", str(db_path)],
+            )
+            assert result.exit_code == 0
+            assert [row["zpid"] for row in json.loads(result.stdout)] == [1]
+        finally:
+            writer.rollback()
+            writer.close()
 
     def test_where_contains(self, saved):
         result = runner.invoke(app, ["query", str(saved), "--where", "city~schen"])

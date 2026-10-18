@@ -168,8 +168,10 @@ cat listings.json | pyzill query - --where 'zipcode==12308' --format table
 
 - Numbers compare numerically; `--where 'price>=200000'` and
   `--where 'price>=$200,000'` both work.
-- Fields with `==`/`=`/`!=` compare numerically when both sides look numeric,
-  so `zipcode==12308` matches the string `"12308"`.
+- Numeric fields (`price`, `beds`, `baths`, `area`, `ppsf`, estimates, and
+    coordinates) compare numerically. Identifier and descriptive fields stay
+    strings, so `zipcode==02134` preserves the leading zero. Quoted values are
+    always treated as strings.
 - Strings compare case-insensitively, so `city==schenectady` matches
   `"Schenectady"`.
 - `null` / `none` match missing values.
@@ -217,7 +219,7 @@ pyzill db stats
 
 **Schema** — The database tracks:
 - `listings` table: one current row per zpid, including the latest `kind` (`sale`, `rent`, or `sold`), plus `first_seen_utc` and `last_seen_utc`
-- `price_history` table: append-only priced sightings keyed by `(zpid, kind, seen_utc)` so rent and sale prices never compare as changes
+- `price_history` table: first priced sightings and subsequent price changes keyed by `(zpid, kind, seen_utc)`; unchanged sightings do not add rows
 
 **Upsert semantics** (one transaction per sync/import):
 - New zpid → insert row and its first priced sighting
@@ -497,8 +499,9 @@ Raw Zillow listings are inconsistent: `price` is a preformatted string
 `normalize_listing` flattens a listing into predictable, numeric-or-`None`
 fields, falling back to `hdpData.homeInfo` when a top-level field is absent:
 
-Non-dict entries are skipped by the normalization helpers.
-Zero beds (studio) and zero area values are preserved; `zpid` is always an
+Non-dict entries are skipped by the normalization helpers. Zero beds are
+preserved for studios unless positive nested data is available; zero area is
+treated as unknown and falls back to positive nested data. `zpid` is always an
 integer or `None`.
 
 ```python

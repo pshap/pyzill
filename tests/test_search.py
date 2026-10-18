@@ -118,12 +118,19 @@ def test_for_sale_403_raises_zillow_blocked_error(fake_http):
 def test_search_missing_results_raises_zillow_blocked_error(fake_http):
     fake_http.install("PUT", json_data={"cat1": {}})
 
-    with pytest.raises(exceptions.ZillowBlockedError):
+    with pytest.raises(exceptions.ZillowParseError):
         search.for_sale(search_value="Schenectady NY", allow_nationwide=True)
 
 
 def test_search_invalid_json_raises_zillow_blocked_error(fake_http):
     fake_http.install("PUT", text="not json")
+
+    with pytest.raises(exceptions.ZillowParseError):
+        search.for_sale(search_value="Schenectady NY", allow_nationwide=True)
+
+
+def test_search_200_perimeterx_challenge_raises_blocked_error(fake_http):
+    fake_http.install("PUT", text="<html>PerimeterX px-captcha</html>")
 
     with pytest.raises(exceptions.ZillowBlockedError):
         search.for_sale(search_value="Schenectady NY", allow_nationwide=True)
@@ -133,7 +140,7 @@ def test_search_5xx_retries_then_raises(fake_http, monkeypatch):
     fake_http.install("PUT", status_code=503, text="Service Unavailable")
     monkeypatch.setattr(time, "sleep", lambda *a, **k: None)
 
-    with pytest.raises(exceptions.ZillowBlockedError):
+    with pytest.raises(exceptions.ZillowServerError):
         search.for_sale(search_value="Schenectady NY", allow_nationwide=True, max_retries=2)
 
     assert len(fake_http.calls) == 3  # initial + 2 retries

@@ -127,6 +127,14 @@ def _first_number(value: Any, fallback: Any) -> int | float | None:
     return number if number is not None else _to_number(fallback)
 
 
+def _number_with_zero_fallback(value: Any, fallback: Any, *, preserve_zero: bool) -> int | float | None:
+    number = _to_number(value)
+    fallback_number = _to_number(fallback)
+    if number is None or (number == 0 and fallback_number is not None and fallback_number > 0):
+        number = fallback_number
+    return None if number == 0 and not preserve_zero else number
+
+
 def _integer_zpid(value: Any) -> int | None:
     number = _to_number(value)
     if isinstance(number, float):
@@ -205,9 +213,9 @@ def normalize_listing(listing: Any) -> Listing | None:
         "zpid": _integer_zpid(listing.get("zpid")),
         "price": price,
         "price_label": listing.get("priceLabel"),
-        "beds": _first_number(listing.get("beds"), info.get("bedrooms")),
-        "baths": _first_number(listing.get("baths"), info.get("bathrooms")),
-        "area": _first_number(listing.get("area"), info.get("livingArea")),
+        "beds": _number_with_zero_fallback(listing.get("beds"), info.get("bedrooms"), preserve_zero=True),
+        "baths": _number_with_zero_fallback(listing.get("baths"), info.get("bathrooms"), preserve_zero=True),
+        "area": _number_with_zero_fallback(listing.get("area"), info.get("livingArea"), preserve_zero=False),
         "address": listing.get("address"),
         "street": info.get("streetAddress"),
         "city": info.get("city"),

@@ -5,7 +5,7 @@ from typing import Any, TypedDict, Unpack, cast
 
 from pyzill import http
 from pyzill.bbox import CONTINENTAL_US, BBox
-from pyzill.exceptions import ZillowBlockedError
+from pyzill.exceptions import ZillowBlockedError, ZillowParseError
 from pyzill.normalize import is_building_result
 
 _SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
@@ -287,28 +287,20 @@ def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
             max_retries=max_retries,
         ),
     )
+    body_snippet = response.text or ""
+    lowered_body = body_snippet.lower()
+    if any(marker in lowered_body for marker in ("px-captcha", "perimeterx", "captcha-delivery", "_pxhd")):
+        raise ZillowBlockedError(response.status_code, _SEARCH_URL, body_snippet)
     try:
         data = response.json()  # type: ignore[no-untyped-call]
     except ValueError as exc:
-        raise ZillowBlockedError(
-            status_code=response.status_code,
-            url=_SEARCH_URL,
-            body_snippet=response.text or "",
-        ) from exc
+        raise ZillowParseError("Zillow search response was not valid JSON") from exc
     if not isinstance(data, dict):
-        raise ZillowBlockedError(
-            status_code=response.status_code,
-            url=_SEARCH_URL,
-            body_snippet=response.text or "",
-        )
+        raise ZillowParseError("Zillow search response must be a JSON object")
     cat1 = data.get("cat1")
     search_results = cat1.get("searchResults") if isinstance(cat1, dict) else None
     if not isinstance(search_results, dict):
-        raise ZillowBlockedError(
-            status_code=response.status_code,
-            url=_SEARCH_URL,
-            body_snippet=response.text or "",
-        )
+        raise ZillowParseError("Zillow search response is missing cat1.searchResults")
     return search_results
 
 

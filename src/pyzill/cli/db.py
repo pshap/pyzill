@@ -62,6 +62,7 @@ from pyzill.cli.output import OutputFormat, dumps
 from pyzill.cli.query import cli_query_database
 from pyzill.cli.search import extract_listings, fetch_and_normalize, search_options
 from pyzill.config import read_env
+from pyzill.db import connect_readonly
 from pyzill.normalize import Listing
 
 
@@ -97,22 +98,24 @@ def _resolve_db_path(db_path: str | None) -> Path:
     return resolve_db_path(db_path, read_env("PYZILL_DB"), default_db_path())
 
 
-def _connect_db(db_path: str | None, *, must_exist: bool = False) -> sqlite3.Connection:
+def _connect_db(db_path: str | None, *, must_exist: bool = False, readonly: bool = False) -> sqlite3.Connection:
     """Resolve the db path and open it, creating the schema if needed."""
     path = _resolve_db_path(db_path)
     if must_exist and not path.exists():
         error(f"Database not found: {path}. Run 'pyzill db sync' or 'pyzill db import' first.", code=1)
     try:
-        return connect(path)
+        return connect_readonly(path) if readonly else connect(path)
     except sqlite3.Error as e:
         error(f"Failed to open database: {e}", code=1)
 
 
 @contextmanager
-def _db_session(db_path: str | None, *, must_exist: bool = False) -> Iterator[sqlite3.Connection]:
+def _db_session(
+    db_path: str | None, *, must_exist: bool = False, readonly: bool = False
+) -> Iterator[sqlite3.Connection]:
     """Open and close a database connection, translating SQLite failures to CLI errors."""
     try:
-        with closing(_connect_db(db_path, must_exist=must_exist)) as conn:
+        with closing(_connect_db(db_path, must_exist=must_exist, readonly=readonly)) as conn:
             yield conn
     except sqlite3.Error as e:
         error(f"Database operation failed: {e}", code=1)
@@ -252,7 +255,7 @@ def db_query(  # noqa: PLR0913, PLR0917
     output: OutputOpt = None,
 ) -> None:
     """Query listings from the local database."""
-    with _db_session(db_path, must_exist=True) as conn:
+    with _db_session(db_path, must_exist=True, readonly=True) as conn:
         rows, selected = cli_query_database(conn, where=where, sort=sort, cols=cols, limit=limit)
 
     if not rows:
@@ -268,7 +271,7 @@ def db_history(
     db_path: DbPathOpt = None,
 ) -> None:
     """Show price history for a single listing."""
-    with _db_session(db_path, must_exist=True) as conn:
+    with _db_session(db_path, must_exist=True, readonly=True) as conn:
         history = get_price_history(conn, zpid)
 
     if not history:
@@ -282,7 +285,7 @@ def db_history(
 @db_app.command("stats")
 def db_stats_cmd(db_path: DbPathOpt = None) -> None:
     """Show database statistics."""
-    with _db_session(db_path, must_exist=True) as conn:
+    with _db_session(db_path, must_exist=True, readonly=True) as conn:
         stats = db_stats(conn)
 
     # Format size as human-readable
