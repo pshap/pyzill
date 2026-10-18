@@ -1,5 +1,16 @@
 import pyzill.details as _details
 from pyzill.bbox import CONTINENTAL_US, BBox
+from pyzill.db import (
+    DBStats,
+    SyncStats,
+    connect,
+    db_stats,
+    default_db_path,
+    get_price_history,
+    load_listings,
+    upsert_listings,
+    utc_now,
+)
 from pyzill.details import (
     get_from_apartment_id,
     get_from_apartment_url,
@@ -29,8 +40,13 @@ get_from_department_url = _details.get_from_department_url
 __all__ = [
     "CONTINENTAL_US",
     "BBox",
+    "DBStats",
     "Listing",
+    "SyncStats",
     "ZillowBlockedError",
+    "connect",
+    "db_stats",
+    "default_db_path",
     "for_rent",
     "for_sale",
     "get_from_apartment_id",
@@ -38,10 +54,12 @@ __all__ = [
     "get_from_home_id",
     "get_from_home_url",
     "get_min_interval",
+    "get_price_history",
     "iter_rent",
     "iter_sale",
     "iter_search",
     "iter_sold",
+    "load_listings",
     "normalize_listing",
     "normalize_listings",
     "parse_price",
@@ -50,4 +68,6 @@ __all__ = [
     "set_min_interval",
     "sold",
     "split_bbox",
+    "upsert_listings",
+    "utc_now",
 ]
