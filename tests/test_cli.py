@@ -14,7 +14,7 @@ runner = CliRunner()
 
 
 class _GeoStub:
-    """Recording stand-in for pyzill.cli.app.geocode (installed autouse)."""
+    """Recording stand-in for pyzill.cli.search.geocode (installed autouse)."""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -55,8 +55,8 @@ def _stub_geocode(monkeypatch):
     _GEO_STUB.reset()
     import importlib
 
-    app_module = importlib.import_module("pyzill.cli.app")
-    monkeypatch.setattr(app_module, "geocode", _GEO_STUB)
+    search_module = importlib.import_module("pyzill.cli.search")
+    monkeypatch.setattr(search_module, "geocode", _GEO_STUB)
 
 
 class TestRootAndHelp:

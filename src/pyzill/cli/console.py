@@ -1,8 +1,11 @@
 """Shared CLI context, diagnostics, and output plumbing."""
 
+import json
 import os
 import re
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import cached_property
@@ -18,6 +21,12 @@ from pyzill import resolve_proxy
 from pyzill.cli.output import OutputFormat
 from pyzill.cli.output import write_output as _render_output
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
+from pyzill.exceptions import (
+    ZillowBlockedError,
+    ZillowNotFoundError,
+    ZillowParseError,
+    ZillowServerError,
+)
 
 
 @dataclass
@@ -110,6 +119,23 @@ def debug(message: str) -> None:
         stderr_line("dim", "Debug:", message)
 
 
+@contextmanager
+def network_errors(failure: str) -> Iterator[None]:
+    """Turn library failures into clean exit-1 errors."""
+    try:
+        yield
+    except ZillowServerError as e:
+        error(f"Zillow server error after retries: {e}", code=1)
+    except ZillowNotFoundError as e:
+        error(f"Zillow listing was not found: {e}", code=1)
+    except ZillowParseError as e:
+        error(f"Could not parse Zillow's response; its page schema may have changed: {e}", code=1)
+    except ZillowBlockedError as e:
+        error(f"Zillow blocked the request: {e}", code=1)
+    except Exception as e:
+        error(f"{failure}: {e}", code=1)
+
+
 def version_callback(value: bool) -> None:
     """Show version and exit."""
     if value:
@@ -119,6 +145,32 @@ def version_callback(value: bool) -> None:
             ver = "unknown"
         typer.echo(f"pyzill {ver}")
         raise typer.Exit
+
+
+def read_input(source: str) -> str:
+    """Read text from a file path, or from stdin when source is '-'."""
+    if source == "-":
+        try:
+            return typer.get_text_stream("stdin").read()
+        except (OSError, UnicodeDecodeError) as e:
+            error(f"Failed to read stdin: {e}", code=1)
+
+    path = Path(source)
+    if not path.exists():
+        error(f"Input file not found: {source}", code=2)
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        error(f"Failed to read {source}: {e}", code=1)
+
+
+def read_json(source: str) -> Any:
+    """Read JSON from a file path or stdin ('-'), failing cleanly on bad input."""
+    text = read_input(source)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        error(f"Invalid JSON input: {e}", code=1)
 
 
 def emit(content: str, output: str | None) -> None:

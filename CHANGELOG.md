@@ -22,6 +22,13 @@ All notable changes to this project are documented here.
   wide hand-written UPDATE. Behavior (stats, missing-field semantics,
   kind transitions, price history) is unchanged; all database tests pass
   without modification.
+- The CLI package was split into focused modules: `cli/options.py` (shared
+  Typer option types), `cli/search.py` (search commands and the
+  fetch/normalize pipeline), `cli/detail.py` (detail commands),
+  `cli/query.py` (offline query/normalize commands and filtering engines),
+  `cli/db.py` (database commands), and `cli/console.py` (diagnostics and
+  input helpers). `cli/app.py` now only wires the Typer app together. The
+  command surface and flags are unchanged.
 
 ### Changed (breaking)
 - Search functions (`for_sale`, `for_rent`, `sold`, `search`, and the

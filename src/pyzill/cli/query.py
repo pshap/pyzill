@@ -1,9 +1,25 @@
-"""Filtering and sorting engines for saved listings and SQLite records."""
+"""Offline query/normalize commands plus the pure filtering engines they use."""
 
 import re
 import sqlite3
-from typing import Any
+from collections.abc import Callable
+from functools import wraps
+from typing import Annotated, Any
 
+import typer
+
+from pyzill import normalize_listings
+from pyzill.cli.console import error, read_json, write_output
+from pyzill.cli.options import (
+    ColsOpt,
+    FormatOpt,
+    LimitOpt,
+    OutputOpt,
+    SortOpt,
+    WhereOpt,
+)
+from pyzill.cli.output import OutputFormat
+from pyzill.cli.search import extract_listings
 from pyzill.normalize import Listing
 
 _QUERY_FIELDS = frozenset(Listing.__annotations__) | {"ppsf"}
@@ -175,3 +191,61 @@ def query_database(
     if selected:
         rows = [{column: _field_value(row, column) for column in selected} for row in rows]
     return rows, selected
+
+
+def _as_cli_error[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
+    """Adapt a pure query engine so QueryValidationError becomes a usage error."""
+
+    @wraps(fn)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return fn(*args, **kwargs)
+        except QueryValidationError as exc:
+            error(str(exc), code=2)
+
+    return wrapper
+
+
+cli_query_rows = _as_cli_error(query_rows)
+cli_query_database = _as_cli_error(query_database)
+
+
+def query(  # noqa: PLR0913, PLR0917
+    input_or_dash: Annotated[str, typer.Argument(help="Saved search JSON file, or '-' for stdin")],
+    where: WhereOpt = None,
+    sort: SortOpt = None,
+    cols: ColsOpt = None,
+    limit: LimitOpt = None,
+    output_format: FormatOpt = OutputFormat.json,
+    output: OutputOpt = None,
+) -> None:
+    """Re-filter and sort saved search results without hitting Zillow."""
+    data = read_json(input_or_dash)
+    if not isinstance(data, list):
+        error("query input must be a JSON array of listings (run 'pyzill normalize' first if it isn't)", code=2)
+    rows = [row for row in data if isinstance(row, dict)]
+    if data and not rows:
+        error("query input contains no listing objects", code=2)
+
+    rows, selected = cli_query_rows(rows, where=where, sort=sort, cols=cols, limit=limit)
+    write_output(rows, output_format, output, columns=selected)
+
+
+def normalize(
+    input_or_dash: Annotated[
+        str,
+        typer.Argument(help="JSON file path or '-' for stdin"),
+    ],
+    output_format: FormatOpt = OutputFormat.json,
+    output: OutputOpt = None,
+) -> None:
+    """Normalize raw listing data from file or stdin."""
+    data = read_json(input_or_dash)
+    listings = extract_listings(data, wrap_single=True)
+    write_output(normalize_listings(listings), output_format, output)
+
+
+def register(app: typer.Typer) -> None:
+    """Register the offline root commands on the root app."""
+    app.command("query")(query)
+    app.command("normalize")(normalize)
