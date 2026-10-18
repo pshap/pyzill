@@ -41,6 +41,7 @@ from pyzill.cli.console import (
     debug,
     emit,
     error,
+    progress,
     set_context,
     stderr_line,
     version_callback,
@@ -221,7 +222,14 @@ MaxBaths = Annotated[int | None, typer.Option("--max-bathrooms", help="Maximum b
 MinPrice = Annotated[int | None, typer.Option("--min-price", help="Minimum price")]
 MaxPrice = Annotated[int | None, typer.Option("--max-price", help="Maximum price")]
 Tile = Annotated[bool, typer.Option("--tile", help="Recursively split capped map results")]
-MaxDepth = Annotated[int, typer.Option("--max-depth", min=0, max=8, help="Maximum recursive tile depth (default: 4)")]
+MaxDepth = Annotated[
+    int,
+    typer.Option("--max-depth", min=0, max=6, help="Maximum recursive tile depth (default: 4, max: 6)"),
+]
+MaxRequests = Annotated[
+    int,
+    typer.Option("--max-requests", min=1, help="Maximum search requests when tiling (default: 50)"),
+]
 Raw = Annotated[bool, typer.Option("--raw", help="Return raw search response (not normalized)")]
 IsRoom = Annotated[bool, typer.Option("--room", help="Filter for rooms for rent")]
 IsEntirePlace = Annotated[bool, typer.Option("--entire-place", help="Filter for entire places for rent")]
@@ -257,6 +265,7 @@ def _search_options(  # noqa: PLR0913, PLR0917
     max_price: int | None,
     tile: bool,
     max_depth: int,
+    max_requests: int,
     is_room: bool = False,
     is_entire_place: bool = False,
 ) -> SearchOptions:
@@ -276,6 +285,7 @@ def _search_options(  # noqa: PLR0913, PLR0917
         max_price=max_price,
         tile=tile,
         max_depth=max_depth,
+        max_requests=max_requests,
         is_room=is_room,
         is_entire_place=is_entire_place,
     )
@@ -382,10 +392,12 @@ def fetch_and_normalize(
                 search_fn,
                 bbox=bbox,
                 max_depth=options.max_depth,
+                max_requests=options.max_requests,
                 on_cap=lambda: warn(
                     f"A tile still returned {_RESULT_CAP} listings at --max-depth {options.max_depth}; "
                     "results may be truncated"
                 ),
+                on_progress=lambda used, total: progress(f"tile {used}:", f"{total} listings so far"),
                 **search_kwargs,
             )
         else:
@@ -435,6 +447,7 @@ def search_sale(  # noqa: PLR0913, PLR0917
     max_price: MaxPrice = None,
     tile: Tile = False,
     max_depth: MaxDepth = 4,
+    max_requests: MaxRequests = 50,
     raw: Raw = False,
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
@@ -455,6 +468,7 @@ def search_sale(  # noqa: PLR0913, PLR0917
         max_price,
         tile,
         max_depth,
+        max_requests,
     )
     run_search(for_sale, options=options, raw=raw, output_format=output_format, output=output)
 
@@ -475,6 +489,7 @@ def search_rent(  # noqa: PLR0913, PLR0917
     max_price: MaxPrice = None,
     tile: Tile = False,
     max_depth: MaxDepth = 4,
+    max_requests: MaxRequests = 50,
     is_room: IsRoom = False,
     is_entire_place: IsEntirePlace = False,
     raw: Raw = False,
@@ -497,6 +512,7 @@ def search_rent(  # noqa: PLR0913, PLR0917
         max_price,
         tile,
         max_depth,
+        max_requests,
         is_room,
         is_entire_place,
     )
@@ -519,6 +535,7 @@ def search_sold(  # noqa: PLR0913, PLR0917
     max_price: MaxPrice = None,
     tile: Tile = False,
     max_depth: MaxDepth = 4,
+    max_requests: MaxRequests = 50,
     raw: Raw = False,
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
@@ -539,6 +556,7 @@ def search_sold(  # noqa: PLR0913, PLR0917
         max_price,
         tile,
         max_depth,
+        max_requests,
     )
     run_search(sold, options=options, raw=raw, output_format=output_format, output=output)
 
@@ -810,6 +828,7 @@ def db_sync(  # noqa: PLR0913, PLR0917
     max_price: MaxPrice = None,
     tile: Tile = False,
     max_depth: MaxDepth = 4,
+    max_requests: MaxRequests = 50,
     is_room: IsRoom = False,
     is_entire_place: IsEntirePlace = False,
     db_path: _DbPath = None,
@@ -835,6 +854,7 @@ def db_sync(  # noqa: PLR0913, PLR0917
             max_price,
             tile,
             max_depth,
+            max_requests,
             is_room,
             is_entire_place,
         ),

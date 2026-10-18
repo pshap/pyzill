@@ -22,6 +22,7 @@ class SearchOptions:
     max_price: int | None = None
     tile: bool = False
     max_depth: int = 4
+    max_requests: int = 50
     is_room: bool = False
     is_entire_place: bool = False
 

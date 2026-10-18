@@ -1,3 +1,4 @@
+import sys
 from collections.abc import Callable, Iterator, Mapping
 from itertools import islice
 from typing import Any, TypedDict, Unpack, cast
@@ -8,6 +9,7 @@ from pyzill.exceptions import ZillowBlockedError
 
 _SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
 _RESULT_CAP = 500
+_DEFAULT_MAX_REQUESTS = 50
 
 
 class SearchParams(TypedDict, total=False):
@@ -365,26 +367,55 @@ def iter_sold(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mappin
     yield from _iter_search(sold, max_items=max_items, kwargs=kwargs)
 
 
-def tiled_search(
+def tiled_search(  # noqa: PLR0913
     search_fn: Callable[..., dict[str, Any]],
     *,
     bbox: BBox,
     max_depth: int = 4,
+    max_requests: int = _DEFAULT_MAX_REQUESTS,
     on_cap: Callable[[], None] | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Recursively split capped map searches and deduplicate their results.
 
     Every tile is a normal search call, so the shared request limiter applies.
     ``on_cap`` is called when a tile still contains 500 results at max depth.
+    ``on_progress`` (if given) is called after each tile with
+    ``(requests_used, unique_map_results_so_far)``.
+
+    ``max_requests`` (default 50) bounds the total number of search requests.
+    Without a budget, ``--max-depth``-style deep tiling can issue tens of
+    thousands of requests. When the budget runs out mid-tree, a warning is
+    printed to stderr, recursion stops, and the partial results are returned
+    with ``budget_exhausted`` set to True.
+
+    Returns:
+        dict[str, Any]: ``mapResults`` and ``listResults`` lists, plus a
+        ``budget_exhausted`` bool flagging truncated (partial) results.
     """
     if max_depth < 0:
         raise ValueError("max_depth must be non-negative")
+    if max_requests < 1:
+        raise ValueError("max_requests must be at least 1")
 
     combined: dict[str, dict[str, Any]] = {"mapResults": {}, "listResults": {}}
+    requests_used = 0
+    budget_exhausted = False
 
     def collect(tile: BBox, depth: int) -> None:
+        nonlocal requests_used, budget_exhausted
+        if requests_used >= max_requests:
+            if not budget_exhausted:
+                budget_exhausted = True
+                print(
+                    f"pyzill: warning: request budget of {max_requests} exhausted; "
+                    "returning partial results (raise max_requests or lower max_depth for more)",
+                    file=sys.stderr,
+                )
+            return
         response = search_fn(**kwargs, bbox=tile)
+        requests_used += 1
         map_results = response.get("mapResults", []) or []
         for result_key in combined:
             for listing in response.get(result_key, []) or []:
@@ -392,6 +423,8 @@ def tiled_search(
                     continue
                 identity = listing.get("zpid") or listing.get("detailUrl") or repr(sorted(listing.items()))
                 combined[result_key].setdefault(str(identity), dict(listing))
+        if on_progress is not None:
+            on_progress(requests_used, len(combined["mapResults"]))
 
         if len(map_results) >= _RESULT_CAP:
             if depth < max_depth:
@@ -401,7 +434,11 @@ def tiled_search(
                 on_cap()
 
     collect(bbox, 0)
-    return {key: list(listings.values()) for key, listings in combined.items()}
+    return {
+        "mapResults": list(combined["mapResults"].values()),
+        "listResults": list(combined["listResults"].values()),
+        "budget_exhausted": budget_exhausted,
+    }
 
 
 def split_bbox(bbox: BBox = CONTINENTAL_US) -> tuple[BBox, BBox, BBox, BBox]:

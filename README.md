@@ -447,11 +447,16 @@ for listing in pyzill.iter_sale(search_value="Schenectady NY", bbox=bbox):
 
 At exactly 500 results Zillow may have truncated the response. The CLI warns
 and supports bounded recursive tiling with `--tile` (the default maximum depth
-is 4; adjust it with `--max-depth`). The library's `tiled_search` does the same
-and uses the shared request limiter for every tile:
+is 4; adjust it with `--max-depth`, up to 6). Tiling is also bounded by a
+request budget: `--max-requests` (default 50) caps how many search requests
+`tiled_search` will issue. Without a budget, deep tiling can fire tens of
+thousands of requests; when the budget runs out, a warning goes to stderr and
+the partial results are returned (the library flags them with
+`budget_exhausted=True`). Progress (tile count and listings so far) is
+printed to stderr and suppressed by `--quiet`.
 
 ```bash
-pyzill search sale "Schenectady NY" --tile --max-depth 5
+pyzill search sale "Schenectady NY" --tile --max-depth 5 --max-requests 100
 pyzill db sync sale "Schenectady NY" --tile
 ```
 
@@ -633,7 +638,7 @@ data = pyzill.get_from_apartment_url("https://www.zillow.com/apartments/kissimme
 | `sold(...)` | Recently-sold listings |
 | `search(...)` | Raw search with a custom `filter_state` (the three above reject `filter_state`) |
 | `iter_search(max_items=None, **kwargs)` / `iter_sale(...)` / `iter_rent(...)` / `iter_sold(...)` | Yield individual listings from the first `mapResults` response |
-| `tiled_search(search_fn, bbox=..., max_depth=4, **kwargs)` | Recursively split capped results and deduplicate by zpid |
+| `tiled_search(search_fn, bbox=..., max_depth=4, max_requests=50, **kwargs)` | Recursively split capped results, deduplicate by zpid, stop at the request budget |
 | `split_bbox(bbox)` | Split a `BBox` into 4 quadrants |
 | `get_from_home_url(url, ...)` / `get_from_home_id(id, ...)` | Home details |
 | `get_from_apartment_url(url, ...)` / `get_from_apartment_id(id, ...)` | Apartment details |

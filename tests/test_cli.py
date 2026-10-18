@@ -139,6 +139,47 @@ class TestSearchCommands:
         assert len(fake_http.calls) == 5
         assert "still returned 500" in result.stderr
 
+    def test_search_tile_stops_at_max_requests_budget(self, fake_http):
+        body = {"cat1": {"searchResults": {"mapResults": [{"zpid": str(index)} for index in range(500)]}}}
+        fake_http.install("PUT", json_data=body)
+
+        result = runner.invoke(
+            app,
+            ["search", "sale", "12305", "--tile", "--max-depth", "1", "--max-requests", "2"],
+        )
+
+        assert result.exit_code == 0
+        assert len(fake_http.calls) == 2
+        assert "budget of 2 exhausted" in result.stderr
+
+    def test_search_max_requests_rejects_zero(self):
+        result = runner.invoke(app, ["search", "sale", "12305", "--max-requests", "0"])
+
+        assert result.exit_code == 2
+
+    def test_search_max_depth_rejects_values_above_six(self):
+        result = runner.invoke(app, ["search", "sale", "12305", "--max-depth", "7"])
+
+        assert result.exit_code == 2
+
+    def test_search_tile_reports_progress_on_stderr(self, fake_http):
+        body = {"cat1": {"searchResults": {"mapResults": [{"zpid": str(index)} for index in range(500)]}}}
+        fake_http.install("PUT", json_data=body)
+
+        result = runner.invoke(app, ["search", "sale", "12305", "--tile", "--max-depth", "0"])
+
+        assert result.exit_code == 0
+        assert "listings so far" in result.stderr
+
+    def test_search_tile_progress_suppressed_by_quiet(self, fake_http):
+        body = {"cat1": {"searchResults": {"mapResults": [{"zpid": str(index)} for index in range(500)]}}}
+        fake_http.install("PUT", json_data=body)
+
+        result = runner.invoke(app, ["--quiet", "search", "sale", "12305", "--tile", "--max-depth", "0"])
+
+        assert result.exit_code == 0
+        assert "listings so far" not in result.stderr
+
     def test_search_with_price_filters(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
         result = runner.invoke(

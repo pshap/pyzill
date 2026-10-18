@@ -227,6 +227,73 @@ def test_tiled_search_reports_cap_at_max_depth():
     assert capped == [True]
 
 
+def test_tiled_search_stops_at_request_budget_and_warns(capsys):
+    calls: list[BBox] = []
+
+    def always_capped(**kwargs):
+        calls.append(kwargs["bbox"])
+        return {"mapResults": [{"zpid": len(calls) * 1000 + index} for index in range(500)]}
+
+    result = search.tiled_search(
+        always_capped,
+        bbox=BBox(north=10, east=10, south=0, west=0),
+        max_depth=4,
+        max_requests=3,
+    )
+
+    assert len(calls) == 3
+    assert result["budget_exhausted"] is True
+    assert len(result["mapResults"]) == 1500
+    assert "budget of 3 exhausted" in capsys.readouterr().err
+
+
+def test_tiled_search_default_budget_of_fifty_requests():
+    calls = [0]
+
+    def always_capped(**kwargs):
+        calls[0] += 1
+        return {"mapResults": [{"zpid": calls[0] * 1000 + index} for index in range(500)]}
+
+    result = search.tiled_search(
+        always_capped,
+        bbox=BBox(north=10, east=10, south=0, west=0),
+        max_depth=3,
+    )
+
+    assert calls[0] == 50
+    assert result["budget_exhausted"] is True
+
+
+def test_tiled_search_flags_partial_results_when_budget_unused():
+    result = search.tiled_search(
+        lambda **kwargs: {"mapResults": [{"zpid": 1}]},
+        bbox=BBox(north=10, east=10, south=0, west=0),
+    )
+
+    assert result["budget_exhausted"] is False
+
+
+def test_tiled_search_progress_callback_reports_tiles_and_listings():
+    progress: list[tuple[int, int]] = []
+
+    search.tiled_search(
+        lambda **kwargs: {"mapResults": [{"zpid": 1}, {"zpid": 2}]},
+        bbox=BBox(north=10, east=10, south=0, west=0),
+        on_progress=lambda used, total: progress.append((used, total)),
+    )
+
+    assert progress == [(1, 2)]
+
+
+def test_tiled_search_rejects_invalid_budget():
+    with pytest.raises(ValueError, match="max_requests"):
+        search.tiled_search(
+            lambda **kwargs: {},
+            bbox=BBox(north=10, east=10, south=0, west=0),
+            max_requests=0,
+        )
+
+
 def test_normalize_listings_can_normalize_iteration(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
 

@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- `tiled_search` now takes `max_requests` (default 50) bounding the total
+  number of search requests in a recursive tiling run; when the budget runs
+  out mid-tree a warning is printed to stderr and partial results are
+  returned with a `budget_exhausted` flag. An optional `on_progress`
+  callback reports `(requests_used, unique_map_results_so_far)` after each
+  tile. The CLI exposes this as `--max-requests` on `search`/`db sync`
+  (default 50), lowers the `--max-depth` ceiling from 8 to 6, and prints
+  tile progress to stderr (suppressed by `--quiet`).
+
 ### Changed (breaking)
 - Search functions (`for_sale`, `for_rent`, `sold`, `search`, and the
   `iter_*` helpers) no longer fall back to a continental-US viewport when

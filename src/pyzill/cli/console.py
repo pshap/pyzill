@@ -98,6 +98,12 @@ def warn(message: str) -> None:
         stderr_line("yellow", "Warning:", message)
 
 
+def progress(label: str, message: str) -> None:
+    """Print a progress line to stderr unless --quiet is active."""
+    if not context().quiet:
+        stderr_line("dim", label, message)
+
+
 def debug(message: str) -> None:
     """Print debug message to stderr."""
     if context().verbose:
