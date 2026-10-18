@@ -3,8 +3,9 @@
 import datetime as dt
 import sqlite3
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
+from dataclasses import asdict
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
@@ -64,7 +65,7 @@ from pyzill.cli.output import OutputFormat, dumps
 from pyzill.cli.query import cli_query_database
 from pyzill.cli.search import extract_listings, fetch_and_normalize, search_filter_options, search_options
 from pyzill.config import read_env
-from pyzill.db import SyncStats, connect_readonly
+from pyzill.db import SyncStats, begin_sync_run, connect_readonly, finish_sync_run, get_changes
 from pyzill.normalize import Listing
 
 
@@ -85,6 +86,11 @@ _SEARCH_FNS: dict[ListingKind, Callable[..., dict[str, Any]]] = {
 # Keys a row may have and still count as already-normalized for `db import`:
 # the normalized listing fields, plus the database's own timestamp columns.
 _NORMALIZED_KEYS = frozenset(Listing.__annotations__) | {"first_seen_utc", "last_seen_utc"}
+class _WarningState:
+    legacy_db_shown: bool = False
+
+
+_warning_state = _WarningState()
 
 
 def resolve_db_path(explicit_path: str | None, environment_path: str | None, default_path: Path) -> Path:
@@ -97,7 +103,20 @@ def resolve_db_path(explicit_path: str | None, environment_path: str | None, def
 
 def _resolve_db_path(db_path: str | None) -> Path:
     """Resolve database path from --db, PYZILL_DB env, or default."""
-    return resolve_db_path(db_path, read_env("PYZILL_DB"), default_db_path())
+    environment_path = read_env("PYZILL_DB")
+    if db_path is None and environment_path is None:
+        path = default_db_path()
+        legacy_path = Path.cwd() / "pyzill.db"
+        if legacy_path.exists() and legacy_path.resolve() != path.resolve() and not _warning_state.legacy_db_shown:
+            stderr_line(
+                "yellow",
+                "Warning:",
+                f"Found {legacy_path}; default database is now {path}. Use --db to select it.",
+            )
+            _warning_state.legacy_db_shown = True
+        return path
+    return resolve_db_path(db_path, environment_path, default_db_path())
+
 
 
 def _connect_db(db_path: str | None, *, must_exist: bool = False, readonly: bool = False) -> sqlite3.Connection:
@@ -124,18 +143,20 @@ def _db_session(
 
 
 def _upsert_and_report(  # noqa: PLR0913
-    rows: list[dict[str, Any]],
+    rows: Sequence[Mapping[str, Any]],
     db_path: str | None,
     verb: str,
     *,
     seen_utc: str | None = None,
     kind: ListingKind = ListingKind.sale,
     output_format: OutputFormat | None = None,
+    raw_rows: Sequence[Mapping[str, Any]] | None = None,
 ) -> None:
     """Upsert rows in one transaction and print the sync summary to stderr."""
     with _db_session(db_path) as conn:
-        stats = upsert_listings(conn, rows, seen_utc=seen_utc, kind=kind.value)
+        stats = upsert_listings(conn, rows, seen_utc=seen_utc, kind=kind.value, raw_rows=raw_rows)
     _report_sync_stats(stats, verb, output_format)
+
 
 
 def _report_sync_stats(stats: SyncStats, verb: str, output_format: OutputFormat | None) -> None:
@@ -196,40 +217,70 @@ def db_sync(  # noqa: PLR0913, PLR0917
     if (is_room or is_entire_place) and kind is not ListingKind.rent:
         error("--room and --entire-place only work with 'rent' kind", code=2)
 
-    rows = fetch_and_normalize(
-        _SEARCH_FNS[kind],
-        search_options(
-            query,
-            search_filter_options(
-                north=north,
-                south=south,
-                east=east,
-                west=west,
-                zoom=zoom,
-                min_beds=min_beds,
-                max_beds=max_beds,
-                min_bathrooms=min_bathrooms,
-                max_bathrooms=max_bathrooms,
-                min_price=min_price,
-                max_price=max_price,
-                tile=tile,
-                max_depth=max_depth,
-                max_requests=max_requests,
-            ),
-            is_room,
-            is_entire_place,
-        ),
-        raw=False,
+    filters = search_filter_options(
+        north=north,
+        south=south,
+        east=east,
+        west=west,
+        zoom=zoom,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        tile=tile,
+        max_depth=max_depth,
+        max_requests=max_requests,
     )
+    options = search_options(query, filters, is_room, is_entire_place)
+    metadata: dict[str, Any] = {}
+    response = fetch_and_normalize(
+        _SEARCH_FNS[kind],
+        options,
+        raw=True,
+        metadata=metadata,
+    )
+    raw_rows = [
+        row
+        for row in extract_listings(response)
+        if isinstance(row, dict) and not is_building_result(row)
+    ]
+    normalized_rows = [normalize_listing(row) for row in raw_rows]
+    pairs = [(normalized, raw) for normalized, raw in zip(normalized_rows, raw_rows, strict=True) if normalized]
+    rows = [normalized for normalized, _ in pairs]
+    raw_rows = [raw for _, raw in pairs]
+    started_utc = utc_now()
+    filter_values = asdict(filters)
+    filter_values.update(is_room=is_room, is_entire_place=is_entire_place)
+    with _db_session(db_path) as conn:
+        run_id = begin_sync_run(
+            conn,
+            kind=kind.value,
+            query=query,
+            bbox=metadata.get("bbox"),
+            filters=filter_values,
+            started_utc=started_utc,
+        )
+        stats = upsert_listings(
+            conn,
+            rows,
+            raw_rows=raw_rows,
+            seen_utc=started_utc,
+            kind=kind.value,
+            run_id=run_id,
+        )
+        finish_sync_run(
+            conn,
+            run_id,
+            result_count=len(rows),
+            truncated=bool(response.get("truncated", False)),
+        )
 
-    if not rows:
-        if output_format is OutputFormat.json:
-            _report_sync_stats(SyncStats(added=0, updated=0, price_changes=0, skipped=0), "Synced", output_format)
-        else:
-            warn("No listings found")
+    if not rows and output_format is not OutputFormat.json:
+        warn("No listings found")
         return
-
-    _upsert_and_report(rows, db_path, "Synced", kind=kind, output_format=output_format)
+    _report_sync_stats(stats, "Synced", output_format)
 
 
 @db_app.command("import")
@@ -253,8 +304,16 @@ def db_import(
     # rows that already use normalized field names are kept as-is so a re-import
     # of `db query` output doesn't null out street/city/etc.
     rows = extract_listings(data, wrap_single=True)
-    imported = [row if _looks_normalized(row) else normalize_listing(row) for row in rows]
-    imported = [row for row in imported if row is not None and not is_building_result(row)]
+    imported: list[Mapping[str, Any]] = []
+    raw_imported: list[Mapping[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict) or is_building_result(row):
+            continue
+        normalized = row if _looks_normalized(row) else normalize_listing(row)
+        if normalized is not None and normalized.get("zpid") is not None:
+            imported.append(normalized)
+            raw_imported.append(row)
+
 
     if not imported:
         if output_format is OutputFormat.json:
@@ -276,7 +335,13 @@ def db_import(
         fetched_at = utc_now()
 
     _upsert_and_report(
-        imported, db_path, "Imported", seen_utc=fetched_at, kind=kind, output_format=output_format
+        imported,
+        db_path,
+        "Imported",
+        seen_utc=fetched_at,
+        kind=kind,
+        output_format=output_format,
+        raw_rows=raw_imported,
     )
 
 
@@ -324,6 +389,19 @@ def db_history(
         return
 
     write_output(history, output_format)
+
+
+@db_app.command("changes")
+def db_changes(
+    since: Annotated[str, typer.Argument(help="UTC timestamp lower bound, e.g. 2026-10-01T00:00:00Z")],
+    db_path: DbPathOpt = None,
+    output_format: FormatOpt = OutputFormat.json,
+    output: OutputOpt = None,
+) -> None:
+    """Report listing changes since a timestamp."""
+    with _db_session(db_path, must_exist=True, readonly=True) as conn:
+        events = get_changes(conn, since)
+    write_output(events, output_format, output)
 
 
 @db_app.command("stats")

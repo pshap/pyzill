@@ -196,7 +196,8 @@ columns in table and CSV formats.
 
 ### Local database
 
-pyzill includes a SQLite database for tracking listings over time with price history. The database lives at `./pyzill.db` by default (configurable via `--db` or `PYZILL_DB`).
+pyzill includes a SQLite database for tracking listings over time with price history. The database lives in the XDG data directory (`$XDG_DATA_HOME/pyzill/pyzill.db`, falling back to `~/.local/share/pyzill/pyzill.db`) by default (configurable via `--db` or `PYZILL_DB`).
+
 
 ```bash
 # Sync from Zillow (fetch + upsert)
@@ -213,6 +214,9 @@ pyzill db import rentals.json --kind rent
 pyzill db query --where 'city==Schenectady' --where 'last_seen_utc>=2026-10-01' --sort price:asc
 pyzill db query --format table --cols address,price,first_seen_utc,last_seen_utc
 
+# Query listing changes (new, price drops/increases, status transitions, delistings)
+pyzill db changes 2026-10-01T00:00:00Z
+
 # Show price history for a single listing
 pyzill db history 32463997
 
@@ -220,11 +224,15 @@ pyzill db history 32463997
 pyzill db stats
 ```
 
-**Database path resolution** — `--db PATH` > `PYZILL_DB` env var > `./pyzill.db`. The schema is created automatically on first use (no init command needed).
+**Database path resolution** — `--db PATH` > `PYZILL_DB` env var > `$XDG_DATA_HOME/pyzill/pyzill.db` (falling back to `~/.local/share/pyzill/pyzill.db`). If `./pyzill.db` exists in the working directory and no explicit path is given, a warning is printed to stderr pointing to the new default location. The schema is created automatically on first use (no init command needed).
 
-**Schema** — The database tracks:
-- `listings` table: one current row per zpid, including the latest `kind` (`sale`, `rent`, or `sold`), plus `first_seen_utc` and `last_seen_utc`
-- `price_history` table: first priced sightings and subsequent price changes keyed by `(zpid, kind, seen_utc)`; unchanged sightings do not add rows
+**Schema** (version 3) — The database tracks:
+- `listings` table: latest state view with composite primary key `(zpid, kind)` so a sale and rent for the same zpid do not overwrite each other, plus `first_seen_utc` and `last_seen_utc`
+- `price_history` table: change-only priced sightings keyed by `(zpid, kind, seen_utc)`
+- `status_history` table: transition history tracking status changes (pending/contingent/active) keyed by `(zpid, kind, status, first_seen_utc)`
+- `sync_runs` table: search sync runs recording query, bounds, filters, result count, and whether the run was truncated
+- `sightings` table: each search observation per run, preserving the raw payload (`raw_json`) for re-normalization
+
 
 **Upsert semantics** (one transaction per sync/import):
 - New zpid → insert row and its first priced sighting

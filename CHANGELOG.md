@@ -5,7 +5,20 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- Database tracking schema v3: `sync_runs` tracks search queries and truncation,
+  `sightings` preserves the unnormalized payload (`raw_json`) for offline re-normalization,
+  `listings` uses a composite `(zpid, kind)` primary key to keep sales and rentals distinct,
+  `price_history` records change-only rows, and `status_history` tracks status transitions.
+  A migration from schema v2 preserves existing listings and price history.
+- Added `pyzill db changes <since>` to report new listings, price drops/increases,
+  status transitions, and comparable-run delistings/relistings with days observed on market.
+- Default database path is now resolved in the XDG data directory (`$XDG_DATA_HOME/pyzill/pyzill.db`,
+  falling back to `~/.local/share/pyzill/pyzill.db`). If a legacy `./pyzill.db` exists in the
+  working directory and no explicit path is given, pyzill warns once on stderr pointing to the new default.
+- `load_listings` supports optional equality `filters` and row `limit`. Added composite database
+  indexes on `(kind, zipcode)`, `(kind, city)`, `(kind, price)`, and `last_seen_utc`.
 - Added `ZillowClient` for persistent-session search/detail workflows, with
+
   per-client rate limiting and one fresh-session retry on a 403 when a proxy
   list is configured. Existing module-level functions use a lazy default
   client. Detail parsing no longer depends on BeautifulSoup and selects the

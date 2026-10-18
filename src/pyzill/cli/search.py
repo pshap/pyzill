@@ -227,6 +227,7 @@ def fetch_and_normalize(
     options: SearchOptions,
     *,
     raw: bool,
+    metadata: dict[str, Any] | None = None,
 ) -> Any:
     """Fetch from Zillow and optionally normalize listings.
 
@@ -259,6 +260,8 @@ def fetch_and_normalize(
                 "which may not cover the full area"
             )
     debug(f"{search_fn.__name__}: query={options.query!r} bbox={bbox}")
+    if metadata is not None:
+        metadata["bbox"] = bbox.to_map_bounds()
     search_kwargs = {
         "search_value": options.query,
         "zoom_value": filters.zoom,
@@ -273,6 +276,16 @@ def fetch_and_normalize(
     if search_fn is for_rent:
         search_kwargs.update(is_room=options.is_room, is_entire_place=options.is_entire_place)
 
+    capped_at_depth = False
+
+    def on_cap() -> None:
+        nonlocal capped_at_depth
+        capped_at_depth = True
+        warn(
+            f"A tile still returned {_RESULT_CAP} listings at --max-depth {filters.max_depth}; "
+            "results may be truncated"
+        )
+
     with network_errors("Search failed"):
         if filters.tile:
             result = tiled_search(
@@ -280,10 +293,7 @@ def fetch_and_normalize(
                 bbox=bbox,
                 max_depth=filters.max_depth,
                 max_requests=filters.max_requests,
-                on_cap=lambda: warn(
-                    f"A tile still returned {_RESULT_CAP} listings at --max-depth {filters.max_depth}; "
-                    "results may be truncated"
-                ),
+                on_cap=on_cap,
                 on_progress=lambda used, total: progress(f"tile {used}:", f"{total} listings so far"),
                 on_budget=lambda: warn(
                     f"request budget of {filters.max_requests} exhausted; returning partial results "
@@ -299,6 +309,12 @@ def fetch_and_normalize(
                     "use --tile to subdivide the bounding box"
                 )
 
+    result["truncated"] = bool(
+        capped_at_depth
+        or result.get("budget_exhausted")
+        or len(result.get("mapResults", []) or []) >= _RESULT_CAP
+        or len(result.get("listResults", []) or []) >= _RESULT_CAP
+    )
     return result if raw else normalize_listings(extract_listings(result))
 
 

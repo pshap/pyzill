@@ -4,7 +4,10 @@ Uses stdlib sqlite3 for zero new dependencies. Database lives at ./pyzill.db
 by default (configurable via --db or PYZILL_DB).
 """
 
+import json
+import os
 import sqlite3
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,10 +18,13 @@ from pyzill.normalize import parse_price
 __all__ = [
     "DBStats",
     "SyncStats",
+    "begin_sync_run",
     "connect",
     "connect_readonly",
     "db_stats",
     "default_db_path",
+    "finish_sync_run",
+    "get_changes",
     "get_price_history",
     "load_listings",
     "upsert_listings",
@@ -27,8 +33,9 @@ __all__ = [
 
 
 def default_db_path() -> Path:
-    """Return the default database path (./pyzill.db)."""
-    return Path.cwd() / "pyzill.db"
+    """Return the XDG data directory's pyzill database path."""
+    data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return data_home / "pyzill" / "pyzill.db"
 
 
 def utc_now() -> str:
@@ -36,7 +43,48 @@ def utc_now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-_SCHEMA_VERSION = 2
+def begin_sync_run(  # noqa: PLR0913
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    query: str = "",
+    bbox: Mapping[str, Any] | None = None,
+    filters: Mapping[str, Any] | None = None,
+    started_utc: str | None = None,
+) -> int:
+    """Create a run record and return its database ID."""
+    cursor = conn.execute(
+        "INSERT INTO sync_runs (started_utc, kind, query, bbox_json, filters_json) VALUES (?, ?, ?, ?, ?)",
+        (
+            started_utc or utc_now(),
+            kind,
+            query,
+            json.dumps(bbox, sort_keys=True) if bbox is not None else None,
+            json.dumps(filters, sort_keys=True) if filters is not None else None,
+        ),
+    )
+    if cursor.lastrowid is None:
+        raise sqlite3.DatabaseError("Failed to retrieve sync_run id")
+    return int(cursor.lastrowid)
+
+
+
+def finish_sync_run(
+    conn: sqlite3.Connection,
+    run_id: int,
+    *,
+    result_count: int,
+    truncated: bool = False,
+    finished_utc: str | None = None,
+) -> None:
+    """Complete a run after its results have been stored."""
+    conn.execute(
+        "UPDATE sync_runs SET finished_utc = ?, result_count = ?, truncated = ? WHERE id = ?",
+        (finished_utc or utc_now(), result_count, int(truncated), run_id),
+    )
+
+
+_SCHEMA_VERSION = 3
 
 # Canonical listings columns, in schema order. Shared by the schema DDL, the
 # v1->v2 migration, and upsert_listings so the three can never drift apart.
@@ -67,7 +115,7 @@ _LISTING_TABLE_COLUMNS = (
 )
 
 _CREATE_LISTINGS_SQL = """CREATE TABLE IF NOT EXISTS {name} (
-  zpid INTEGER PRIMARY KEY,
+    zpid INTEGER NOT NULL,
   kind TEXT NOT NULL DEFAULT 'sale',
   price INTEGER,
   price_label TEXT,
@@ -89,18 +137,61 @@ _CREATE_LISTINGS_SQL = """CREATE TABLE IF NOT EXISTS {name} (
   zestimate INTEGER,
   rent_zestimate INTEGER,
   first_seen_utc TEXT NOT NULL,
-  last_seen_utc TEXT NOT NULL
+    last_seen_utc TEXT NOT NULL,
+    PRIMARY KEY (zpid, kind)
 );"""
 
 _CREATE_PRICE_HISTORY_SQL = """CREATE TABLE IF NOT EXISTS {name} (
-  zpid INTEGER NOT NULL REFERENCES listings(zpid) ON DELETE CASCADE,
+    zpid INTEGER NOT NULL,
   kind TEXT NOT NULL DEFAULT 'sale',
   price INTEGER NOT NULL,
   seen_utc TEXT NOT NULL,
-  PRIMARY KEY (zpid, kind, seen_utc)
+    PRIMARY KEY (zpid, kind, seen_utc),
+    FOREIGN KEY (zpid, kind) REFERENCES listings(zpid, kind) ON DELETE CASCADE
 );"""
 
-_CREATE_INDEX_SQL = "CREATE INDEX IF NOT EXISTS ix_listings_last_seen ON listings(last_seen_utc)"
+_CREATE_INDEX_SQL = (
+        "CREATE INDEX IF NOT EXISTS ix_listings_kind_zipcode ON listings(kind, zipcode)",
+        "CREATE INDEX IF NOT EXISTS ix_listings_kind_city ON listings(kind, city)",
+        "CREATE INDEX IF NOT EXISTS ix_listings_kind_price ON listings(kind, price)",
+        "CREATE INDEX IF NOT EXISTS ix_listings_last_seen ON listings(last_seen_utc)",
+)
+
+_CREATE_TRACKING_SQL = (
+        """CREATE TABLE IF NOT EXISTS sync_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_utc TEXT NOT NULL,
+                finished_utc TEXT,
+                kind TEXT NOT NULL,
+                query TEXT NOT NULL,
+                bbox_json TEXT,
+                filters_json TEXT,
+                result_count INTEGER,
+                truncated INTEGER NOT NULL DEFAULT 0
+        )""",
+        """CREATE TABLE IF NOT EXISTS sightings (
+                run_id INTEGER NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
+                zpid INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                price INTEGER,
+                status TEXT,
+                status_type TEXT,
+                seen_utc TEXT NOT NULL,
+                raw_json TEXT,
+                PRIMARY KEY (run_id, zpid, kind),
+                FOREIGN KEY (zpid, kind) REFERENCES listings(zpid, kind) ON DELETE CASCADE
+        )""",
+        """CREATE TABLE IF NOT EXISTS status_history (
+                zpid INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL,
+                first_seen_utc TEXT NOT NULL,
+                PRIMARY KEY (zpid, kind, status, first_seen_utc),
+                FOREIGN KEY (zpid, kind) REFERENCES listings(zpid, kind) ON DELETE CASCADE
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_sightings_zpid_kind_seen ON sightings(zpid, kind, seen_utc)",
+        "CREATE INDEX IF NOT EXISTS ix_sync_runs_kind_started ON sync_runs(kind, started_utc)",
+)
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -142,10 +233,34 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
         "SELECT zpid, 'sale', price, seen_utc FROM price_history_staging"
     )
     conn.execute("DROP TABLE price_history_staging")
-    conn.execute(_CREATE_INDEX_SQL)
+    for statement in _CREATE_INDEX_SQL:
+        conn.execute(statement)
 
 
-_MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2}
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Rebuild v2 listing tables around composite (zpid, kind) keys."""
+    conn.execute("CREATE TABLE listings_v2_staging AS SELECT * FROM listings")
+    conn.execute("CREATE TABLE price_history_v2_staging AS SELECT * FROM price_history")
+    conn.execute("DROP TABLE price_history")
+    conn.execute("DROP TABLE listings")
+
+    conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
+    columns_sql = ", ".join(_LISTING_TABLE_COLUMNS)
+    conn.execute(
+        f"INSERT INTO listings ({columns_sql}) SELECT {columns_sql} FROM listings_v2_staging"  # noqa: S608
+    )
+    conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
+    conn.execute(
+        "INSERT INTO price_history (zpid, kind, price, seen_utc) "
+        "SELECT zpid, kind, price, seen_utc FROM price_history_v2_staging"
+    )
+    conn.execute("DROP TABLE price_history_v2_staging")
+    conn.execute("DROP TABLE listings_v2_staging")
+    for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
+        conn.execute(statement)
+
+
+_MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3}
 
 
 @dataclass
@@ -176,6 +291,8 @@ def connect(path: Path | str) -> sqlite3.Connection:
     Returns:
         Connection with foreign_keys enabled.
     """
+    if str(path) != ":memory:":
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")
@@ -194,7 +311,8 @@ def connect(path: Path | str) -> sqlite3.Connection:
             if version == 0:
                 conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
                 conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
-                conn.execute(_CREATE_INDEX_SQL)
+                for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
+                    conn.execute(statement)
                 version = _SCHEMA_VERSION
             while version < _SCHEMA_VERSION:
                 migration = _MIGRATIONS.get(version)
@@ -279,7 +397,7 @@ def _listing_upsert_sql() -> str:
     assignment_sql = ",\n        ".join(assignments)
     # Column names and placeholders come from fixed module constants, not user input.
     return (
-        f"INSERT INTO listings ({columns}) VALUES ({placeholders}) ON CONFLICT(zpid) DO UPDATE SET"  # noqa: S608
+        f"INSERT INTO listings ({columns}) VALUES ({placeholders}) ON CONFLICT(zpid, kind) DO UPDATE SET"  # noqa: S608
         f"\n        {assignment_sql}"
     )
 
@@ -289,23 +407,23 @@ _LISTING_UPSERT_SQL = _listing_upsert_sql()
 
 def _prefetch(
     conn: sqlite3.Connection, zpids: list[int], kind: str, seen_utc: str
-) -> tuple[dict[int, tuple[Any, str]], dict[int, int | None]]:
+) -> tuple[dict[tuple[int, str], Any], dict[tuple[int, str], int | None]]:
     """Read pre-batch listing state and prior prices for the batch zpids.
 
     Returns zpid -> (price, kind) for listings that already exist, and
     zpid -> previous price for this kind (an entry with the batch timestamp
     wins over the latest strictly-earlier one; missing when none exists).
     """
-    existing: dict[int, tuple[Any, str]] = {}
-    prior_prices: dict[int, int | None] = {}
+    existing: dict[tuple[int, str], Any] = {}
+    prior_prices: dict[tuple[int, str], int | None] = {}
     for start in range(0, len(zpids), _CHUNK):
         chunk = zpids[start : start + _CHUNK]
         marks = _placeholders(len(chunk))
-        for zpid, price, stored_kind in conn.execute(
-            f"SELECT zpid, price, kind FROM listings WHERE zpid IN ({marks})",  # noqa: S608
-            chunk,
+        for zpid, price in conn.execute(
+            f"SELECT zpid, price FROM listings WHERE zpid IN ({marks}) AND kind = ?",  # noqa: S608
+            (*chunk, kind),
         ):
-            existing[zpid] = (price, stored_kind)
+            existing[(zpid, kind)] = price
         exact: dict[int, int] = {}
         latest_before: dict[int, tuple[str, int]] = {}
         for zpid, price, row_seen in conn.execute(
@@ -317,20 +435,24 @@ def _prefetch(
             elif zpid not in latest_before or row_seen > latest_before[zpid][0]:
                 latest_before[zpid] = (row_seen, price)
         for zpid in chunk:
+            key = (zpid, kind)
             if zpid in exact:
-                prior_prices[zpid] = exact[zpid]
+                prior_prices[key] = exact[zpid]
             elif zpid in latest_before:
-                prior_prices[zpid] = latest_before[zpid][1]
+                prior_prices[key] = latest_before[zpid][1]
     return existing, prior_prices
 
 
-def upsert_listings(
+def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
     conn: sqlite3.Connection,
-    rows: list[dict[str, Any]],
+    rows: Sequence[Mapping[str, Any]],
     *,
     seen_utc: str | None = None,
     kind: Literal["sale", "rent", "sold"] = "sale",
+    raw_rows: Sequence[Mapping[str, Any]] | None = None,
+    run_id: int | None = None,
 ) -> SyncStats:
+
     """Upsert listing rows into the database.
 
     Skips rows without a zpid (counted in stats). For each zpid:
@@ -360,8 +482,9 @@ def upsert_listings(
 
     # parse_price tolerates raw "$459,000" strings from unnormalized rows
     # and maps 0/"$0" (Zillow's unknown sentinel) to None.
-    prepared: list[tuple[int, dict[str, Any], int | None]] = []
-    for row in rows:
+    prepared: list[tuple[int, Mapping[str, Any], int | None, Mapping[str, Any]]] = []
+
+    for index, row in enumerate(rows):
         zpid = row.get("zpid")
         if zpid is None:
             stats.skipped += 1
@@ -371,39 +494,66 @@ def upsert_listings(
         except (ValueError, TypeError):
             stats.skipped += 1
             continue
-        prepared.append((zpid, row, parse_price(row.get("price"))))
+        raw_row = raw_rows[index] if raw_rows is not None and index < len(raw_rows) else row
+        prepared.append((zpid, row, parse_price(row.get("price")), raw_row))
 
-    zpids = list(dict.fromkeys(zpid for zpid, _, _ in prepared))
+    zpids = list(dict.fromkeys(zpid for zpid, _, _, _ in prepared))
     existing, prior_prices = _prefetch(conn, zpids, kind, seen_utc)
+    if run_id is None:
+        run_id = begin_sync_run(conn, kind=kind, started_utc=seen_utc)
 
     listing_params: list[tuple[Any, ...]] = []
     history_params: list[tuple[int, str, int, str]] = []
-    added_in_batch: set[int] = set()
-    for zpid, row, price_int in prepared:
-        if zpid in existing:
+    sighting_params: list[tuple[Any, ...]] = []
+    status_entries: list[tuple[int, str, str, str]] = []
+    added_in_batch: set[tuple[int, str]] = set()
+    for zpid, row, price_int, raw_row in prepared:
+        key = (zpid, kind)
+        if key in existing:
             stats.updated += 1
-            old_price, old_kind = existing[zpid]
-            prior_price = prior_prices.get(zpid)
+            old_price = existing[key]
+            prior_price = prior_prices.get(key)
             if (
                 price_int is not None
-                and old_kind == kind
                 and (
                     (prior_price is not None and prior_price != price_int)
                     or (prior_price is None and old_price is None)
                 )
             ):
                 stats.price_changes += 1
-        elif zpid in added_in_batch:
+        elif key in added_in_batch:
             stats.updated += 1
         else:
             stats.added += 1
-            added_in_batch.add(zpid)
+            added_in_batch.add(key)
 
         listing_params.append(
             (zpid, kind, price_int, *(row.get(column) for column in _DATA_COLUMNS), seen_utc, seen_utc)
         )
-        if price_int is not None and prior_prices.get(zpid) != price_int:
+        if price_int is not None and prior_prices.get(key) != price_int:
             history_params.append((zpid, kind, price_int, seen_utc))
+        status = row.get("status")
+        status_type = row.get("status_type")
+        sighting_params.append(
+            (
+                run_id,
+                zpid,
+                kind,
+                price_int,
+                status,
+                status_type,
+                seen_utc,
+                json.dumps(raw_row, ensure_ascii=False, allow_nan=False),
+            )
+        )
+        if isinstance(status, str) and status:
+            previous_status = conn.execute(
+                "SELECT status FROM status_history WHERE zpid = ? AND kind = ? "
+                "AND first_seen_utc <= ? ORDER BY first_seen_utc DESC LIMIT 1",
+                (zpid, kind, seen_utc),
+            ).fetchone()
+            if previous_status is None or previous_status[0] != status:
+                status_entries.append((zpid, kind, status, seen_utc))
 
     conn.executemany(_LISTING_UPSERT_SQL, listing_params)
     if history_params:
@@ -412,17 +562,53 @@ def upsert_listings(
             "ON CONFLICT(zpid, kind, seen_utc) DO UPDATE SET price = excluded.price",
             history_params,
         )
+    if sighting_params:
+        conn.executemany(
+            "INSERT OR REPLACE INTO sightings "
+            "(run_id, zpid, kind, price, status, status_type, seen_utc, raw_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            sighting_params,
+        )
+    if status_entries:
+        conn.executemany(
+            "INSERT INTO status_history (zpid, kind, status, first_seen_utc) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT DO NOTHING",
+            status_entries,
+        )
+    finish_sync_run(conn, run_id, result_count=len(sighting_params), finished_utc=seen_utc)
     conn.commit()
     return stats
 
 
-def load_listings(conn: sqlite3.Connection) -> list[dict[str, Any]]:
-    """Load all listings from the database.
+def load_listings(
+    conn: sqlite3.Connection,
+    *,
+    filters: Mapping[str, Any] | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Load listings with optional equality filters and a row bound.
 
     Returns:
         List of listing dicts (with first_seen_utc and last_seen_utc).
     """
-    cursor = conn.execute("SELECT * FROM listings ORDER BY last_seen_utc DESC, zpid DESC")
+    if limit is not None and limit < 1:
+        raise ValueError("limit must be at least 1")
+    fields = set(_LISTING_TABLE_COLUMNS)
+    conditions: list[str] = []
+    parameters: list[Any] = []
+    for field, value in (filters or {}).items():
+        if field not in fields:
+            raise ValueError(f"Unknown listing filter: {field}")
+        conditions.append(f'"{field}" IS ?' if value is None else f'"{field}" = ?')
+        parameters.append(value)
+    sql = "SELECT * FROM listings"
+    if conditions:
+        sql += " WHERE " + " AND ".join(conditions)
+    sql += " ORDER BY last_seen_utc DESC, zpid DESC, kind ASC"
+    if limit is not None:
+        sql += " LIMIT ?"
+        parameters.append(limit)
+    cursor = conn.execute(sql, parameters)
     columns = [desc[0] for desc in cursor.description]
     return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
 
@@ -443,6 +629,111 @@ def get_price_history(conn: sqlite3.Connection, zpid: int) -> list[dict[str, Any
     )
     columns = [desc[0] for desc in cursor.description]
     return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
+
+
+def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
+    """Summarize new listings, price/status transitions, and complete-run absences."""
+    events: list[dict[str, Any]] = []
+    listings = {
+        (row["zpid"], row["kind"]): row
+        for row in load_listings(conn)
+    }
+
+    def observed_days(key: tuple[int, str]) -> int:
+        first_seen = listings[key]["first_seen_utc"]
+        first = datetime.fromisoformat(first_seen)
+        return max(0, (datetime.now(UTC) - first).days)
+
+    for key, listing in listings.items():
+        if listing["first_seen_utc"] >= since:
+            events.append(
+                {
+                    "event": "new",
+                    "zpid": key[0],
+                    "kind": key[1],
+                    "price": listing["price"],
+                    "days_observed": observed_days(key),
+                }
+            )
+
+    history = conn.execute(
+        "SELECT zpid, kind, price, seen_utc FROM price_history ORDER BY zpid, kind, seen_utc"
+    ).fetchall()
+    latest: dict[tuple[int, str], int] = {}
+    for zpid, kind, price, seen_utc in history:
+        key = (zpid, kind)
+        previous = latest.get(key)
+        if seen_utc >= since and previous is not None and previous != price:
+            events.append(
+                {
+                    "event": "price_drop" if price < previous else "price_increase",
+                    "zpid": zpid,
+                    "kind": kind,
+                    "old_price": previous,
+                    "price": price,
+                    "seen_utc": seen_utc,
+                    "days_observed": observed_days(key) if key in listings else None,
+                }
+            )
+        latest[key] = price
+
+    for zpid, kind, status, first_seen_utc in conn.execute(
+        "SELECT zpid, kind, status, first_seen_utc FROM status_history "
+        "WHERE first_seen_utc >= ? ORDER BY first_seen_utc",
+        (since,),
+    ):
+        events.append(
+            {
+                "event": "status_change",
+                "zpid": zpid,
+                "kind": kind,
+                "status": status,
+                "seen_utc": first_seen_utc,
+                "days_observed": observed_days((zpid, kind)) if (zpid, kind) in listings else None,
+            }
+        )
+
+    run_rows = conn.execute(
+        "SELECT id, started_utc, finished_utc, kind, query, bbox_json FROM sync_runs "
+        "WHERE finished_utc IS NOT NULL AND truncated = 0 ORDER BY started_utc, id"
+    ).fetchall()
+    comparable: dict[tuple[str, str, str | None], list[tuple[int, str]]] = {}
+    for run_id, started_utc, _, kind, query, bbox_json in run_rows:
+        comparable.setdefault((kind, query, bbox_json), []).append((run_id, started_utc))
+    for run_list in comparable.values():
+        prior_sets: list[set[tuple[int, str]]] = []
+        for run_id, started_utc in run_list:
+            present = {
+                (zpid, kind)
+                for zpid, kind in conn.execute("SELECT zpid, kind FROM sightings WHERE run_id = ?", (run_id,))
+            }
+            if prior_sets and started_utc >= since:
+                prev_set = prior_sets[-1]
+                events.extend(
+                    {
+                        "event": "delisted",
+                        "zpid": key[0],
+                        "kind": key[1],
+                        "seen_utc": started_utc,
+                        "days_observed": observed_days(key) if key in listings else None,
+                    }
+                    for key in sorted(prev_set - present)
+                )
+                all_prior = set().union(*prior_sets)
+                events.extend(
+                    {
+                        "event": "relisted",
+                        "zpid": key[0],
+                        "kind": key[1],
+                        "seen_utc": started_utc,
+                        "days_observed": observed_days(key) if key in listings else None,
+                    }
+                    for key in sorted((present - prev_set) & all_prior)
+                )
+            prior_sets.append(present)
+
+
+    return sorted(events, key=lambda event: (event.get("seen_utc", since), event["zpid"], event["event"]))
 
 
 @dataclass

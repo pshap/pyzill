@@ -1089,7 +1089,11 @@ class TestDatabaseCommands:
         result = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
         assert result.exit_code == 0
         assert "No listings found" in result.stderr
-        assert not db_path.exists()
+        from pyzill.db import connect
+
+        conn = connect(db_path)
+        assert conn.execute("SELECT result_count, truncated FROM sync_runs").fetchone() == (0, 0)
+        conn.close()
 
     def test_db_sync_re_sync_updates_last_seen(self, fake_http, search_success_body, tmp_path):
         fake_http.install("PUT", json_data=search_success_body)
@@ -1411,6 +1415,27 @@ class TestDatabaseCommands:
         assert result.exit_code == 0
         assert json.loads(result.stdout) == []
 
+    def test_db_changes_reports_price_and_delisted_events(self, tmp_path):
+        db_path = tmp_path / "changes.db"
+        input_file = tmp_path / "first.json"
+        input_file.write_text(json.dumps([{"zpid": 1, "price": 300000}, {"zpid": 2, "price": 200000}]))
+        runner.invoke(
+            app,
+            ["db", "import", str(input_file), "--fetched-at", "2026-10-01T00:00:00Z", "--db", str(db_path)],
+        )
+        input_file.write_text(json.dumps([{"zpid": 1, "price": 250000}]))
+        runner.invoke(
+            app,
+            ["db", "import", str(input_file), "--fetched-at", "2026-10-02T00:00:00Z", "--db", str(db_path)],
+        )
+
+        result = runner.invoke(app, ["db", "changes", "2026-10-02T00:00:00Z", "--db", str(db_path)])
+
+        assert result.exit_code == 0
+        event_types = {(event["event"], event["zpid"]) for event in json.loads(result.stdout)}
+        assert ("price_drop", 1) in event_types
+        assert ("delisted", 2) in event_types
+
     def test_db_stats_missing_database(self, tmp_path):
         db_path = tmp_path / "nonexistent.db"
         result = runner.invoke(app, ["db", "stats", "--db", str(db_path)])
@@ -1472,9 +1497,29 @@ class TestDatabaseCommands:
         rows = [{"zpid": "123", "price": 250000, "address": "test"}]
         input_file = tmp_path / "input.json"
         input_file.write_text(json.dumps(rows))
+        xdg_home = tmp_path / "xdg"
+        monkeypatch.setenv("XDG_DATA_HOME", str(xdg_home))
 
-        # Change to tmp_path so default db is created there
-        monkeypatch.chdir(tmp_path)
         result = runner.invoke(app, ["db", "import", str(input_file)])
         assert result.exit_code == 0
-        assert (tmp_path / "pyzill.db").exists()
+        assert (xdg_home / "pyzill" / "pyzill.db").exists()
+
+    def test_db_legacy_warning_when_local_pyzill_db_exists(self, tmp_path, monkeypatch):
+        import pyzill.cli.db as cli_db
+
+        monkeypatch.setattr(cli_db._warning_state, "legacy_db_shown", False)
+        legacy_db = tmp_path / "pyzill.db"
+
+        legacy_db.touch()
+        xdg_home = tmp_path / "xdg"
+        monkeypatch.setenv("XDG_DATA_HOME", str(xdg_home))
+        monkeypatch.chdir(tmp_path)
+
+        rows = [{"zpid": "123", "price": 250000, "address": "test"}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+
+        result = runner.invoke(app, ["db", "import", str(input_file)])
+        assert result.exit_code == 0
+        assert "default database is now" in result.stderr
+

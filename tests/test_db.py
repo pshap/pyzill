@@ -2,6 +2,7 @@
 
 import datetime as dt
 import itertools
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -10,10 +11,13 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from pyzill.db import (
+    begin_sync_run,
     connect,
     connect_readonly,
     db_stats,
     default_db_path,
+    finish_sync_run,
+    get_changes,
     get_price_history,
     load_listings,
     upsert_listings,
@@ -22,10 +26,16 @@ from pyzill.db import (
 
 
 def test_default_db_path():
-    """Test default_db_path returns ./pyzill.db."""
+    """Test default_db_path uses the XDG data directory."""
     path = default_db_path()
     assert path.name == "pyzill.db"
-    assert path.parent == Path.cwd()
+    assert path.parent.name == "pyzill"
+    assert path.parent.parent.name == "share"
+
+
+def test_default_db_path_honors_xdg_data_home(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    assert default_db_path() == tmp_path / "xdg" / "pyzill" / "pyzill.db"
 
 
 def test_utc_now_format():
@@ -50,7 +60,7 @@ def test_connect_creates_schema(tmp_path: Path):
 
     # Check user_version is set
     cursor = conn.execute("PRAGMA user_version")
-    assert cursor.fetchone()[0] == 2
+    assert cursor.fetchone()[0] == 3
 
     conn.close()
 
@@ -128,6 +138,146 @@ def test_upsert_new_listing(tmp_path: Path):
     assert hist[2] == 250000  # price
     assert hist[3] == "2026-10-01T12:00:00Z"  # seen_utc
 
+    conn.close()
+
+
+def test_same_zpid_can_have_sale_and_rent_rows(tmp_path: Path):
+    conn = connect(tmp_path / "kinds.db")
+    upsert_listings(conn, [{"zpid": 1, "price": 300000}], kind="sale", seen_utc="2026-10-01T00:00:00Z")
+    upsert_listings(conn, [{"zpid": 1, "price": 2200}], kind="rent", seen_utc="2026-10-02T00:00:00Z")
+
+    rows = conn.execute("SELECT zpid, kind, price FROM listings ORDER BY kind").fetchall()
+
+    assert rows == [(1, "rent", 2200), (1, "sale", 300000)]
+    assert conn.execute("SELECT COUNT(*) FROM price_history WHERE zpid = 1").fetchone()[0] == 2
+    conn.close()
+
+
+def test_upsert_records_raw_payload_and_sync_run(tmp_path: Path):
+    conn = connect(tmp_path / "raw.db")
+    raw = {"zpid": "123", "price": "$250,000", "statusText": "Active"}
+
+    upsert_listings(
+        conn,
+        [{"zpid": 123, "price": 250000, "status": "Active"}],
+        raw_rows=[raw],
+        seen_utc="2026-10-01T00:00:00Z",
+    )
+
+    run = conn.execute("SELECT kind, result_count, truncated FROM sync_runs").fetchone()
+    raw_json = conn.execute("SELECT raw_json FROM sightings WHERE zpid = 123").fetchone()[0]
+
+    assert run == ("sale", 1, 0)
+    assert json.loads(raw_json) == raw
+    conn.close()
+
+
+def test_status_history_records_only_transitions(tmp_path: Path):
+    conn = connect(tmp_path / "status.db")
+    for timestamp, status in [
+        ("2026-10-01T00:00:00Z", "Active"),
+        ("2026-10-02T00:00:00Z", "Active"),
+        ("2026-10-03T00:00:00Z", "Pending"),
+        ("2026-10-04T00:00:00Z", "Active"),
+    ]:
+        upsert_listings(conn, [{"zpid": 1, "status": status}], seen_utc=timestamp)
+
+    history = conn.execute(
+        "SELECT status, first_seen_utc FROM status_history WHERE zpid = 1 ORDER BY first_seen_utc"
+    ).fetchall()
+
+    assert history == [
+        ("Active", "2026-10-01T00:00:00Z"),
+        ("Pending", "2026-10-03T00:00:00Z"),
+        ("Active", "2026-10-04T00:00:00Z"),
+    ]
+    conn.close()
+
+
+def test_load_listings_supports_filters_and_limit(tmp_path: Path):
+    conn = connect(tmp_path / "filtered.db")
+    upsert_listings(
+        conn,
+        [
+            {"zpid": 1, "city": "Albany", "zipcode": "01234"},
+            {"zpid": 2, "city": "Boston", "zipcode": "02134"},
+            {"zpid": 3, "city": "Albany", "zipcode": "01235"},
+        ],
+        seen_utc="2026-10-01T00:00:00Z",
+    )
+
+    rows = load_listings(conn, filters={"city": "Albany"}, limit=1)
+
+    assert len(rows) == 1
+    assert rows[0]["city"] == "Albany"
+    conn.close()
+
+
+def test_get_changes_reports_price_status_and_comparable_delisting(tmp_path: Path):
+    conn = connect(tmp_path / "changes.db")
+    query_args: dict[str, Any] = {"kind": "sale", "query": "Albany", "bbox": {"north": 43, "south": 42}}
+
+    first_run = begin_sync_run(conn, **query_args, started_utc="2026-10-01T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 300000, "status": "Active"}, {"zpid": 2, "price": 200000}],
+        seen_utc="2026-10-01T00:00:00Z",
+        run_id=first_run,
+    )
+    finish_sync_run(conn, first_run, result_count=2, finished_utc="2026-10-01T00:00:00Z")
+    second_run = begin_sync_run(conn, **query_args, started_utc="2026-10-02T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 250000, "status": "Pending"}],
+        seen_utc="2026-10-02T00:00:00Z",
+        run_id=second_run,
+    )
+    finish_sync_run(conn, second_run, result_count=1, finished_utc="2026-10-02T00:00:00Z")
+
+    changes = get_changes(conn, "2026-10-02T00:00:00Z")
+    event_types = {(change["event"], change["zpid"]) for change in changes}
+
+    assert ("price_drop", 1) in event_types
+    assert ("status_change", 1) in event_types
+    assert ("delisted", 2) in event_types
+    conn.close()
+
+
+def test_v2_database_migrates_to_v3_and_preserves_data(tmp_path: Path):
+    db_path = tmp_path / "v2.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(
+        """
+        CREATE TABLE listings (
+            zpid INTEGER PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'sale', price INTEGER,
+            price_label TEXT, beds REAL, baths REAL, area INTEGER, address TEXT,
+            street TEXT, city TEXT, state TEXT, zipcode TEXT, latitude REAL,
+            longitude REAL, home_type TEXT, status TEXT, status_type TEXT,
+            detail_url TEXT, image_url TEXT, zestimate INTEGER, rent_zestimate INTEGER,
+            first_seen_utc TEXT NOT NULL, last_seen_utc TEXT NOT NULL
+        );
+        CREATE TABLE price_history (
+            zpid INTEGER NOT NULL REFERENCES listings(zpid) ON DELETE CASCADE,
+            kind TEXT NOT NULL DEFAULT 'sale', price INTEGER NOT NULL, seen_utc TEXT NOT NULL,
+            PRIMARY KEY (zpid, kind, seen_utc)
+        );
+        INSERT INTO listings (zpid, kind, price, address, city, zipcode, first_seen_utc, last_seen_utc)
+            VALUES (7, 'sale', 450000, '7 Main St', 'Albany', '01234', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z');
+        INSERT INTO price_history VALUES (7, 'sale', 450000, '2026-01-01T00:00:00Z');
+        PRAGMA user_version = 2;
+        """
+    )
+    legacy.close()
+
+    conn = connect(db_path)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert conn.execute("SELECT zpid, kind, price, city, zipcode FROM listings").fetchall() == [
+        (7, "sale", 450000, "Albany", "01234")
+    ]
+    assert conn.execute("SELECT zpid, kind, price FROM price_history").fetchall() == [(7, "sale", 450000)]
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"sync_runs", "sightings", "status_history"} <= tables
     conn.close()
 
 
@@ -525,7 +675,7 @@ def test_v1_database_migrates_kind_columns_and_history(tmp_path: Path):
 
     conn = connect(db_path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
     assert conn.execute("SELECT kind FROM listings WHERE zpid = 1").fetchone()[0] == "sale"
     assert conn.execute("SELECT kind FROM price_history WHERE zpid = 1").fetchone()[0] == "sale"
     assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
