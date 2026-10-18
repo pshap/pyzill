@@ -43,7 +43,7 @@ class RateLimiter:
 
 
 def _read_min_interval() -> float:
-    raw = read_env("ZILLOW_MIN_INTERVAL")
+    raw = read_env("PYZILL_RATE_LIMIT")
     if raw is None:
         return DEFAULT_MIN_INTERVAL
     try:

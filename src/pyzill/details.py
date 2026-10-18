@@ -21,121 +21,91 @@ def _fetch(url: str, parser: _Parser, options: http.RequestOptions) -> dict[str,
     return parser(http.get_page(url, options=options).content)
 
 
-def get_from_home_id(
+def _options(
+    options: http.RequestOptions | None,
+    proxy_url: str | None,
+    impersonate: str,
+    timeout: float,
+    max_retries: int,
+) -> http.RequestOptions:
+    return options or http.RequestOptions(proxy_url, impersonate, timeout, max_retries)
+
+
+def get_from_home_id(  # noqa: PLR0913
     property_id: int,
     proxy_url: str | None = None,
     impersonate: str = http.DEFAULT_IMPERSONATE,
     timeout: float = http.DEFAULT_TIMEOUT,
     max_retries: int = http.DEFAULT_MAX_RETRIES,
+    *,
+    options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
     return _fetch(
         f"{http.ZILLOW_HOME}/homedetails/any-title/{property_id}_zpid/",
         parse_body_home,
-        http.RequestOptions(proxy_url, impersonate, timeout, max_retries),
+        _options(options, proxy_url, impersonate, timeout, max_retries),
     )
 
 
-def get_from_apartment_id(
-    department_id: str,
+def get_from_apartment_id(  # noqa: PLR0913
+    apartment_id: str,
     proxy_url: str | None = None,
     impersonate: str = http.DEFAULT_IMPERSONATE,
     timeout: float = http.DEFAULT_TIMEOUT,
     max_retries: int = http.DEFAULT_MAX_RETRIES,
+    *,
+    options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
     return _fetch(
-        f"{http.ZILLOW_HOME}/apartments/{department_id}/",
+        f"{http.ZILLOW_HOME}/apartments/{apartment_id}/",
         parse_body_departments,
-        http.RequestOptions(proxy_url, impersonate, timeout, max_retries),
+        _options(options, proxy_url, impersonate, timeout, max_retries),
     )
 
 
-def get_from_apartment_url(
-    department_url: str,
+def get_from_apartment_url(  # noqa: PLR0913
+    apartment_url: str,
     proxy_url: str | None = None,
     impersonate: str = http.DEFAULT_IMPERSONATE,
     timeout: float = http.DEFAULT_TIMEOUT,
     max_retries: int = http.DEFAULT_MAX_RETRIES,
+    *,
+    options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
     return _fetch(
-        department_url,
+        apartment_url,
         parse_body_departments,
-        http.RequestOptions(proxy_url, impersonate, timeout, max_retries),
+        _options(options, proxy_url, impersonate, timeout, max_retries),
     )
 
 
-def get_from_home_url(
+def get_from_home_url(  # noqa: PLR0913
     home_url: str,
     proxy_url: str | None = None,
     impersonate: str = http.DEFAULT_IMPERSONATE,
     timeout: float = http.DEFAULT_TIMEOUT,
     max_retries: int = http.DEFAULT_MAX_RETRIES,
+    *,
+    options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
     return _fetch(
         home_url,
         parse_body_home,
-        http.RequestOptions(proxy_url, impersonate, timeout, max_retries),
+        _options(options, proxy_url, impersonate, timeout, max_retries),
     )
 
 
-def get_from_department_id(
-    department_id: str,
-    proxy_url: str | None = None,
-    impersonate: str = http.DEFAULT_IMPERSONATE,
-    timeout: float = http.DEFAULT_TIMEOUT,
-    max_retries: int = http.DEFAULT_MAX_RETRIES,
-) -> dict[str, Any]:
-    """Deprecated alias for :func:`get_from_apartment_id`."""
-    warnings.warn(
-        "get_from_department_id is deprecated; use get_from_apartment_id",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return get_from_apartment_id(department_id, proxy_url, impersonate, timeout, max_retries)
+def _deprecated_alias(alias_name: str, target: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    def deprecated(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        warnings.warn(f"{alias_name} is deprecated; use {target.__name__}", DeprecationWarning, stacklevel=2)
+        return target(*args, **kwargs)
+
+    deprecated.__name__ = alias_name
+    deprecated.__doc__ = f"Deprecated alias for :func:`{target.__name__}`."
+    return deprecated
 
 
-def get_from_department_url(
-    department_url: str,
-    proxy_url: str | None = None,
-    impersonate: str = http.DEFAULT_IMPERSONATE,
-    timeout: float = http.DEFAULT_TIMEOUT,
-    max_retries: int = http.DEFAULT_MAX_RETRIES,
-) -> dict[str, Any]:
-    """Deprecated alias for :func:`get_from_apartment_url`."""
-    warnings.warn(
-        "get_from_department_url is deprecated; use get_from_apartment_url",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return get_from_apartment_url(department_url, proxy_url, impersonate, timeout, max_retries)
-
-
-def get_from_deparment_id(
-    department_id: str,
-    proxy_url: str | None = None,
-    impersonate: str = http.DEFAULT_IMPERSONATE,
-    timeout: float = http.DEFAULT_TIMEOUT,
-    max_retries: int = http.DEFAULT_MAX_RETRIES,
-) -> dict[str, Any]:
-    """Deprecated alias for :func:`get_from_apartment_id`."""
-    warnings.warn(
-        "get_from_deparment_id is deprecated; use get_from_apartment_id",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return get_from_apartment_id(department_id, proxy_url, impersonate, timeout, max_retries)
-
-
-def get_from_deparment_url(
-    department_url: str,
-    proxy_url: str | None = None,
-    impersonate: str = http.DEFAULT_IMPERSONATE,
-    timeout: float = http.DEFAULT_TIMEOUT,
-    max_retries: int = http.DEFAULT_MAX_RETRIES,
-) -> dict[str, Any]:
-    """Deprecated alias for :func:`get_from_apartment_url`."""
-    warnings.warn(
-        "get_from_deparment_url is deprecated; use get_from_apartment_url",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return get_from_apartment_url(department_url, proxy_url, impersonate, timeout, max_retries)
+get_from_department_id = _deprecated_alias("get_from_department_id", get_from_apartment_id)
+get_from_department_url = _deprecated_alias("get_from_department_url", get_from_apartment_url)
+get_from_deparment_id = _deprecated_alias("get_from_deparment_id", get_from_apartment_id)
+get_from_deparment_url = _deprecated_alias("get_from_deparment_url", get_from_apartment_url)

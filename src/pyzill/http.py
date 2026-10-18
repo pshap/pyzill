@@ -14,14 +14,25 @@ from curl_cffi import requests
 from curl_cffi.requests import ProxySpec, Response
 from curl_cffi.requests.exceptions import RequestException
 
+from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 from pyzill.exceptions import ZillowBlockedError, ZillowNotFoundError, ZillowServerError
 from pyzill.ratelimit import _limiter
 from pyzill.utils import resolve_proxy
 
+__all__ = [
+    "DEFAULT_IMPERSONATE",
+    "DEFAULT_MAX_RETRIES",
+    "DEFAULT_TIMEOUT",
+    "ZILLOW_HOME",
+    "RequestOptions",
+    "build_headers",
+    "build_proxies",
+    "get_page",
+    "put_json",
+    "request",
+]
+
 ZILLOW_HOME = "https://www.zillow.com"
-DEFAULT_IMPERSONATE = "chrome136"
-DEFAULT_TIMEOUT = 30.0
-DEFAULT_MAX_RETRIES = 1
 
 
 @dataclass(frozen=True, slots=True)

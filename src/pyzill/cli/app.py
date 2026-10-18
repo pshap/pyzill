@@ -3,9 +3,7 @@
 Uses Typer for command-line interface and Rich for terminal output.
 """
 
-import csv
 import datetime as dt
-import io
 import json
 import os
 import re
@@ -13,19 +11,16 @@ import sqlite3
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
-from enum import StrEnum
 from functools import cached_property
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Annotated, Any, NoReturn, cast
-from urllib.parse import urlsplit
 
 import typer
 from rich.console import Console
 from rich.markup import escape
-from rich.table import Table
-from rich.text import Text
 
 from pyzill import (
     BBox,
@@ -39,7 +34,6 @@ from pyzill import (
     get_from_home_id,
     get_from_home_url,
     get_price_history,
-    load_listings,
     normalize_listing,
     normalize_listings,
     resolve_proxy,
@@ -48,6 +42,17 @@ from pyzill import (
     upsert_listings,
     utc_now,
 )
+from pyzill.cli.db import ListingKind, resolve_db_path
+from pyzill.cli.detail import home_detail_target
+from pyzill.cli.output import OutputFormat, dumps
+from pyzill.cli.output import write_output as _render_output
+from pyzill.cli.query import QueryValidationError
+from pyzill.cli.query import query_database as _query_database_engine
+from pyzill.cli.query import query_rows as _query_rows_engine
+from pyzill.cli.search import SearchOptions
+from pyzill.cli.search import build_bbox as _build_bbox
+from pyzill.cli.search import check_range as _check_range
+from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, read_env
 from pyzill.exceptions import (
     ZillowBlockedError,
     ZillowNotFoundError,
@@ -58,7 +63,6 @@ from pyzill.geocode import geocode
 from pyzill.normalize import Listing
 from pyzill.search import tiled_search
 
-DEFAULT_IMPERSONATE = "chrome136"
 _RESULT_CAP = 500
 
 app = typer.Typer(
@@ -76,15 +80,6 @@ app.add_typer(detail_app)
 app.add_typer(db_app)
 
 
-class OutputFormat(StrEnum):
-    """Output format options."""
-
-    json = "json"
-    jsonl = "jsonl"
-    csv = "csv"
-    table = "table"
-
-
 # --------------------------------------------------------------------------- #
 # Shared context and console helpers
 # --------------------------------------------------------------------------- #
@@ -99,8 +94,8 @@ class Context:
     no_color: bool = False
     proxy: str | None = None
     impersonate: str = DEFAULT_IMPERSONATE
-    timeout: float = 30.0
-    max_retries: int = 1
+    timeout: float = DEFAULT_TIMEOUT
+    max_retries: int = DEFAULT_MAX_RETRIES
 
     @cached_property
     def stderr_console(self) -> Console:
@@ -129,7 +124,12 @@ class Context:
         }
 
 
-_ctx: Context = Context()
+_active_context: ContextVar[Context | None] = ContextVar("pyzill_cli_context", default=None)
+
+
+def _context() -> Context:
+    return _active_context.get() or Context()
+
 
 # user:password@ inside a URL (proxy credentials, etc.)
 _USERINFO_RE = re.compile(r"(?<=://)[^/@\s]+@")
@@ -142,7 +142,7 @@ def _redact(message: str) -> str:
 
 def _stderr_line(style: str, label: str, message: str) -> None:
     """Print one diagnostic line to stderr, redacting credentials."""
-    _ctx.stderr_console.print(f"[{style}]{label}[/] {escape(_redact(message))}")
+    _context().stderr_console.print(f"[{style}]{label}[/] {escape(_redact(message))}")
 
 
 def error(message: str, code: int = 1) -> NoReturn:
@@ -153,13 +153,13 @@ def error(message: str, code: int = 1) -> NoReturn:
 
 def warn(message: str) -> None:
     """Print warning to stderr."""
-    if not _ctx.quiet:
+    if not _context().quiet:
         _stderr_line("yellow", "Warning:", message)
 
 
 def debug(message: str) -> None:
     """Print debug message to stderr."""
-    if _ctx.verbose:
+    if _context().verbose:
         _stderr_line("dim", "Debug:", message)
 
 
@@ -193,6 +193,7 @@ def _network_errors(failure: str) -> Iterator[None]:
 
 @app.callback()
 def main(  # noqa: PLR0913, PLR0917
+    ctx: typer.Context,
     quiet: Annotated[
         bool,
         typer.Option("--quiet", "-q", help="Suppress progress and nonessential diagnostics"),
@@ -224,16 +225,16 @@ def main(  # noqa: PLR0913, PLR0917
     timeout: Annotated[
         float,
         typer.Option("--timeout", min=0, help="Request timeout in seconds (must be greater than 0; default: 30)"),
-    ] = 30.0,
+    ] = DEFAULT_TIMEOUT,
     max_retries: Annotated[
         int,
         typer.Option("--max-retries", min=0, help="Retries on transient 5xx, 429, and network errors (default: 1)"),
-    ] = 1,
+    ] = DEFAULT_MAX_RETRIES,
     rate_limit: Annotated[
         float | None,
         typer.Option(
             "--rate-limit",
-            help="Minimum seconds between requests (default: ZILLOW_MIN_INTERVAL or 1.5; 0 disables)",
+            help="Minimum seconds between requests (default: PYZILL_RATE_LIMIT or 1.5; 0 disables)",
             envvar="PYZILL_RATE_LIMIT",
         ),
     ] = None,
@@ -251,14 +252,12 @@ def main(  # noqa: PLR0913, PLR0917
 
     Search for-sale/for-rent/sold listings and fetch property details.
     """
-    global _ctx  # noqa: PLW0603
-
     if timeout <= 0:
         error("--timeout must be greater than 0", code=2)
 
     # Typer already applies the PYZILL_PROXY / PYZILL_IMPERSONATE env vars (see
     # `envvar=` above), so there is no need to read them again by hand.
-    _ctx = Context(
+    context = Context(
         quiet=quiet,
         verbose=verbose,
         no_color=no_color or any(name in os.environ for name in ("NO_COLOR", "PYZILL_NO_COLOR")),
@@ -267,6 +266,8 @@ def main(  # noqa: PLR0913, PLR0917
         timeout=timeout,
         max_retries=max_retries,
     )
+    ctx.obj = context
+    _active_context.set(ctx.obj)
 
     # Validate the proxy (explicit, PYZILL_PROXY, or ZILLOW_PROXY) up front so
     # a bad URL is a clean usage error, not a traceback mid-command. The
@@ -284,71 +285,6 @@ def main(  # noqa: PLR0913, PLR0917
 # --------------------------------------------------------------------------- #
 # Output
 # --------------------------------------------------------------------------- #
-
-
-# Concise column set for --format table (normalized listings, in order).
-_TABLE_COLUMNS = ("address", "price", "beds", "baths", "area", "city", "state", "home_type", "status")
-
-# DB query adds timestamps to the concise set
-_DB_TABLE_COLUMNS = (*_TABLE_COLUMNS, "first_seen_utc", "last_seen_utc")
-
-
-def _cell(value: Any) -> str:
-    """Turn any value into a display string (None -> '', nested -> JSON)."""
-    if value is None:
-        return ""
-    if isinstance(value, dict | list):
-        return _dumps(value)
-    return str(value)
-
-
-def _dumps(obj: Any) -> str:
-    """JSON-serialize strictly (no NaN/Infinity), which downstream parsers accept."""
-    try:
-        return json.dumps(obj, ensure_ascii=False, allow_nan=False)
-    except ValueError as e:
-        error(f"Output is not valid JSON: {e}", code=1)
-
-
-def _require_rows(data: Any, output_format: OutputFormat) -> list[dict[str, Any]]:
-    if not isinstance(data, list):
-        error(f"{output_format.value} output requires a list", code=2)
-    return data
-
-
-def _columns(rows: list[dict[str, Any]]) -> list[str]:
-    """Union of keys across all rows, in first-seen order."""
-    return list(dict.fromkeys(col for row in rows for col in row))
-
-
-def _render_csv(rows: list[dict[str, Any]], columns: list[str] | None = None) -> str:
-    if not rows and columns is None:
-        return ""
-    columns = columns or _columns(rows)
-    buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=columns, lineterminator="\n")
-    writer.writeheader()
-    for row in rows:
-        writer.writerow({col: _cell(row.get(col)) for col in columns})
-    return buffer.getvalue()
-
-
-def _build_table(rows: list[dict[str, Any]], columns: list[str] | None = None, use_db_columns: bool = False) -> Table:
-    # Normalized listings carry 21 fields (URLs, coords, ids); showing all of
-    # them makes an unreadable wall at any normal terminal width. An explicit
-    # --cols selection wins; otherwise display a concise subset, falling back
-    # to whatever keys exist for other shapes.
-    if columns is None:
-        default_cols = _DB_TABLE_COLUMNS if use_db_columns else _TABLE_COLUMNS
-        display = [col for col in default_cols if any(col in row for row in rows)]
-        columns = display or _columns(rows)
-    table = Table(title="Listings")
-    for col in columns:
-        table.add_column(col)
-    for row in rows:
-        # Text() stops Rich from treating "[brackets]" in listing data as markup.
-        table.add_row(*(Text(_cell(row.get(col))) for col in columns))
-    return table
 
 
 def _emit(content: str, output: str | None) -> None:
@@ -385,35 +321,18 @@ def write_output(
     columns: list[str] | None = None,
     use_db_columns: bool = False,
 ) -> None:
-    """Write data to stdout or file in specified format."""
-    if output == "-":
-        output = None  # stdout
-
-    if output_format is OutputFormat.json:
-        _emit(_dumps(data), output)
-        return
-
-    if output_format is OutputFormat.jsonl:
-        items = data if isinstance(data, list) else [data]
-        _emit("\n".join(_dumps(item) for item in items), output)
-        return
-
-    # csv and table both need a list of rows. An empty result is not an error.
-    rows = _require_rows(data, output_format)
-    if not rows:
-        warn("No listings found")
-
-    if output_format is OutputFormat.csv:
-        _emit(_render_csv(rows, columns), output)
-    elif rows:
-        table = _build_table(rows, columns, use_db_columns=use_db_columns)
-        if output:
-            # Render to text so --output works for tables too.
-            buffer = io.StringIO()
-            Console(file=buffer, no_color=True, force_terminal=False, width=200).print(table)
-            _emit(buffer.getvalue(), output)
-        else:
-            _ctx.stdout_console.print(table)
+    """Write output using the standalone renderer and CLI callbacks."""
+    _render_output(
+        data,
+        output_format,
+        output,
+        columns,
+        use_db_columns,
+        emit=_emit,
+        error=error,
+        warn=warn,
+        console=_context().stdout_console,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -457,23 +376,18 @@ def build_bbox(
     west: float | None,
 ) -> BBox | None:
     """Build a BBox from the four CLI options (all four or none)."""
-    values = {"north": north, "south": south, "east": east, "west": west}
-    missing = [name for name, value in values.items() if value is None]
-    if len(missing) == len(values):
-        return None
-    if missing:
-        flags = ", ".join(f"--{name}" for name in missing)
-        error(f"A bounding box needs all four of --north/--south/--east/--west (missing: {flags})", code=2)
     try:
-        return BBox(**cast(dict[str, float], values))
-    except ValueError as e:
-        error(f"Invalid bounding box: {e}", code=2)
+        return _build_bbox(north, south, east, west)
+    except ValueError as exc:
+        error(str(exc), code=2)
 
 
 def check_range(name: str, low: int | None, high: int | None) -> None:
     """Fail early if a min option is larger than its max option."""
-    if low is not None and high is not None and low > high:
-        error(f"--min-{name} ({low}) is greater than --max-{name} ({high})", code=2)
+    try:
+        _check_range(name, low, high)
+    except ValueError as exc:
+        error(str(exc), code=2)
 
 
 def extract_listings(data: Any, *, wrap_single: bool = False) -> list[Any]:
@@ -499,78 +413,65 @@ def extract_listings(data: Any, *, wrap_single: bool = False) -> list[Any]:
     error("Input must be a JSON object or array", code=2)
 
 
-def fetch_and_normalize(  # noqa: PLR0913
+def fetch_and_normalize(
     search_fn: Callable[..., dict[str, Any]],
+    options: SearchOptions,
     *,
-    query: str,
-    north: float | None,
-    south: float | None,
-    east: float | None,
-    west: float | None,
-    zoom: int | None,
-    min_beds: int | None,
-    max_beds: int | None,
-    min_bathrooms: int | None,
-    max_bathrooms: int | None,
-    min_price: int | None,
-    max_price: int | None,
     raw: bool,
-    **extra: Any,
 ) -> Any:
     """Fetch from Zillow and optionally normalize listings.
 
     Returns raw response if raw=True, else normalized list of listings.
     Reused by run_search and db sync.
     """
-    if extra.get("is_room") and extra.get("is_entire_place"):
+    if options.is_room and options.is_entire_place:
         error("--room and --entire-place can't be used together", code=2)
 
-    check_range("beds", min_beds, max_beds)
-    check_range("bathrooms", min_bathrooms, max_bathrooms)
-    check_range("price", min_price, max_price)
+    check_range("beds", options.min_beds, options.max_beds)
+    check_range("bathrooms", options.min_bathrooms, options.max_bathrooms)
+    check_range("price", options.min_price, options.max_price)
 
-    bbox = build_bbox(north, south, east, west)
-    http_kwargs = _ctx.http_kwargs
+    bbox = build_bbox(options.north, options.south, options.east, options.west)
+    http_kwargs = _context().http_kwargs
     if bbox is None:
         # No explicit viewport: resolve the query text to one via Nominatim so
         # we never silently fall back to a continental-US search.
-        debug(f"Geocoding {query!r}")
+        debug(f"Geocoding {options.query!r}")
         try:
-            geo = geocode(query)
+            geo = geocode(options.query)
         except ValueError as e:
             error(str(e), code=1)
-        debug(f"Geocoded {query!r} -> {geo.display_name}")
+        debug(f"Geocoded {options.query!r} -> {geo.display_name}")
         bbox = geo.bbox
         if geo.synthetic_bbox:
             warn(
                 "Nominatim returned a point-like viewport; pyzill expanded it synthetically, "
                 "which may not cover the full area"
             )
-    debug(f"{search_fn.__name__}: query={query!r} bbox={bbox}")
-
-    tile = bool(extra.pop("tile", False))
-    max_depth = int(extra.pop("max_depth", 4))
+    debug(f"{search_fn.__name__}: query={options.query!r} bbox={bbox}")
     search_kwargs = {
-        "search_value": query,
-        "zoom_value": zoom,
-        "min_beds": min_beds,
-        "max_beds": max_beds,
-        "min_bathrooms": min_bathrooms,
-        "max_bathrooms": max_bathrooms,
-        "min_price": min_price,
-        "max_price": max_price,
-        **extra,
+        "search_value": options.query,
+        "zoom_value": options.zoom,
+        "min_beds": options.min_beds,
+        "max_beds": options.max_beds,
+        "min_bathrooms": options.min_bathrooms,
+        "max_bathrooms": options.max_bathrooms,
+        "min_price": options.min_price,
+        "max_price": options.max_price,
         **http_kwargs,
     }
+    if search_fn is for_rent:
+        search_kwargs.update(is_room=options.is_room, is_entire_place=options.is_entire_place)
 
     with _network_errors("Search failed"):
-        if tile:
+        if options.tile:
             result = tiled_search(
                 search_fn,
                 bbox=bbox,
-                max_depth=max_depth,
+                max_depth=options.max_depth,
                 on_cap=lambda: warn(
-                    f"A tile still returned {_RESULT_CAP} listings at --max-depth {max_depth}; results may be truncated"
+                    f"A tile still returned {_RESULT_CAP} listings at --max-depth {options.max_depth}; "
+                    "results may be truncated"
                 ),
                 **search_kwargs,
             )
@@ -585,25 +486,13 @@ def fetch_and_normalize(  # noqa: PLR0913
     return result if raw else normalize_listings(extract_listings(result))
 
 
-def run_search(  # noqa: PLR0913
+def run_search(
     search_fn: Callable[..., dict[str, Any]],
     *,
-    query: str,
-    north: float | None,
-    south: float | None,
-    east: float | None,
-    west: float | None,
-    zoom: int | None,
-    min_beds: int | None,
-    max_beds: int | None,
-    min_bathrooms: int | None,
-    max_bathrooms: int | None,
-    min_price: int | None,
-    max_price: int | None,
+    options: SearchOptions,
     raw: bool,
     output_format: OutputFormat,
     output: str | None,
-    **extra: Any,
 ) -> None:
     """Everything the sale/rent/sold commands have in common."""
     if raw and output_format is not OutputFormat.json:
@@ -611,26 +500,10 @@ def run_search(  # noqa: PLR0913
 
     data = fetch_and_normalize(
         search_fn,
-        query=query,
-        north=north,
-        south=south,
-        east=east,
-        west=west,
-        zoom=zoom,
-        min_beds=min_beds,
-        max_beds=max_beds,
-        min_bathrooms=min_bathrooms,
-        max_bathrooms=max_bathrooms,
-        min_price=min_price,
-        max_price=max_price,
+        options,
         raw=raw,
-        **extra,
     )
     write_output(data, output_format, output)
-
-
-# NOTE for the three commands below: `locals()` is called as the very first
-# statement, so it contains exactly the command's parameters. Keep it first.
 
 
 @search_app.command("sale")
@@ -654,7 +527,23 @@ def search_sale(  # noqa: PLR0913, PLR0917
     output: OutputOpt = None,
 ) -> None:
     """Search for-sale listings."""
-    run_search(for_sale, **locals())
+    options = SearchOptions(
+        query,
+        north,
+        south,
+        east,
+        west,
+        zoom,
+        min_beds,
+        max_beds,
+        min_bathrooms,
+        max_bathrooms,
+        min_price,
+        max_price,
+        tile,
+        max_depth,
+    )
+    run_search(for_sale, options=options, raw=raw, output_format=output_format, output=output)
 
 
 @search_app.command("rent")
@@ -683,7 +572,25 @@ def search_rent(  # noqa: PLR0913, PLR0917
     output: OutputOpt = None,
 ) -> None:
     """Search for-rent listings."""
-    run_search(for_rent, **locals())
+    options = SearchOptions(
+        query,
+        north,
+        south,
+        east,
+        west,
+        zoom,
+        min_beds,
+        max_beds,
+        min_bathrooms,
+        max_bathrooms,
+        min_price,
+        max_price,
+        tile,
+        max_depth,
+        is_room,
+        is_entire_place,
+    )
+    run_search(for_rent, options=options, raw=raw, output_format=output_format, output=output)
 
 
 @search_app.command("sold")
@@ -707,7 +614,23 @@ def search_sold(  # noqa: PLR0913, PLR0917
     output: OutputOpt = None,
 ) -> None:
     """Search sold listings."""
-    run_search(sold, **locals())
+    options = SearchOptions(
+        query,
+        north,
+        south,
+        east,
+        west,
+        zoom,
+        min_beds,
+        max_beds,
+        min_bathrooms,
+        max_bathrooms,
+        min_price,
+        max_price,
+        tile,
+        max_depth,
+    )
+    run_search(sold, options=options, raw=raw, output_format=output_format, output=output)
 
 
 # --------------------------------------------------------------------------- #
@@ -780,7 +703,7 @@ def run_detail(  # noqa: PLR0913, PLR0917
     if keys and path:
         error("--keys and --path can't be used together", code=2)
 
-    http_kwargs = _ctx.http_kwargs
+    http_kwargs = _context().http_kwargs
     debug(f"{fetch.__name__}: {value!r}")
 
     with _network_errors("Detail fetch failed"):
@@ -803,14 +726,12 @@ def detail_home(
     path: _PATH = None,
 ) -> None:
     """Fetch home details by URL or zpid."""
-    value = url_or_id.strip()
-    zpid_match = re.fullmatch(r"(\d+)(?:_zpid)?", value)
-    if zpid_match:
-        run_detail(get_from_home_id, int(zpid_match.group(1)), output_format, output, keys=keys, path=path)
-    elif value.startswith("https://") and urlsplit(value).hostname == "www.zillow.com":
-        run_detail(get_from_home_url, value, output_format, output, keys=keys, path=path)
-    else:
-        error("Home detail input must be a zpid or an https://www.zillow.com URL", code=2)
+    try:
+        target_kind, target = home_detail_target(url_or_id)
+    except ValueError as exc:
+        error(str(exc), code=2)
+    fetch = get_from_home_id if target_kind == "id" else get_from_home_url
+    run_detail(fetch, target, output_format, output, keys=keys, path=path)
 
 
 @detail_app.command("apartment")
@@ -831,131 +752,19 @@ def detail_apartment(
 # Query (offline re-slice of saved results; no network)
 # --------------------------------------------------------------------------- #
 
-# Normalized listing fields, plus ppsf (computed from price/area on the fly).
-_QUERY_FIELDS = frozenset(Listing.__annotations__) | {"ppsf"}
 
-# DB query adds first_seen_utc and last_seen_utc
-_DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc"}
-
-_WHERE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(>=|<=|!=|==|=|>|<|~)\s*(.+?)\s*$")
-_SORT_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?::\s*(asc|desc))?\s*$", re.IGNORECASE)
-
-
-def _coerce_value(text: str) -> Any:
-    """Turn a --where right-hand side into a number, None, or string."""
-    t = text.strip().strip("'\"")
-    if t.lower() in ("null", "none"):
-        return None
-    numeric_literal = re.fullmatch(r"[+-]?\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", t)
-    if not numeric_literal:
-        return t
-    cleaned = t.replace("$", "").replace(",", "")
-    num = float(cleaned)
-    return int(num) if num.is_integer() else num
-
-
-def _parse_where(expr: str, valid_fields: frozenset[str] = _QUERY_FIELDS) -> tuple[str, str, Any]:
-    """Parse one 'FIELD OP VALUE' expression into a condition tuple."""
-    match = _WHERE_RE.match(expr)
-    if not match:
-        error(f"Bad --where {expr!r}. Use: FIELD OP VALUE with OP in >= <= > < == != ~", code=2)
-    field, op, raw = match.groups()
-    if field not in valid_fields:
-        error(f"Unknown field {field!r} in --where. Fields: {', '.join(sorted(valid_fields))}", code=2)
-    return field, op, _coerce_value(raw)
-
-
-def _field_value(row: dict[str, Any], field: str) -> Any:
-    """Read a field from a row, computing ppsf on demand."""
-    if field == "ppsf":
-        price, area = row.get("price"), row.get("area")
-        if price and area:
-            return round(price / area, 2)
-        return None
-    return row.get(field)
-
-
-def _order_match(have: Any, op: str, want: Any) -> bool:
-    """Apply an ordering operator, treating incomparable types as non-matching."""
+def _query_rows(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], list[str] | None]:
     try:
-        return bool({">": have > want, "<": have < want, ">=": have >= want, "<=": have <= want}[op])
-    except TypeError:
-        return False
+        return _query_rows_engine(*args, **kwargs)
+    except QueryValidationError as exc:
+        error(str(exc), code=2)
 
 
-def _where_match(row: dict[str, Any], cond: tuple[str, str, Any]) -> bool:
-    field, op, want = cond
-    have = _field_value(row, field)
-    if op in ("==", "="):
-        if isinstance(have, str) or isinstance(want, str):
-            # 'zipcode==12305' coerces to int; rows may store "12305".
-            return str(have).lower() == str(want).lower() if have is not None and want is not None else have is want
-        return bool(have == want)
-    if op == "!=":
-        return not _where_match(row, (field, "==", want))
-    if have is None or want is None:
-        return False
-    if op == "~":
-        return str(want).lower() in str(have).lower()
-    return _order_match(have, op, want)
-
-
-def _apply_sort(
-    rows: list[dict[str, Any]], spec: str, valid_fields: frozenset[str] = _QUERY_FIELDS
-) -> list[dict[str, Any]]:
-    """Sort by 'FIELD' or 'FIELD:asc|:desc'; rows missing the field go last."""
-    match = _SORT_RE.match(spec)
-    if not match:
-        error(f"Bad --sort {spec!r}. Use FIELD or FIELD:asc / FIELD:desc", code=2)
-    field, direction = match.groups()
-    if field not in valid_fields:
-        error(f"Unknown field {field!r} in --sort. Fields: {', '.join(sorted(valid_fields))}", code=2)
-    reverse = (direction or "asc").lower() == "desc"
-    present = [r for r in rows if _field_value(r, field) is not None]
-    missing = [r for r in rows if _field_value(r, field) is None]
-    present.sort(key=lambda r: _field_value(r, field), reverse=reverse)
-    return present + missing
-
-
-def _query_rows(  # noqa: PLR0913
-    rows: list[dict[str, Any]],
-    *,
-    where: list[str] | None = None,
-    sort: str | None = None,
-    cols: str | None = None,
-    limit: int | None = None,
-    valid_fields: frozenset[str] = _QUERY_FIELDS,
-) -> tuple[list[dict[str, Any]], list[str] | None]:
-    """Shared row-query pipeline: filter, sort, select columns, limit.
-
-    Args:
-        rows: Input listing dicts.
-        where: List of FIELD OP VALUE expressions.
-        sort: FIELD or FIELD:asc / FIELD:desc.
-        cols: Comma-separated column names.
-        limit: Maximum rows to return.
-        valid_fields: Set of allowed field names (for validation).
-
-    Returns:
-        Tuple of (processed_rows, selected_columns).
-    """
-    conditions = [_parse_where(expr, valid_fields) for expr in (where or [])]
-    if conditions:
-        rows = [row for row in rows if all(_where_match(row, cond) for cond in conditions)]
-    if sort:
-        rows = _apply_sort(rows, sort, valid_fields)
-    if cols:
-        selected = [col.strip() for col in cols.split(",") if col.strip()]
-        unknown = [col for col in selected if col not in valid_fields]
-        if unknown:
-            error(f"Unknown column(s): {', '.join(unknown)}. Fields: {', '.join(sorted(valid_fields))}", code=2)
-        rows = [{col: _field_value(row, col) for col in selected} for row in rows]
-    else:
-        selected = None
-    if limit is not None:
-        rows = rows[:limit]
-
-    return rows, selected
+def _query_database(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], list[str] | None]:
+    try:
+        return _query_database_engine(*args, **kwargs)
+    except QueryValidationError as exc:
+        error(str(exc), code=2)
 
 
 @app.command("query")
@@ -1002,12 +811,7 @@ _DbPath = Annotated[
 
 def _resolve_db_path(db_path: str | None) -> Path:
     """Resolve database path from --db, PYZILL_DB env, or default."""
-    if db_path:
-        return Path(db_path)
-    env_path = os.environ.get("PYZILL_DB")
-    if env_path:
-        return Path(env_path)
-    return default_db_path()
+    return resolve_db_path(db_path, read_env("PYZILL_DB"), default_db_path())
 
 
 def _connect_db(db_path: str | None, *, must_exist: bool = False) -> sqlite3.Connection:
@@ -1021,20 +825,27 @@ def _connect_db(db_path: str | None, *, must_exist: bool = False) -> sqlite3.Con
         error(f"Failed to open database: {e}", code=1)
 
 
+@contextmanager
+def _db_session(db_path: str | None, *, must_exist: bool = False) -> Iterator[sqlite3.Connection]:
+    """Open and close a database connection, translating SQLite failures to CLI errors."""
+    try:
+        with closing(_connect_db(db_path, must_exist=must_exist)) as conn:
+            yield conn
+    except sqlite3.Error as e:
+        error(f"Database operation failed: {e}", code=1)
+
+
 def _upsert_and_report(
     rows: list[dict[str, Any]],
     db_path: str | None,
     verb: str,
     *,
     seen_utc: str | None = None,
-    kind: str = "sale",
+    kind: ListingKind = ListingKind.sale,
 ) -> None:
     """Upsert rows in one transaction and print the sync summary to stderr."""
-    try:
-        with closing(_connect_db(db_path)) as conn:
-            stats = upsert_listings(conn, rows, seen_utc=seen_utc, kind=kind)  # type: ignore[arg-type]
-    except sqlite3.Error as e:
-        error(f"Database write failed: {e}", code=1)
+    with _db_session(db_path) as conn:
+        stats = upsert_listings(conn, rows, seen_utc=seen_utc, kind=kind.value)
     total = stats.added + stats.updated
     _stderr_line(
         "green",
@@ -1055,7 +866,7 @@ def _looks_normalized(row: Any) -> bool:
 
 @db_app.command("sync")
 def db_sync(  # noqa: PLR0913, PLR0917
-    kind: Annotated[str, typer.Argument(help="Search kind: sale, rent, or sold")],
+    kind: Annotated[ListingKind, typer.Argument(help="Search kind: sale, rent, or sold")],
     query: Query,
     north: North = None,
     south: South = None,
@@ -1078,38 +889,39 @@ def db_sync(  # noqa: PLR0913, PLR0917
     db_path: _DbPath = None,
 ) -> None:
     """Fetch listings from Zillow and upsert to local database."""
-    if kind not in ("sale", "rent", "sold"):
-        error(f"Invalid kind {kind!r}. Use: sale, rent, or sold", code=2)
-    if (is_room or is_entire_place) and kind != "rent":
+    if (is_room or is_entire_place) and kind is not ListingKind.rent:
         error("--room and --entire-place only work with 'rent' kind", code=2)
 
     # Map kind to search function
-    search_fns: dict[str, Callable[..., dict[str, Any]]] = {"sale": for_sale, "rent": for_rent, "sold": sold}
+    search_fns: dict[ListingKind, Callable[..., dict[str, Any]]] = {
+        ListingKind.sale: for_sale,
+        ListingKind.rent: for_rent,
+        ListingKind.sold: sold,
+    }
     search_fn = search_fns[kind]
-    extra: dict[str, Any] = {}
-    if kind == "rent":
-        extra["is_room"] = is_room
-        extra["is_entire_place"] = is_entire_place
 
     # Fetch and normalize
     rows = fetch_and_normalize(
         search_fn,
-        query=query,
-        north=north,
-        south=south,
-        east=east,
-        west=west,
-        zoom=zoom,
-        min_beds=min_beds,
-        max_beds=max_beds,
-        min_bathrooms=min_bathrooms,
-        max_bathrooms=max_bathrooms,
-        min_price=min_price,
-        max_price=max_price,
-        tile=tile,
-        max_depth=max_depth,
+        SearchOptions(
+            query,
+            north,
+            south,
+            east,
+            west,
+            zoom,
+            min_beds,
+            max_beds,
+            min_bathrooms,
+            max_bathrooms,
+            min_price,
+            max_price,
+            tile,
+            max_depth,
+            is_room,
+            is_entire_place,
+        ),
         raw=False,
-        **extra,
     )
 
     if not rows:
@@ -1127,14 +939,12 @@ def db_import(
         typer.Option("--fetched-at", help="Timestamp for this batch (default: now)"),
     ] = None,
     kind: Annotated[
-        str,
+        ListingKind,
         typer.Option("--kind", help="Listing kind for this import: sale, rent, or sold"),
-    ] = "sale",
+    ] = ListingKind.sale,
     db_path: _DbPath = None,
 ) -> None:
     """Import listings from a saved JSON file (raw response or normalized array)."""
-    if kind not in ("sale", "rent", "sold"):
-        error("Invalid kind. Use: sale, rent, or sold", code=2)
     text = _read_input(input_or_dash)
     try:
         data = json.loads(text)
@@ -1184,14 +994,13 @@ def db_query(  # noqa: PLR0913, PLR0917
     if limit is not None and limit < 1:
         error("--limit must be at least 1", code=2)
 
-    with closing(_connect_db(db_path, must_exist=True)) as conn:
-        rows = load_listings(conn)
+    with _db_session(db_path, must_exist=True) as conn:
+        rows, selected = _query_database(conn, where=where, sort=sort, cols=cols, limit=limit)
 
     if not rows:
         warn("No listings in database")
         return
 
-    rows, selected = _query_rows(rows, where=where, sort=sort, cols=cols, limit=limit, valid_fields=_DB_QUERY_FIELDS)
     write_output(rows, output_format, output, columns=selected, use_db_columns=True)
 
 
@@ -1201,7 +1010,7 @@ def db_history(
     db_path: _DbPath = None,
 ) -> None:
     """Show price history for a single listing."""
-    with closing(_connect_db(db_path, must_exist=True)) as conn:
+    with _db_session(db_path, must_exist=True) as conn:
         history = get_price_history(conn, zpid)
 
     if not history:
@@ -1209,13 +1018,13 @@ def db_history(
         return
 
     # Output as JSON array
-    _emit(_dumps(history), None)
+    _emit(dumps(history), None)
 
 
 @db_app.command("stats")
 def db_stats_cmd(db_path: _DbPath = None) -> None:
     """Show database statistics."""
-    with closing(_connect_db(db_path, must_exist=True)) as conn:
+    with _db_session(db_path, must_exist=True) as conn:
         stats = db_stats(conn)
 
     # Format size as human-readable
@@ -1232,7 +1041,7 @@ def db_stats_cmd(db_path: _DbPath = None) -> None:
     if stats.newest_seen:
         lines.append(f"Newest last_seen: {stats.newest_seen}")
 
-    _ctx.stdout_console.print("\n".join(lines))
+    _context().stdout_console.print("\n".join(lines))
 
 
 # --------------------------------------------------------------------------- #

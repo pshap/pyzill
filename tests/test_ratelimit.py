@@ -33,3 +33,12 @@ def test_set_min_interval_zero_disables():
     limiter.wait()
     limiter.wait()
     assert time.monotonic() - start < 0.1
+
+
+def test_pyzill_rate_limit_env_precedes_legacy(monkeypatch):
+    from pyzill.ratelimit import _read_min_interval
+
+    monkeypatch.setenv("PYZILL_RATE_LIMIT", "2.5")
+    monkeypatch.setenv("ZILLOW_MIN_INTERVAL", "9")
+
+    assert _read_min_interval() == 2.5

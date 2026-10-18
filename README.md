@@ -309,9 +309,9 @@ pyzill --version
 
 The CLI respects these environment variables:
 
-- `PYZILL_PROXY` - Proxy URL (overridden by `--proxy`)
+- `PYZILL_PROXY` - Proxy URL (overridden by `--proxy`; legacy `ZILLOW_PROXY` is a fallback)
 - `PYZILL_IMPERSONATE` - TLS impersonation profile (overridden by `--impersonate`)
-- `PYZILL_RATE_LIMIT` - Request interval in seconds (overridden by `--rate-limit`)
+- `PYZILL_RATE_LIMIT` - Request interval in seconds (overridden by `--rate-limit`; legacy `ZILLOW_MIN_INTERVAL` is a fallback)
 - `PYZILL_DB` - Database path for local tracking (overridden by `--db`)
 - `NO_COLOR` / `PYZILL_NO_COLOR` - Disable colors (same as `--no-color`)
 
@@ -396,20 +396,21 @@ proxy_url = pyzill.parse_proxy("proxy.example.com", "8080", "username", "passwor
 results = pyzill.for_sale(search_value="Schenectady NY", proxy_url=proxy_url)
 ```
 
-Or set the `ZILLOW_PROXY` environment variable once and omit `proxy_url`
+Or set `PYZILL_PROXY` once and omit `proxy_url` (`ZILLOW_PROXY` remains a
+fallback for existing environments)
 everywhere:
 
 ```bash
-export ZILLOW_PROXY="http://user:pass@proxy.example.com:8080"
+export PYZILL_PROXY="http://user:pass@proxy.example.com:8080"
 ```
 
 ```python
 import pyzill
 
-results = pyzill.for_sale(search_value="Schenectady NY")  # uses ZILLOW_PROXY
+results = pyzill.for_sale(search_value="Schenectady NY")  # uses PYZILL_PROXY
 ```
 
-An explicit `proxy_url` argument always wins over `ZILLOW_PROXY`. Supported
+An explicit `proxy_url` argument always wins over environment settings. Supported
 schemes: `http`, `https`, `socks5`, `socks5h`.
 
 ### Handling blocks
@@ -556,10 +557,11 @@ for _ in range(5):
     print(len(results["mapResults"]))
 ```
 
-Configure the interval with `ZILLOW_MIN_INTERVAL` (seconds) or at runtime:
+Configure the interval with `PYZILL_RATE_LIMIT` (seconds; `ZILLOW_MIN_INTERVAL`
+is the legacy fallback) or at runtime:
 
 ```bash
-export ZILLOW_MIN_INTERVAL=3   # wait 3s between requests
+export PYZILL_RATE_LIMIT=3   # wait 3s between requests
 ```
 
 ```python
@@ -627,7 +629,7 @@ data = pyzill.get_from_apartment_url("https://www.zillow.com/apartments/kissimme
 | `get_from_home_url(url, ...)` / `get_from_home_id(id, ...)` | Home details |
 | `get_from_apartment_url(url, ...)` / `get_from_apartment_id(id, ...)` | Apartment details |
 | `parse_proxy(host, port, user, password)` | Build a proxy URL |
-| `resolve_proxy(proxy_url=None)` | Resolve `proxy_url` with `ZILLOW_PROXY` fallback |
+| `resolve_proxy(proxy_url=None)` | Resolve `proxy_url`, `PYZILL_PROXY`, or legacy `ZILLOW_PROXY` |
 | `set_min_interval(seconds)` / `get_min_interval()` | Configure request throttling |
 | `normalize_listing(listing)` / `normalize_listings(listings)` | Flatten raw listings to numeric-or-`None` fields |
 | `Listing` | `TypedDict` describing the normalized listing shape |

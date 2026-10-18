@@ -23,6 +23,12 @@ All notable changes to this project are documented here.
   unless explicitly passed, an atomic 30-day cache keyed by country/format,
   and a warning for synthetically expanded point-like viewports. Search warns
   on the 500-result cap and supports `--tile --max-depth` recursive splitting.
+- CLI internals are organized under `pyzill.cli` modules, search flags share a
+  `SearchOptions` value, and command context is invocation-scoped. Database
+  filters/sort/limit now execute in parameterized SQLite queries. `PYZILL_*`
+  environment settings take precedence over `ZILLOW_*` fallbacks; proxy parsing
+  validates scheme/port and brackets IPv6. Detail functions accept
+  `RequestOptions`, and `db sync`/`db import --kind` use validated kind enums.
 
 ### Unverified (live Zillow validation required)
 - TODO: Confirm Zillow's default rent filter payload semantics and whether

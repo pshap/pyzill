@@ -14,7 +14,7 @@ runner = CliRunner()
 
 
 class _GeoStub:
-    """Recording stand-in for pyzill.cli.geocode (installed autouse)."""
+    """Recording stand-in for pyzill.cli.app.geocode (installed autouse)."""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -53,7 +53,10 @@ def _disable_rate_limit(monkeypatch):
 def _stub_geocode(monkeypatch):
     """Keep search tests offline: no bbox means the stubbed geocode result."""
     _GEO_STUB.reset()
-    monkeypatch.setattr("pyzill.cli.geocode", _GEO_STUB)
+    import importlib
+
+    app_module = importlib.import_module("pyzill.cli.app")
+    monkeypatch.setattr(app_module, "geocode", _GEO_STUB)
 
 
 class TestRootAndHelp:
@@ -381,6 +384,18 @@ class TestErrorHandling:
         fake_http.install("PUT", json_data=search_success_body)
         result = runner.invoke(app, ["--quiet", "search", "sale", "12305"])
         assert result.exit_code == 0
+
+    def test_context_does_not_leak_between_invocations(self, fake_http):
+        capped_response = {"cat1": {"searchResults": {"mapResults": [{"zpid": str(index)} for index in range(500)]}}}
+        fake_http.install("PUT", json_data=capped_response)
+        quiet_result = runner.invoke(app, ["--quiet", "search", "sale", "12305"])
+        assert quiet_result.exit_code == 0
+        assert "500 listings" not in quiet_result.stderr
+
+        fake_http.install("PUT", json_data=capped_response)
+        regular_result = runner.invoke(app, ["search", "sale", "12305"])
+        assert regular_result.exit_code == 0
+        assert "500 listings" in regular_result.stderr
 
     def test_verbose_mode(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
@@ -872,7 +887,9 @@ class TestDatabaseCommands:
         fake_http.install("PUT", json_data=search_success_body)
         result = runner.invoke(app, ["db", "sync", "invalid", "12305"])
         assert result.exit_code == 2
-        assert "Invalid kind" in result.stderr
+        assert "sale" in result.stderr
+        assert "rent" in result.stderr
+        assert "sold" in result.stderr
 
     def test_db_sync_room_with_non_rent(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
@@ -1026,6 +1043,30 @@ class TestDatabaseCommands:
         result = runner.invoke(app, ["db", "query", "--db", str(db_path)])
         assert result.exit_code == 1
         assert "Database not found" in result.stderr
+
+    @pytest.mark.parametrize("command", [["query"], ["history", "123"], ["stats"]])
+    def test_db_commands_report_corrupt_database_without_traceback(self, tmp_path, command):
+        db_path = tmp_path / "corrupt.db"
+        db_path.write_text("not a SQLite database")
+
+        result = runner.invoke(app, ["db", *command, "--db", str(db_path)])
+
+        assert result.exit_code == 1
+        assert "database" in result.stderr.lower()
+        assert "Traceback" not in result.stderr
+
+    def test_db_query_binds_filter_values(self, tmp_path):
+        records = [{"zpid": 123, "city": "Albany' OR 1=1 --"}, {"zpid": 456, "city": "Troy"}]
+        input_file = tmp_path / "rows.json"
+        input_file.write_text(json.dumps(records))
+        db_path = tmp_path / "query.db"
+        imported = runner.invoke(app, ["db", "import", str(input_file), "--db", str(db_path)])
+        assert imported.exit_code == 0
+
+        result = runner.invoke(app, ["db", "query", "--where", "city==Albany' OR 1=1 --", "--db", str(db_path)])
+
+        assert result.exit_code == 0
+        assert [row["zpid"] for row in json.loads(result.stdout)] == [123]
 
     def test_db_query_with_timestamp_filter(self, tmp_path):
         # Import data with specific timestamp

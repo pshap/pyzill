@@ -38,6 +38,17 @@ def test_get_from_home_url(fake_http, home_detail_body):
     assert data["bathrooms"] == 2
 
 
+def test_detail_accepts_request_options(fake_http, home_detail_body):
+    fake_http.install("GET", content=home_detail_body)
+    options = http.RequestOptions(impersonate="chrome145", timeout=12, max_retries=0)
+
+    details.get_from_home_id(348914888, options=options)
+
+    call = fake_http.calls[-1]
+    assert call["impersonate"] == "chrome145"
+    assert call["timeout"] == 12
+
+
 def test_get_from_apartment_id(fake_http, department_detail_body):
     fake_http.install("GET", content=department_detail_body)
 
