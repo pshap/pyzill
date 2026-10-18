@@ -24,8 +24,18 @@ All notable changes to this project are documented here.
   sanitizing, trimming, and gating offline. Hypothesis is now a dev
   dependency backing a property test that `upsert_listings` final state is
   independent of batch application order.
+- The opt-in live smoke suite (`PYZILL_LIVE=1 pytest -m live`) now covers
+  sale/rent/sold search on a fixed Schenectady viewport, resolving a zpid
+  from the sale search for the home-detail check, and one live Nominatim
+  geocode call. Search assertions check the response shape *and* that
+  normalization yields only real listings (integer zpids), so payload drift
+  and building-card regressions surface between releases. `pytest-cov` is a
+  dev dependency for coverage runs.
 
 ### Changed
+- `pyzill.cli` no longer re-exports the private `_coerce_value` helper; it
+  was only ever used by tests, which now import `coerce_value` from
+  `pyzill.cli.query` directly. The package exports `app` and `main_entry`.
 - `upsert_listings` internals were rewritten for bulk syncs: existing-row
   state and prior prices are now read in two batched (chunked) queries
   instead of up to three SELECTs per row, and the write path is a single

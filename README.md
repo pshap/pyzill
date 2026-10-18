@@ -664,8 +664,9 @@ mypy              # type-check (strict; config in pyproject.toml)
 ```
 
 The `@pytest.mark.live` smoke checks are skipped by default and in CI. To opt
-in, set `PYZILL_LIVE=1`; set `PYZILL_LIVE_HOME_ID` to a current home zpid for
-the detail check. The live search uses a small fixed Schenectady viewport.
+in, set `PYZILL_LIVE=1`. They hit a fixed Schenectady viewport for
+sale/rent/sold search, resolve a zpid from the sale search for the home-detail
+check, and exercise the live Nominatim geocode path once.
 
 ## License
 

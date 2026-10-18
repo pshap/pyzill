@@ -637,7 +637,7 @@ class TestGeocodeIntegration:
 
 
 def test_where_coercion_only_accepts_strict_numeric_literals():
-    from pyzill.cli import _coerce_value
+    from pyzill.cli.query import coerce_value as _coerce_value
 
     assert _coerce_value("-$1,234.50") == -1234.5
     assert _coerce_value("nan") == "nan"
