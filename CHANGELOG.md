@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10
+
 ### Added
 - Command-line interface: `pyzill search sale|rent|sold`, `pyzill detail
   home|apartment`, `pyzill query`, and `pyzill normalize`, with bbox/price/

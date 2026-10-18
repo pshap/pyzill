@@ -40,8 +40,14 @@ detects this and raises `pyzill.ZillowBlockedError` (never a bare
 ## Install
 
 ```bash
-pip install pyzill
+pip install git+https://github.com/pshap/pyzill.git
 ```
+
+## Legal / responsible use
+
+Scraping may conflict with Zillow's Terms of Use. This tool is intended for
+personal, low-volume research; users are responsible for complying with
+applicable terms and laws.
 
 ## CLI Usage
 

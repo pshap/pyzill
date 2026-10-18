@@ -1,6 +1,7 @@
 """Tests for the Nominatim geocoding helper."""
 
 import json
+from importlib.metadata import version
 from typing import Any
 
 import pytest
@@ -48,11 +49,12 @@ HIT = [
 
 class TestGeocode:
     def test_successful_lookup(self, monkeypatch, cache_path):
-        _install_get(monkeypatch, HIT)
+        calls = _install_get(monkeypatch, HIT)
         result = geocode("Schenectady NY", cache_path=cache_path)
         assert isinstance(result, GeoResult)
         assert result.bbox == BBox(north=42.8438, south=42.7634, east=-73.8931, west=-73.9834)
         assert "Schenectady" in result.display_name
+        assert calls[0]["headers"]["User-Agent"].startswith(f"pyzill/{version('pyzill')} ")
 
     def test_result_cached_on_disk(self, monkeypatch, cache_path):
         _install_get(monkeypatch, HIT)

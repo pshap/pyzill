@@ -14,7 +14,7 @@ import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from functools import cached_property
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -68,7 +68,7 @@ app.add_typer(detail_app)
 app.add_typer(db_app)
 
 
-class OutputFormat(str, Enum):
+class OutputFormat(StrEnum):
     """Output format options."""
 
     json = "json"
@@ -178,7 +178,7 @@ def _network_errors(failure: str) -> Iterator[None]:
 
 
 @app.callback()
-def main(  # noqa: PLR0913
+def main(  # noqa: PLR0913, PLR0917
     quiet: Annotated[
         bool,
         typer.Option("--quiet", "-q", help="Suppress progress and nonessential diagnostics"),
@@ -591,7 +591,7 @@ def run_search(  # noqa: PLR0913
 
 
 @search_app.command("sale")
-def search_sale(  # noqa: PLR0913
+def search_sale(  # noqa: PLR0913, PLR0917
     query: Query,
     north: North = None,
     south: South = None,
@@ -613,7 +613,7 @@ def search_sale(  # noqa: PLR0913
 
 
 @search_app.command("rent")
-def search_rent(  # noqa: PLR0913
+def search_rent(  # noqa: PLR0913, PLR0917
     query: Query,
     north: North = None,
     south: South = None,
@@ -640,7 +640,7 @@ def search_rent(  # noqa: PLR0913
 
 
 @search_app.command("sold")
-def search_sold(  # noqa: PLR0913
+def search_sold(  # noqa: PLR0913, PLR0917
     query: Query,
     north: North = None,
     south: South = None,
@@ -717,7 +717,7 @@ def _emit_keys(data: Any, output: str | None = None) -> None:
     _emit("\n".join(lines), output)
 
 
-def run_detail(  # noqa: PLR0913
+def run_detail(  # noqa: PLR0913, PLR0917
     fetch: Callable[..., Any],
     value: str | int,
     output_format: OutputFormat,
@@ -907,7 +907,7 @@ def _query_rows(  # noqa: PLR0913
 
 
 @app.command("query")
-def query(  # noqa: PLR0913
+def query(  # noqa: PLR0913, PLR0917
     input_or_dash: Annotated[str, typer.Argument(help="Saved search JSON file, or '-' for stdin")],
     where: Annotated[
         list[str] | None,
@@ -1003,7 +1003,7 @@ def _looks_normalized(row: Any) -> bool:
 
 
 @db_app.command("sync")
-def db_sync(  # noqa: PLR0913
+def db_sync(  # noqa: PLR0913, PLR0917
     kind: Annotated[str, typer.Argument(help="Search kind: sale, rent, or sold")],
     query: Query,
     north: North = None,
@@ -1107,7 +1107,7 @@ def db_import(
 
 
 @db_app.command("query")
-def db_query(  # noqa: PLR0913
+def db_query(  # noqa: PLR0913, PLR0917
     where: Annotated[
         list[str] | None,
         typer.Option("--where", help="Filter: FIELD OP VALUE (repeatable; OP: >= <= > < == != ~)"),

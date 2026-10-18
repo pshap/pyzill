@@ -488,7 +488,7 @@ class TestModuleInvocation:
         from pathlib import Path
 
         repo_root = Path(__file__).resolve().parents[1]
-        result = subprocess.run(  # noqa: S603 - trusted local interpreter
+        result = subprocess.run(
             [sys.executable, "-m", "pyzill", "--help"],
             cwd=repo_root,
             capture_output=True,

@@ -12,6 +12,7 @@ us well under that.
 import json
 import os
 from dataclasses import dataclass
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,7 @@ from pyzill.http import build_proxies
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 
 # Nominatim rejects generic library User-Agents; identify the tool and purpose.
-_USER_AGENT = "pyzill/1.0 (Zillow research CLI; personal use)"
+_USER_AGENT = f"pyzill/{version('pyzill')} (Zillow research CLI; personal use)"
 
 _TIMEOUT = 15.0
 

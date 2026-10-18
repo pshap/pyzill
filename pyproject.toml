@@ -4,10 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyzill"
-version = '1.2.0'
+version = '1.3.0'
 description = 'Zillow scraper in Python'
 authors = [
   { name="John Balvin", email="johnchristian@hotmail.es" },
+  { name="pshap" },
 ]
 readme= "README.md"
 license = { text = "MIT" }
@@ -23,7 +24,7 @@ test = ["pytest>=7"]
 dev = ["pytest>=7", "ruff>=0.6", "mypy>=1.11"]
 
 [project.urls]
-Homepage='https://github.com/johnbalvin/pyzill'
+Homepage='https://github.com/pshap/pyzill'
 
 [tool.setuptools.packages.find]
 where = ["src"]
