@@ -4,6 +4,7 @@ Uses Typer for command-line interface and Rich for terminal output.
 """
 
 import os
+import sys
 from typing import Annotated
 
 import typer
@@ -18,6 +19,7 @@ from pyzill.cli.console import (
 from pyzill.cli.db import db_app
 from pyzill.cli.detail import detail_app
 from pyzill.cli.query import register as register_offline_commands
+from pyzill.cli.schema import schema_app
 from pyzill.cli.search import search_app
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 
@@ -31,6 +33,7 @@ app = typer.Typer(
 app.add_typer(search_app)
 app.add_typer(detail_app)
 app.add_typer(db_app)
+app.add_typer(schema_app)
 register_offline_commands(app)
 
 
@@ -73,6 +76,10 @@ def main(  # noqa: PLR0913, PLR0917
         int,
         typer.Option("--max-retries", min=0, help="Retries on transient 5xx, 429, and network errors (default: 1)"),
     ] = DEFAULT_MAX_RETRIES,
+    json_errors: Annotated[
+        bool | None,
+        typer.Option("--json-errors/--no-json-errors", help="Emit structured error objects to stderr"),
+    ] = None,
     rate_limit: Annotated[
         float | None,
         typer.Option(
@@ -108,6 +115,7 @@ def main(  # noqa: PLR0913, PLR0917
         impersonate=impersonate or DEFAULT_IMPERSONATE,
         timeout=timeout,
         max_retries=max_retries,
+        json_errors=json_errors if json_errors is not None else not sys.stdout.isatty(),
     )
     ctx.obj = cli_context
     set_context(cli_context)

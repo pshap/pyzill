@@ -2,6 +2,7 @@
 
 import datetime as dt
 import sqlite3
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from enum import StrEnum
@@ -62,7 +63,7 @@ from pyzill.cli.output import OutputFormat, dumps
 from pyzill.cli.query import cli_query_database
 from pyzill.cli.search import extract_listings, fetch_and_normalize, search_options
 from pyzill.config import read_env
-from pyzill.db import connect_readonly
+from pyzill.db import SyncStats, connect_readonly
 from pyzill.normalize import Listing
 
 
@@ -121,18 +122,40 @@ def _db_session(
         error(f"Database operation failed: {e}", code=1)
 
 
-def _upsert_and_report(
+def _upsert_and_report(  # noqa: PLR0913
     rows: list[dict[str, Any]],
     db_path: str | None,
     verb: str,
     *,
     seen_utc: str | None = None,
     kind: ListingKind = ListingKind.sale,
+    output_format: OutputFormat | None = None,
 ) -> None:
     """Upsert rows in one transaction and print the sync summary to stderr."""
     with _db_session(db_path) as conn:
         stats = upsert_listings(conn, rows, seen_utc=seen_utc, kind=kind.value)
+    _report_sync_stats(stats, verb, output_format)
+
+
+def _report_sync_stats(stats: SyncStats, verb: str, output_format: OutputFormat | None) -> None:
     total = stats.added + stats.updated
+    if output_format is OutputFormat.json:
+        emit(
+            dumps(
+                {
+                    "action": verb.lower(),
+                    "total": total,
+                    "added": stats.added,
+                    "updated": stats.updated,
+                    "price_changes": stats.price_changes,
+                    "skipped": stats.skipped,
+                }
+            ),
+            None,
+        )
+        return
+    if output_format is not None:
+        error("db sync/import summaries only support --format json", code=2)
     stderr_line(
         "green",
         f"{verb} {total} listings:",
@@ -166,6 +189,7 @@ def db_sync(  # noqa: PLR0913, PLR0917
     is_room: IsRoom = False,
     is_entire_place: IsEntirePlace = False,
     db_path: DbPathOpt = None,
+    output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
 ) -> None:
     """Fetch listings from Zillow and upsert to local database."""
     if (is_room or is_entire_place) and kind is not ListingKind.rent:
@@ -196,10 +220,13 @@ def db_sync(  # noqa: PLR0913, PLR0917
     )
 
     if not rows:
-        warn("No listings found")
+        if output_format is OutputFormat.json:
+            _report_sync_stats(SyncStats(added=0, updated=0, price_changes=0, skipped=0), "Synced", output_format)
+        else:
+            warn("No listings found")
         return
 
-    _upsert_and_report(rows, db_path, "Synced", kind=kind)
+    _upsert_and_report(rows, db_path, "Synced", kind=kind, output_format=output_format)
 
 
 @db_app.command("import")
@@ -214,6 +241,7 @@ def db_import(
         typer.Option("--kind", help="Listing kind for this import: sale, rent, or sold"),
     ] = ListingKind.sale,
     db_path: DbPathOpt = None,
+    output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
 ) -> None:
     """Import listings from a saved JSON file (raw response or normalized array)."""
     data = read_json(input_or_dash)
@@ -226,7 +254,10 @@ def db_import(
     imported = [row for row in imported if row is not None and not is_building_result(row)]
 
     if not imported:
-        warn("No listings to import")
+        if output_format is OutputFormat.json:
+            _report_sync_stats(SyncStats(added=0, updated=0, price_changes=0, skipped=0), "Imported", output_format)
+        else:
+            warn("No listings to import")
         return
 
     # Parse timestamp; store it in the canonical fixed-width UTC format.
@@ -241,7 +272,9 @@ def db_import(
     else:
         fetched_at = utc_now()
 
-    _upsert_and_report(imported, db_path, "Imported", seen_utc=fetched_at, kind=kind)
+    _upsert_and_report(
+        imported, db_path, "Imported", seen_utc=fetched_at, kind=kind, output_format=output_format
+    )
 
 
 @db_app.command("query")
@@ -269,24 +302,44 @@ def db_query(  # noqa: PLR0913, PLR0917
 def db_history(
     zpid: Annotated[int, typer.Argument(help="Zillow property ID")],
     db_path: DbPathOpt = None,
+    output_format: FormatOpt = OutputFormat.json,
 ) -> None:
     """Show price history for a single listing."""
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
         history = get_price_history(conn, zpid)
 
-    if not history:
+    if not history and output_format is not OutputFormat.json:
         warn(f"No price history found for zpid {zpid}")
         return
 
-    # Output as JSON array
-    emit(dumps(history), None)
+    write_output(history, output_format)
 
 
 @db_app.command("stats")
-def db_stats_cmd(db_path: DbPathOpt = None) -> None:
+def db_stats_cmd(
+    db_path: DbPathOpt = None,
+    output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
+) -> None:
     """Show database statistics."""
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
         stats = db_stats(conn)
+
+    if output_format is OutputFormat.json or (output_format is None and not sys.stdout.isatty()):
+        emit(
+            dumps(
+                {
+                    "total_listings": stats.total_listings,
+                    "oldest_seen": stats.oldest_seen,
+                    "newest_seen": stats.newest_seen,
+                    "db_path": stats.db_path,
+                    "db_size_bytes": stats.db_size_bytes,
+                }
+            ),
+            None,
+        )
+        return
+    if output_format is not None:
+        error("db stats only supports --format json", code=2)
 
     # Format size as human-readable
     size_mb = stats.db_size_bytes / (1024 * 1024)

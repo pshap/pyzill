@@ -22,10 +22,7 @@ from pyzill.cli.output import OutputFormat
 from pyzill.cli.output import write_output as _render_output
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 from pyzill.exceptions import (
-    ZillowBlockedError,
-    ZillowNotFoundError,
-    ZillowParseError,
-    ZillowServerError,
+    ZillowError,
 )
 
 
@@ -40,6 +37,7 @@ class Context:
     impersonate: str = DEFAULT_IMPERSONATE
     timeout: float = DEFAULT_TIMEOUT
     max_retries: int = DEFAULT_MAX_RETRIES
+    json_errors: bool = False
 
     @cached_property
     def stderr_console(self) -> Console:
@@ -83,6 +81,7 @@ def context() -> Context:
 
 # user:password@ inside a URL (proxy credentials, etc.)
 _USERINFO_RE = re.compile(r"(?<=://)[^/@\s]+@")
+_USAGE_EXIT_CODE = 2
 
 
 def _redact(message: str) -> str:
@@ -95,9 +94,29 @@ def stderr_line(style: str, label: str, message: str) -> None:
     context().stderr_console.print(f"[{style}]{label}[/] {escape(_redact(message))}")
 
 
-def error(message: str, code: int = 1) -> NoReturn:
-    """Print error to stderr and exit."""
-    stderr_line("red", "Error:", message)
+def error(
+    message: str,
+    code: int = 1,
+    *,
+    error_code: str | None = None,
+    retryable: bool = False,
+    status_code: int | None = None,
+) -> NoReturn:
+    """Print a redacted diagnostic to stderr and exit."""
+    message = _redact(message)
+    if context().json_errors:
+        payload: dict[str, Any] = {
+            "error": {
+                "code": error_code or ("usage" if code == _USAGE_EXIT_CODE else "other"),
+                "message": message,
+                "retryable": retryable,
+            }
+        }
+        if status_code is not None:
+            payload["error"]["status_code"] = status_code
+        typer.echo(json.dumps(payload, ensure_ascii=False), err=True)
+    else:
+        stderr_line("red", "Error:", message)
     raise typer.Exit(code)
 
 
@@ -121,19 +140,29 @@ def debug(message: str) -> None:
 
 @contextmanager
 def network_errors(failure: str) -> Iterator[None]:
-    """Turn library failures into clean exit-1 errors."""
+    """Translate known library failures to stable CLI errors."""
     try:
         yield
-    except ZillowServerError as e:
-        error(f"Zillow server error after retries: {e}", code=1)
-    except ZillowNotFoundError as e:
-        error(f"Zillow listing was not found: {e}", code=1)
-    except ZillowParseError as e:
-        error(f"Could not parse Zillow's response; its page schema may have changed: {e}", code=1)
-    except ZillowBlockedError as e:
-        error(f"Zillow blocked the request: {e}", code=1)
+    except ZillowError as e:
+        messages = {
+            "server_error": f"Zillow server error after retries: {e}",
+            "network": f"{failure}: {e}",
+            "not_found": f"Zillow listing was not found: {e}",
+            "schema_drift": f"Could not parse Zillow's response; its page schema may have changed: {e}",
+            "blocked": f"Zillow blocked the request: {e}",
+        }
+        exit_codes = {"blocked": 3, "not_found": 4, "schema_drift": 5, "server_error": 6, "network": 6}
+        error(
+            messages.get(e.code, f"{failure}: {e}"),
+            code=exit_codes.get(e.code, 1),
+            error_code=e.code,
+            retryable=e.retryable,
+            status_code=getattr(e, "status_code", None),
+        )
     except Exception as e:
-        error(f"{failure}: {e}", code=1)
+        if context().verbose:
+            raise
+        error(f"Unexpected error during {failure}: {e}", code=1)
 
 
 def version_callback(value: bool) -> None:

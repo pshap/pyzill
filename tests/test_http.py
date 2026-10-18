@@ -5,7 +5,7 @@ from curl_cffi import requests as cffi_requests
 from curl_cffi.requests.exceptions import RequestException
 
 from pyzill import http
-from pyzill.exceptions import ZillowBlockedError, ZillowNotFoundError, ZillowServerError
+from pyzill.exceptions import ZillowBlockedError, ZillowNetworkError, ZillowNotFoundError, ZillowServerError
 
 
 def test_build_headers_derives_chrome_version() -> None:
@@ -83,10 +83,12 @@ def test_request_retries_request_exceptions(monkeypatch) -> None:
     monkeypatch.setattr(cffi_requests, "request", fail)
     monkeypatch.setattr(time, "sleep", lambda *args, **kwargs: None)
 
-    with pytest.raises(RequestException):
+    with pytest.raises(ZillowNetworkError) as exc_info:
         http.request("GET", "https://www.zillow.com/", headers={}, max_retries=2)
 
     assert attempts == 3
+    assert exc_info.value.code == "network"
+    assert exc_info.value.retryable
 
 
 def test_request_does_not_retry_other_exceptions(monkeypatch) -> None:

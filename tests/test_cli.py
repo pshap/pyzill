@@ -74,6 +74,15 @@ class TestRootAndHelp:
         assert result.exit_code == 0
         assert "pyzill" in result.stdout
 
+    def test_listing_schema_command_is_versioned_json(self):
+        result = runner.invoke(app, ["schema", "listing"])
+
+        assert result.exit_code == 0
+        schema = json.loads(result.stdout)
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert schema["$id"].endswith("/listing/1.0.0")
+        assert schema["properties"]["zipcode"]["anyOf"][-1] == {"type": "null"}
+
     def test_no_args_shows_help(self):
         result = runner.invoke(app, [])
         assert result.exit_code == 2  # Typer's no_args_is_help returns 2
@@ -101,6 +110,77 @@ class TestSearchCommands:
     def test_search_requires_query(self):
         result = runner.invoke(app, ["search", "sale"])
         assert result.exit_code == 2
+
+    def test_blocked_request_emits_json_error_and_exit_code(self, fake_http):
+        fake_http.install("PUT", status_code=403, text="blocked")
+
+        result = runner.invoke(app, ["--json-errors", "search", "sale", "12305"])
+
+        assert result.exit_code == 3
+        payload = json.loads(result.stderr)["error"]
+        assert payload == {
+            "code": "blocked",
+            "message": "Zillow blocked the request: Zillow returned HTTP 403 for "
+            "https://www.zillow.com/async-create-search-page-state. Body starts with: 'blocked'",
+            "retryable": False,
+            "status_code": 403,
+        }
+
+    def test_parse_failure_uses_schema_exit_code_by_default(self, fake_http):
+        fake_http.install("PUT", text="not json")
+
+        result = runner.invoke(app, ["search", "sale", "12305"])
+
+        assert result.exit_code == 5
+        assert json.loads(result.stderr)["error"]["code"] == "schema_drift"
+
+    def test_server_error_uses_retryable_transient_exit_code(self, fake_http, monkeypatch):
+        import time
+
+        fake_http.install("PUT", status_code=503, text="Unavailable")
+        monkeypatch.setattr(time, "sleep", lambda *args, **kwargs: None)
+
+        result = runner.invoke(app, ["--json-errors", "search", "sale", "12305"])
+
+        assert result.exit_code == 6
+        payload = json.loads(result.stderr)["error"]
+        assert payload["code"] == "server_error"
+        assert payload["retryable"] is True
+        assert payload["status_code"] == 503
+
+    def test_not_found_uses_dedicated_exit_code(self, fake_http):
+        fake_http.install("GET", status_code=404, text="Not Found")
+
+        result = runner.invoke(app, ["--json-errors", "detail", "home", "123"])
+
+        assert result.exit_code == 4
+        payload = json.loads(result.stderr)["error"]
+        assert payload["code"] == "not_found"
+        assert payload["retryable"] is False
+
+    def test_network_error_uses_transient_exit_code(self, monkeypatch):
+        from curl_cffi import requests as cffi_requests
+        from curl_cffi.requests.exceptions import RequestException
+
+        def fail_network(**kwargs):
+            raise RequestException("offline")
+
+        monkeypatch.setattr(cffi_requests, "request", fail_network)
+
+        result = runner.invoke(app, ["--json-errors", "search", "sale", "12305"])
+
+        assert result.exit_code == 6
+        payload = json.loads(result.stderr)["error"]
+        assert payload["code"] == "network"
+        assert payload["retryable"] is True
+
+    def test_json_errors_can_be_disabled(self, fake_http):
+        fake_http.install("PUT", status_code=403, text="blocked")
+
+        result = runner.invoke(app, ["--no-json-errors", "search", "sale", "12305"])
+
+        assert result.exit_code == 3
+        assert result.stderr.startswith("Error:")
 
     def test_search_with_bbox_options(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
@@ -297,7 +377,7 @@ class TestDetailCommands:
 
         result = runner.invoke(app, ["detail", "home", "123"])
 
-        assert result.exit_code == 1
+        assert result.exit_code == 5
         assert "schema may have changed" in result.stderr
         assert "blocked the request" not in result.stderr
 
@@ -440,8 +520,19 @@ class TestErrorHandling:
     def test_zillow_blocked_error(self, fake_http):
         fake_http.install("PUT", status_code=403, text="blocked")
         result = runner.invoke(app, ["search", "sale", "12305"])
-        assert result.exit_code == 1
+        assert result.exit_code == 3
         assert "blocked" in result.stderr.lower()
+
+    def test_json_error_redacts_proxy_credentials(self):
+        result = runner.invoke(
+            app,
+            ["--json-errors", "--proxy", "ftp://user:SECRETPW@host:1", "search", "sale", "12305"],
+        )
+
+        assert result.exit_code == 2
+        payload = json.loads(result.stderr)["error"]
+        assert payload["code"] == "usage"
+        assert "SECRETPW" not in payload["message"]
 
     def test_invalid_bbox(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
@@ -937,6 +1028,43 @@ class TestDatabaseCommands:
         assert db_path.exists()
         assert "Synced 2 listings: 2 new, 0 updated (0 price changes), 0 skipped" in result.stderr
 
+    def test_db_sync_json_summary(self, fake_http, search_success_body, tmp_path):
+        fake_http.install("PUT", json_data=search_success_body)
+
+        result = runner.invoke(
+            app,
+            ["db", "sync", "sale", "12305", "--format", "json", "--db", str(tmp_path / "summary.db")],
+        )
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) == {
+            "action": "synced",
+            "total": 2,
+            "added": 2,
+            "updated": 0,
+            "price_changes": 0,
+            "skipped": 0,
+        }
+
+    def test_db_import_json_summary(self, tmp_path):
+        rows_file = tmp_path / "rows.json"
+        rows_file.write_text(json.dumps([{"zpid": 1, "price": 100}]))
+
+        result = runner.invoke(
+            app,
+            ["db", "import", str(rows_file), "--format", "json", "--db", str(tmp_path / "summary.db")],
+        )
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) == {
+            "action": "imported",
+            "total": 1,
+            "added": 1,
+            "updated": 0,
+            "price_changes": 0,
+            "skipped": 0,
+        }
+
     def test_db_sync_empty_results_warns(self, fake_http, tmp_path):
         fake_http.install("PUT", json_data={"cat1": {"searchResults": {"mapResults": []}}})
         db_path = tmp_path / "test.db"
@@ -1263,7 +1391,7 @@ class TestDatabaseCommands:
 
         result = runner.invoke(app, ["db", "history", "999", "--db", str(db_path)])
         assert result.exit_code == 0
-        assert "No price history found" in result.stderr
+        assert json.loads(result.stdout) == []
 
     def test_db_stats_missing_database(self, tmp_path):
         db_path = tmp_path / "nonexistent.db"
@@ -1286,8 +1414,30 @@ class TestDatabaseCommands:
 
         result = runner.invoke(app, ["db", "stats", "--db", str(db_path)])
         assert result.exit_code == 0
-        assert "Total listings: 2" in result.stdout
-        assert str(db_path) in result.stdout
+        stats = json.loads(result.stdout)
+        assert stats["total_listings"] == 2
+        assert stats["db_path"] == str(db_path)
+
+    def test_db_history_honors_csv_format(self, tmp_path):
+        rows_file = tmp_path / "rows.json"
+        rows_file.write_text(json.dumps([{"zpid": 1, "price": 100}]))
+        db_path = tmp_path / "history.db"
+        runner.invoke(app, ["db", "import", str(rows_file), "--db", str(db_path)])
+
+        result = runner.invoke(app, ["db", "history", "1", "--format", "csv", "--db", str(db_path)])
+
+        assert result.exit_code == 0
+        assert result.stdout.splitlines()[0] == "price,seen_utc,kind"
+        assert result.stdout.endswith(",sale\n")
+
+    def test_db_stats_can_force_human_format(self, tmp_path):
+        db_path = tmp_path / "stats.db"
+        runner.invoke(app, ["db", "import", "-", "--db", str(db_path)], input='[{"zpid": 1}]')
+
+        result = runner.invoke(app, ["--no-json-errors", "db", "stats", "--format", "table", "--db", str(db_path)])
+
+        assert result.exit_code == 2
+        assert "only supports --format json" in result.stderr
 
     def test_db_env_var_path(self, tmp_path, monkeypatch):
         rows = [{"zpid": "123", "price": 250000, "address": "test"}]

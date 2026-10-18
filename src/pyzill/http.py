@@ -15,7 +15,7 @@ from curl_cffi.requests import ProxySpec, Response
 from curl_cffi.requests.exceptions import RequestException
 
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
-from pyzill.exceptions import ZillowBlockedError, ZillowNotFoundError, ZillowServerError
+from pyzill.exceptions import ZillowBlockedError, ZillowNetworkError, ZillowNotFoundError, ZillowServerError
 from pyzill.ratelimit import _limiter
 from pyzill.utils import resolve_proxy
 
@@ -214,11 +214,11 @@ def request(  # noqa: PLR0913 - central request primitive
                 timeout=options.timeout,
                 json=json,
             )
-        except RequestException:
+        except RequestException as exc:
             if attempt < options.max_retries:
                 time.sleep(_retry_delay(attempt))
                 continue
-            raise
+            raise ZillowNetworkError(url) from exc
 
         if _HTTP_OK_MIN <= response.status_code < _HTTP_OK_MAX:
             return response

@@ -5,6 +5,11 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- CLI failures now expose stable error codes and retryability, distinct exit
+  codes for blocked/not-found/schema/server/network failures, and structured
+  JSON diagnostics on stderr when stdout is not a TTY (overridable with
+  `--json-errors` / `--no-json-errors`). Added `pyzill schema listing` and
+  JSON-capable DB history, stats, sync, and import summaries.
 - `tiled_search` now takes `max_requests` (default 50) bounding the total
   number of search requests in a recursive tiling run; when the budget runs
   out mid-tree partial results are returned with a `budget_exhausted` flag

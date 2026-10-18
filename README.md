@@ -249,6 +249,14 @@ pyzill db history 32463997
 # [{"price": 250000, "seen_utc": "2026-10-01T12:00:00Z"}, {"price": 260000, "seen_utc": "2026-10-15T12:00:00Z"}]
 ```
 
+`db history` accepts `--format json|jsonl|csv|table`. `db stats` accepts
+`--format json`; it uses human-readable text on a terminal and JSON when
+stdout is redirected. `db sync` and `db import` accept `--format json` to emit
+their count summary to stdout instead of the human summary on stderr.
+
+`pyzill schema listing` prints the versioned JSON Schema for normalized
+listings.
+
 ### Exploring detail responses
 
 Detail responses are large nested JSON blobs. Two flags help you find your
@@ -327,8 +335,17 @@ pyzill search sale "12305"  # uses proxy from environment
 ### Exit Codes
 
 - `0` - Success (including zero results, --help, --version)
-- `1` - Operational failures (network errors, blocked requests, file I/O)
 - `2` - Invalid invocation (missing arguments, invalid options, unsupported combinations)
+- `3` - Zillow blocked the request
+- `4` - Requested Zillow resource was not found
+- `5` - Zillow response could not be parsed or its schema drifted
+- `6` - Transient server or network failure
+- `1` - Other errors
+
+Errors are JSON objects on stderr when stdout is not a TTY. Use
+`--json-errors` to force JSON errors or `--no-json-errors` for human-readable
+diagnostics. The JSON shape is `{"error":{"code":"blocked","message":"...","retryable":false,"status_code":403}}`;
+`status_code` is omitted when unavailable. Proxy credentials are redacted.
 
 ### Module Invocation
 
