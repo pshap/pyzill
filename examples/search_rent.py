@@ -9,7 +9,7 @@ import pyzill
 def main(output_path: str) -> None:
     """Run a room search and write the raw response to ``output_path``."""
     results = pyzill.for_rent(
-        search_value="",
+        search_value="12305",
         is_entire_place=False,
         is_room=True,
         min_beds=1,

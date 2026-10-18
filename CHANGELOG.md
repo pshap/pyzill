@@ -15,6 +15,23 @@ All notable changes to this project are documented here.
   treats `nan`, `inf`, or scientific notation as numbers.
 - In-memory database statistics now report zero file bytes. SQLite connections
   use WAL and a busy timeout.
+- Normalized zpids are integer-or-None; zero beds/area are preserved. HTTP 404,
+  5xx, parse/schema failures, and block responses have distinguishable error
+  types. Retry delays are exponential with jitter, honor `Retry-After` for 429,
+  and do not retry 403 responses.
+- Nominatim requests use a separate one-request-per-second limiter, no proxy
+  unless explicitly passed, an atomic 30-day cache keyed by country/format,
+  and a warning for synthetically expanded point-like viewports. Search warns
+  on the 500-result cap and supports `--tile --max-depth` recursive splitting.
+
+### Unverified (live Zillow validation required)
+- TODO: Confirm Zillow's default rent filter payload semantics and whether
+  rental `mapResults` contain building-only entries that need unit expansion.
+- TODO: Compare Nominatim ZIP viewports with known ZCTA boundaries. Synthetic
+  point-like viewports now trigger a CLI warning, but are not treated as ZIP
+  boundaries.
+- Zillow responses were not fetched or captured during this work; these items
+  remain open rather than relying on speculative payload assumptions.
 
 ## [1.3.0] - 2026-10
 

@@ -17,7 +17,13 @@ from pyzill.details import (
     get_from_home_id,
     get_from_home_url,
 )
-from pyzill.exceptions import ZillowBlockedError
+from pyzill.exceptions import (
+    ZillowBlockedError,
+    ZillowError,
+    ZillowNotFoundError,
+    ZillowParseError,
+    ZillowServerError,
+)
 from pyzill.normalize import Listing, normalize_listing, normalize_listings, parse_price
 from pyzill.ratelimit import get_min_interval, set_min_interval
 from pyzill.search import (
@@ -29,6 +35,7 @@ from pyzill.search import (
     iter_sold,
     sold,
     split_bbox,
+    tiled_search,
 )
 from pyzill.utils import parse_proxy, resolve_proxy
 
@@ -44,6 +51,10 @@ __all__ = [
     "Listing",
     "SyncStats",
     "ZillowBlockedError",
+    "ZillowError",
+    "ZillowNotFoundError",
+    "ZillowParseError",
+    "ZillowServerError",
     "connect",
     "db_stats",
     "default_db_path",
@@ -68,6 +79,7 @@ __all__ = [
     "set_min_interval",
     "sold",
     "split_bbox",
+    "tiled_search",
     "upsert_listings",
     "utc_now",
 ]

@@ -117,6 +117,25 @@ class TestSearchCommands:
         )
         assert result.exit_code == 0
 
+    def test_search_warns_when_result_cap_is_hit(self, fake_http):
+        body = {"cat1": {"searchResults": {"mapResults": [{"zpid": str(index)} for index in range(500)]}}}
+        fake_http.install("PUT", json_data=body)
+
+        result = runner.invoke(app, ["search", "sale", "12305"])
+
+        assert result.exit_code == 0
+        assert "500 listings" in result.stderr
+
+    def test_search_tile_splits_capped_results(self, fake_http):
+        body = {"cat1": {"searchResults": {"mapResults": [{"zpid": str(index)} for index in range(500)]}}}
+        fake_http.install("PUT", json_data=body)
+
+        result = runner.invoke(app, ["search", "sale", "12305", "--tile", "--max-depth", "1"])
+
+        assert result.exit_code == 0
+        assert len(fake_http.calls) == 5
+        assert "still returned 500" in result.stderr
+
     def test_search_with_price_filters(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
         result = runner.invoke(
@@ -197,6 +216,15 @@ class TestDetailCommands:
         result = runner.invoke(app, ["detail", "home", value])
         assert result.exit_code == 2
         assert fake_http.calls == []
+
+    def test_detail_parse_failure_has_schema_guidance(self, fake_http):
+        fake_http.install("GET", content=b"<html>unexpected page</html>")
+
+        result = runner.invoke(app, ["detail", "home", "123"])
+
+        assert result.exit_code == 1
+        assert "schema may have changed" in result.stderr
+        assert "blocked the request" not in result.stderr
 
     @pytest.mark.parametrize(("option", "value"), [("--max-retries", "-1"), ("--timeout", "0")])
     def test_global_request_limits_reject_invalid_values(self, option, value):

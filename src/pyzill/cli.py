@@ -48,11 +48,18 @@ from pyzill import (
     upsert_listings,
     utc_now,
 )
-from pyzill.exceptions import ZillowBlockedError
+from pyzill.exceptions import (
+    ZillowBlockedError,
+    ZillowNotFoundError,
+    ZillowParseError,
+    ZillowServerError,
+)
 from pyzill.geocode import geocode
 from pyzill.normalize import Listing
+from pyzill.search import tiled_search
 
 DEFAULT_IMPERSONATE = "chrome136"
+_RESULT_CAP = 500
 
 app = typer.Typer(
     name="pyzill",
@@ -172,6 +179,12 @@ def _network_errors(failure: str) -> Iterator[None]:
     """Turn library failures into clean exit-1 errors."""
     try:
         yield
+    except ZillowServerError as e:
+        error(f"Zillow server error after retries: {e}", code=1)
+    except ZillowNotFoundError as e:
+        error(f"Zillow listing was not found: {e}", code=1)
+    except ZillowParseError as e:
+        error(f"Could not parse Zillow's response; its page schema may have changed: {e}", code=1)
     except ZillowBlockedError as e:
         error(f"Zillow blocked the request: {e}", code=1)
     except Exception as e:
@@ -214,7 +227,7 @@ def main(  # noqa: PLR0913, PLR0917
     ] = 30.0,
     max_retries: Annotated[
         int,
-        typer.Option("--max-retries", min=0, help="Retries on 5xx errors (default: 1)"),
+        typer.Option("--max-retries", min=0, help="Retries on transient 5xx, 429, and network errors (default: 1)"),
     ] = 1,
     rate_limit: Annotated[
         float | None,
@@ -419,6 +432,8 @@ MinBaths = Annotated[int | None, typer.Option("--min-bathrooms", help="Minimum b
 MaxBaths = Annotated[int | None, typer.Option("--max-bathrooms", help="Maximum bathrooms")]
 MinPrice = Annotated[int | None, typer.Option("--min-price", help="Minimum price")]
 MaxPrice = Annotated[int | None, typer.Option("--max-price", help="Maximum price")]
+Tile = Annotated[bool, typer.Option("--tile", help="Recursively split capped map results")]
+MaxDepth = Annotated[int, typer.Option("--max-depth", min=0, max=8, help="Maximum recursive tile depth (default: 4)")]
 Raw = Annotated[bool, typer.Option("--raw", help="Return raw search response (not normalized)")]
 FormatOpt = Annotated[
     OutputFormat,
@@ -521,27 +536,51 @@ def fetch_and_normalize(  # noqa: PLR0913
         # we never silently fall back to a continental-US search.
         debug(f"Geocoding {query!r}")
         try:
-            geo = geocode(query, proxy_url=http_kwargs.get("proxy_url"))
+            geo = geocode(query)
         except ValueError as e:
             error(str(e), code=1)
         debug(f"Geocoded {query!r} -> {geo.display_name}")
         bbox = geo.bbox
+        if geo.synthetic_bbox:
+            warn(
+                "Nominatim returned a point-like viewport; pyzill expanded it synthetically, "
+                "which may not cover the full area"
+            )
     debug(f"{search_fn.__name__}: query={query!r} bbox={bbox}")
 
+    tile = bool(extra.pop("tile", False))
+    max_depth = int(extra.pop("max_depth", 4))
+    search_kwargs = {
+        "search_value": query,
+        "zoom_value": zoom,
+        "min_beds": min_beds,
+        "max_beds": max_beds,
+        "min_bathrooms": min_bathrooms,
+        "max_bathrooms": max_bathrooms,
+        "min_price": min_price,
+        "max_price": max_price,
+        **extra,
+        **http_kwargs,
+    }
+
     with _network_errors("Search failed"):
-        result = search_fn(
-            search_value=query,
-            bbox=bbox,
-            zoom_value=zoom,
-            min_beds=min_beds,
-            max_beds=max_beds,
-            min_bathrooms=min_bathrooms,
-            max_bathrooms=max_bathrooms,
-            min_price=min_price,
-            max_price=max_price,
-            **extra,
-            **http_kwargs,
-        )
+        if tile:
+            result = tiled_search(
+                search_fn,
+                bbox=bbox,
+                max_depth=max_depth,
+                on_cap=lambda: warn(
+                    f"A tile still returned {_RESULT_CAP} listings at --max-depth {max_depth}; results may be truncated"
+                ),
+                **search_kwargs,
+            )
+        else:
+            result = search_fn(bbox=bbox, **search_kwargs)
+            if len(result.get("mapResults", []) or []) >= _RESULT_CAP:
+                warn(
+                    f"Zillow returned {_RESULT_CAP} listings, its per-search cap; "
+                    "use --tile to subdivide the bounding box"
+                )
 
     return result if raw else normalize_listings(extract_listings(result))
 
@@ -608,6 +647,8 @@ def search_sale(  # noqa: PLR0913, PLR0917
     max_bathrooms: MaxBaths = None,
     min_price: MinPrice = None,
     max_price: MaxPrice = None,
+    tile: Tile = False,
+    max_depth: MaxDepth = 4,
     raw: Raw = False,
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
@@ -630,6 +671,8 @@ def search_rent(  # noqa: PLR0913, PLR0917
     max_bathrooms: MaxBaths = None,
     min_price: MinPrice = None,
     max_price: MaxPrice = None,
+    tile: Tile = False,
+    max_depth: MaxDepth = 4,
     is_room: Annotated[bool, typer.Option("--room", help="Filter for rooms for rent")] = False,
     is_entire_place: Annotated[
         bool,
@@ -657,6 +700,8 @@ def search_sold(  # noqa: PLR0913, PLR0917
     max_bathrooms: MaxBaths = None,
     min_price: MinPrice = None,
     max_price: MaxPrice = None,
+    tile: Tile = False,
+    max_depth: MaxDepth = 4,
     raw: Raw = False,
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
@@ -1023,6 +1068,8 @@ def db_sync(  # noqa: PLR0913, PLR0917
     max_bathrooms: MaxBaths = None,
     min_price: MinPrice = None,
     max_price: MaxPrice = None,
+    tile: Tile = False,
+    max_depth: MaxDepth = 4,
     is_room: Annotated[bool, typer.Option("--room", help="Filter for rooms for rent")] = False,
     is_entire_place: Annotated[
         bool,
@@ -1059,6 +1106,8 @@ def db_sync(  # noqa: PLR0913, PLR0917
         max_bathrooms=max_bathrooms,
         min_price=min_price,
         max_price=max_price,
+        tile=tile,
+        max_depth=max_depth,
         raw=False,
         **extra,
     )

@@ -1,6 +1,7 @@
 """Tests for the Nominatim geocoding helper."""
 
 import json
+import time
 from importlib.metadata import version
 from typing import Any
 
@@ -92,6 +93,7 @@ class TestGeocode:
         result = geocode("1 Main St, Schenectady NY", cache_path=cache_path)
         assert result.bbox.north - result.bbox.south == pytest.approx(0.02)
         assert result.bbox.east - result.bbox.west == pytest.approx(0.02)
+        assert result.synthetic_bbox is True
 
     def test_cache_write_failure_not_fatal(self, monkeypatch, tmp_path):
         _install_get(monkeypatch, HIT)
@@ -135,12 +137,13 @@ def test_cache_entry_roundtrip(tmp_path, monkeypatch):
     cache.write_text(
         json.dumps(
             {
-                "schenectady ny": {
+                "us:jsonv2:schenectady ny": {
                     "display_name": "cached",
                     "north": 42.9,
                     "south": 42.7,
                     "east": -73.8,
                     "west": -74.0,
+                    "cached_at": time.time(),
                 }
             }
         )
@@ -150,3 +153,40 @@ def test_cache_entry_roundtrip(tmp_path, monkeypatch):
     assert calls == []
     assert result.display_name == "cached"
     assert result.bbox.north == 42.9
+
+
+def test_geocode_uses_separate_rate_limiter_and_no_implicit_proxy(monkeypatch, cache_path):
+    calls = _install_get(monkeypatch, HIT)
+    waits: list[bool] = []
+    monkeypatch.setattr("pyzill.geocode._nominatim_limiter.wait", lambda: waits.append(True))
+    monkeypatch.setenv("ZILLOW_PROXY", "http://proxy.example:9000")
+
+    geocode("Schenectady NY", cache_path=cache_path)
+
+    assert waits == [True]
+    assert calls[0]["proxies"] is None
+    assert "us:jsonv2:" in next(iter(json.loads(cache_path.read_text())))
+
+
+def test_expired_cache_entry_is_refetched(monkeypatch, cache_path):
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        json.dumps(
+            {
+                "us:jsonv2:schenectady ny": {
+                    "display_name": "stale",
+                    "north": 42.9,
+                    "south": 42.7,
+                    "east": -73.8,
+                    "west": -74.0,
+                    "cached_at": 0,
+                }
+            }
+        )
+    )
+    calls = _install_get(monkeypatch, HIT)
+
+    result = geocode("Schenectady NY", cache_path=cache_path)
+
+    assert len(calls) == 1
+    assert result.display_name.startswith("Schenectady")

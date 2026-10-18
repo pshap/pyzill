@@ -11,6 +11,9 @@ us well under that.
 
 import json
 import os
+import tempfile
+import time
+from contextlib import suppress
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
@@ -19,7 +22,8 @@ from typing import Any
 from curl_cffi import requests
 
 from pyzill.bbox import BBox
-from pyzill.http import build_proxies
+from pyzill.ratelimit import RateLimiter
+from pyzill.utils import resolve_proxy
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 
@@ -31,6 +35,8 @@ _TIMEOUT = 15.0
 # Address-level hits come back with a viewport of a few meters, which is too
 # small for a Zillow map search; expand anything smaller than a neighbourhood.
 _MIN_HALF_EXTENT = 0.01  # degrees, roughly 1 km
+_CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
+_nominatim_limiter = RateLimiter(min_interval=1.0, jitter=0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +45,7 @@ class GeoResult:
 
     display_name: str
     bbox: BBox
+    synthetic_bbox: bool = False
 
 
 def default_cache_path() -> Path:
@@ -68,12 +75,22 @@ def _load_cache(path: Path) -> dict[str, Any]:
 
 def _store_cache(path: Path, key: str, entry: dict[str, Any]) -> None:
     cache = _load_cache(path)
-    cache[key] = entry
+    cache[key] = {**entry, "cached_at": time.time()}
+    temporary_path: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+        ) as temporary:
+            temporary.write(json.dumps(cache, indent=2))
+            temporary_path = Path(temporary.name)
+        temporary_path.replace(path)
     except OSError:
         pass  # A read-only cache dir is not fatal; the answer still gets returned.
+    finally:
+        if temporary_path is not None:
+            with suppress(OSError):
+                temporary_path.unlink(missing_ok=True)
 
 
 def geocode(
@@ -87,7 +104,7 @@ def geocode(
     Args:
         place: Free-form location text ('Schenectady NY', '12305', a street address).
         cache_path: JSON cache file; defaults to ``~/.cache/pyzill/geocode.json``.
-        proxy_url: Optional proxy for the Nominatim request (falls back to ZILLOW_PROXY).
+        proxy_url: Optional explicit proxy for the Nominatim request.
 
     Returns:
         GeoResult: display name plus a validated BBox.
@@ -100,10 +117,15 @@ def geocode(
         raise ValueError("Cannot geocode an empty place name")
 
     cache_path = cache_path or default_cache_path()
-    key = place.lower()
+    key = f"us:jsonv2:{place.lower()}"
 
     cached = _load_cache(cache_path).get(key)
-    if isinstance(cached, dict) and {"north", "south", "east", "west"} <= cached.keys():
+    if (
+        isinstance(cached, dict)
+        and isinstance(cached.get("cached_at"), (int, float))
+        and time.time() - cached["cached_at"] < _CACHE_TTL_SECONDS
+        and {"north", "south", "east", "west"} <= cached.keys()
+    ):
         try:
             return GeoResult(
                 display_name=str(cached.get("display_name", place)),
@@ -113,16 +135,19 @@ def geocode(
                     east=float(cached["east"]),
                     west=float(cached["west"]),
                 ),
+                synthetic_bbox=bool(cached.get("synthetic_bbox", False)),
             )
         except (TypeError, ValueError):
             pass  # Corrupt entry; re-fetch.
 
     try:
+        _nominatim_limiter.wait()
+        resolved_proxy = resolve_proxy(proxy_url) if proxy_url else None
         response = requests.get(
             NOMINATIM_URL,
             params={"q": place, "format": "jsonv2", "limit": 1, "countrycodes": "us"},
             headers={"User-Agent": _USER_AGENT},
-            proxies=build_proxies(proxy_url),
+            proxies={"http": resolved_proxy, "https": resolved_proxy} if resolved_proxy else None,
             timeout=_TIMEOUT,
         )
         response.raise_for_status()  # type: ignore[no-untyped-call]
@@ -140,11 +165,13 @@ def geocode(
     hit = hits[0]
     # Nominatim's boundingbox is [south, north, west, east], all strings.
     south, north, west, east = (float(x) for x in hit["boundingbox"])
+    synthetic_bbox = north - south < 2 * _MIN_HALF_EXTENT or east - west < 2 * _MIN_HALF_EXTENT
     north, south, east, west = _expand_viewport(north, south, east, west)
 
     result = GeoResult(
         display_name=str(hit.get("display_name", place)),
         bbox=BBox(north=north, south=south, east=east, west=west),
+        synthetic_bbox=synthetic_bbox,
     )
     _store_cache(
         cache_path,
@@ -155,6 +182,7 @@ def geocode(
             "south": south,
             "east": east,
             "west": west,
+            "synthetic_bbox": synthetic_bbox,
         },
     )
     return result

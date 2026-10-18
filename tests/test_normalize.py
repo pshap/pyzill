@@ -100,6 +100,16 @@ def test_normalize_listing_missing_fields_are_none():
     assert out["status_type"] is None
 
 
+def test_normalize_preserves_zero_beds_and_area_and_requires_integer_zpid():
+    out = normalize.normalize_listing({"zpid": "123.0", "beds": 0, "area": 0})
+
+    assert out["zpid"] == 123
+    assert type(out["zpid"]) is int
+    assert out["beds"] == 0
+    assert out["area"] == 0
+    assert normalize.normalize_listing({"zpid": "123.5"})["zpid"] is None
+
+
 def test_normalize_listing_falls_back_to_hdp_home_info():
     raw = {
         "zpid": "1",

@@ -3,7 +3,7 @@ import time
 import pytest
 
 from pyzill import details, http
-from pyzill.exceptions import ZillowBlockedError
+from pyzill.exceptions import ZillowBlockedError, ZillowNotFoundError
 
 
 def test_get_from_home_id(fake_http, home_detail_body):
@@ -97,5 +97,5 @@ def test_department_url_aliases_warn(fake_http, department_detail_body, alias):
 def test_detail_http_error_raises(fake_http):
     fake_http.install("GET", status_code=404, text="Not Found")
 
-    with pytest.raises(ZillowBlockedError):
+    with pytest.raises(ZillowNotFoundError):
         details.get_from_home_url("https://www.zillow.com/homedetails/bad_zpid/")

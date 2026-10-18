@@ -24,7 +24,7 @@ class Listing(TypedDict):
     validated at runtime.
     """
 
-    zpid: int | float | None
+    zpid: int | None
     price: int | None
     price_label: str | None
     beds: int | float | None
@@ -126,6 +126,13 @@ def _first_number(value: Any, fallback: Any) -> int | float | None:
     return number if number is not None else _to_number(fallback)
 
 
+def _integer_zpid(value: Any) -> int | None:
+    number = _to_number(value)
+    if isinstance(number, float):
+        return int(number) if number.is_integer() else None
+    return number
+
+
 @overload
 def normalize_listing(listing: dict[str, Any]) -> Listing: ...
 
@@ -167,7 +174,7 @@ def normalize_listing(listing: Any) -> Listing | None:
         detail_url = _BASE_URL + detail_url
 
     return {
-        "zpid": _to_number(listing.get("zpid")),
+        "zpid": _integer_zpid(listing.get("zpid")),
         "price": price,
         "price_label": listing.get("priceLabel"),
         "beds": _first_number(listing.get("beds"), info.get("bedrooms")),

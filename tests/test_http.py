@@ -5,7 +5,7 @@ from curl_cffi import requests as cffi_requests
 from curl_cffi.requests.exceptions import RequestException
 
 from pyzill import http
-from pyzill.exceptions import ZillowBlockedError
+from pyzill.exceptions import ZillowBlockedError, ZillowNotFoundError, ZillowServerError
 
 
 def test_build_headers_derives_chrome_version() -> None:
@@ -42,6 +42,32 @@ def test_request_rejects_non_2xx_status(fake_http) -> None:
 
     with pytest.raises(ZillowBlockedError):
         http.request("GET", "https://www.zillow.com/", headers={})
+
+
+def test_request_distinguishes_not_found(fake_http) -> None:
+    fake_http.install("GET", status_code=404, text="Not Found")
+
+    with pytest.raises(ZillowNotFoundError):
+        http.request("GET", "https://www.zillow.com/missing", headers={})
+
+
+def test_request_distinguishes_server_failure(fake_http, monkeypatch) -> None:
+    fake_http.install("GET", status_code=503, text="Unavailable")
+    monkeypatch.setattr(time, "sleep", lambda *args, **kwargs: None)
+
+    with pytest.raises(ZillowServerError):
+        http.request("GET", "https://www.zillow.com/", headers={}, max_retries=0)
+
+
+def test_request_honors_retry_after_for_429(fake_http, monkeypatch) -> None:
+    fake_http.install("GET", status_code=429, text="Slow down", headers={"Retry-After": "2"})
+    delays: list[float] = []
+    monkeypatch.setattr(time, "sleep", delays.append)
+
+    with pytest.raises(ZillowBlockedError):
+        http.request("GET", "https://www.zillow.com/", headers={}, max_retries=1)
+
+    assert delays == [2.0]
 
 
 def test_request_retries_request_exceptions(monkeypatch) -> None:

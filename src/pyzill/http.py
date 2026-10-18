@@ -6,13 +6,15 @@ status handling so that search and detail requests stay consistent.
 
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 
 from curl_cffi import requests
 from curl_cffi.requests import ProxySpec, Response
 from curl_cffi.requests.exceptions import RequestException
 
-from pyzill.exceptions import ZillowBlockedError
+from pyzill.exceptions import ZillowBlockedError, ZillowNotFoundError, ZillowServerError
 from pyzill.ratelimit import _limiter
 from pyzill.utils import resolve_proxy
 
@@ -41,8 +43,32 @@ class RequestOptions:
 _HTTP_OK_MIN = 200
 _HTTP_OK_MAX = 300  # exclusive
 _HTTP_SERVER_ERROR_MIN = 500
+_HTTP_NOT_FOUND = 404
+_HTTP_TOO_MANY_REQUESTS = 429
 
 _RETRY_DELAY = 1.0
+
+
+def _retry_delay(attempt: int, retry_after: str | None = None) -> float:
+    if retry_after:
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            try:
+                retry_time = parsedate_to_datetime(retry_after)
+                if retry_time.tzinfo is None:
+                    retry_time = retry_time.replace(tzinfo=UTC)
+                delta = retry_time - datetime.now(UTC)
+                retry_delay_seconds = delta.days * 86_400 + delta.seconds + delta.microseconds / 1_000_000
+                return max(0.0, retry_delay_seconds)
+            except (TypeError, ValueError, OverflowError):
+                pass
+    delay: float = _RETRY_DELAY * (2**attempt)
+    monotonic_ns = int(time.monotonic_ns())
+    jitter_fraction: float = (monotonic_ns % 1_000_000_000) / 1_000_000_000
+    jitter: float = jitter_fraction * min(1.0, delay * 0.25)
+    return float(delay + jitter)
+
 
 _ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"  # noqa: E501
 _USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36"  # noqa: E501
@@ -139,11 +165,11 @@ def request(  # noqa: PLR0913 - central request primitive
     max_retries: int = DEFAULT_MAX_RETRIES,
     json: Any = None,
 ) -> Response:
-    """Issue a throttled Zillow request, retrying transient (5xx) failures.
+    """Issue a throttled Zillow request, retrying transient 5xx and 429 failures.
 
-    2xx responses are returned.  All other statuses raise
-    :class:`ZillowBlockedError`; 5xx responses are retried up to
-    ``max_retries`` times first.
+    2xx responses are returned.  HTTP 404 and 5xx have dedicated error
+    subclasses; other unsuccessful statuses raise :class:`ZillowBlockedError`.
+    Transient 5xx and 429 responses are retried up to ``max_retries`` times.
 
     Args:
         method: HTTP verb, e.g. ``"GET"`` or ``"PUT"``.
@@ -152,14 +178,14 @@ def request(  # noqa: PLR0913 - central request primitive
         proxy_url: Proxy URL (falls back to ``ZILLOW_PROXY``).
         impersonate: curl_cffi TLS impersonation profile.
         timeout: Request timeout in seconds.
-        max_retries: Retries on 5xx / request errors (default 1).
+        max_retries: Retries on 5xx, 429, and request errors (default 1).
         json: JSON body to send, or None.
 
     Returns:
         Response: the curl_cffi response object.
 
     Raises:
-        ZillowBlockedError: If the response status is not 2xx.
+        ZillowError: If the response status is not 2xx.
     """
     RequestOptions(proxy_url, impersonate, timeout, max_retries)
     proxies = build_proxies(proxy_url)
@@ -179,20 +205,26 @@ def request(  # noqa: PLR0913 - central request primitive
             )
         except RequestException:
             if attempt < max_retries:
-                time.sleep(_RETRY_DELAY)
+                time.sleep(_retry_delay(attempt))
                 continue
             raise
 
         if _HTTP_OK_MIN <= response.status_code < _HTTP_OK_MAX:
             return response
 
-        last_exception = ZillowBlockedError(
-            status_code=response.status_code,
-            url=url,
-            body_snippet=response.text or "",
-        )
-        if response.status_code >= _HTTP_SERVER_ERROR_MIN and attempt < max_retries:
-            time.sleep(_RETRY_DELAY)
+        body_snippet = response.text or ""
+        if response.status_code == _HTTP_NOT_FOUND:
+            raise ZillowNotFoundError(response.status_code, url, body_snippet)
+        if response.status_code >= _HTTP_SERVER_ERROR_MIN:
+            last_exception = ZillowServerError(response.status_code, url, body_snippet)
+        else:
+            last_exception = ZillowBlockedError(response.status_code, url, body_snippet)
+        should_retry = response.status_code >= _HTTP_SERVER_ERROR_MIN or response.status_code == _HTTP_TOO_MANY_REQUESTS
+        if should_retry and attempt < max_retries:
+            retry_after = (
+                response.headers.get("Retry-After") if response.status_code == _HTTP_TOO_MANY_REQUESTS else None
+            )
+            time.sleep(_retry_delay(attempt, retry_after))
             continue
         raise last_exception
 

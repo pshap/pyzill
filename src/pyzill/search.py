@@ -7,6 +7,7 @@ from pyzill.bbox import CONTINENTAL_US, BBox
 from pyzill.exceptions import ZillowBlockedError
 
 _SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
+_RESULT_CAP = 500
 
 
 class SearchParams(TypedDict, total=False):
@@ -207,7 +208,7 @@ def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         proxy_url: Proxy URL (residential proxies strongly recommended).
         impersonate: curl_cffi TLS impersonation profile.
         timeout: Request timeout in seconds (default 30).
-        max_retries: Retries on 5xx / network errors (default 1).
+        max_retries: Retries on transient 5xx, 429, and network errors (default 1).
 
     Returns:
         dict[str, Any]: listing of properties in JSON format
@@ -339,8 +340,47 @@ def iter_rent(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mappin
 
 
 def iter_sold(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
-    """Yield individual sold listings from ``mapResults``."""
+    """Yield sold listings from the first response's ``mapResults`` only."""
     yield from _iter_search(sold, max_items=max_items, kwargs=kwargs)
+
+
+def tiled_search(
+    search_fn: Callable[..., dict[str, Any]],
+    *,
+    bbox: BBox,
+    max_depth: int = 4,
+    on_cap: Callable[[], None] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Recursively split capped map searches and deduplicate their results.
+
+    Every tile is a normal search call, so the shared request limiter applies.
+    ``on_cap`` is called when a tile still contains 500 results at max depth.
+    """
+    if max_depth < 0:
+        raise ValueError("max_depth must be non-negative")
+
+    combined: dict[str, dict[str, Any]] = {"mapResults": {}, "listResults": {}}
+
+    def collect(tile: BBox, depth: int) -> None:
+        response = search_fn(**kwargs, bbox=tile)
+        map_results = response.get("mapResults", []) or []
+        for result_key in combined:
+            for listing in response.get(result_key, []) or []:
+                if not isinstance(listing, Mapping):
+                    continue
+                identity = listing.get("zpid") or listing.get("detailUrl") or repr(sorted(listing.items()))
+                combined[result_key].setdefault(str(identity), dict(listing))
+
+        if len(map_results) >= _RESULT_CAP:
+            if depth < max_depth:
+                for child in tile.split():
+                    collect(child, depth + 1)
+            elif on_cap is not None:
+                on_cap()
+
+    collect(bbox, 0)
+    return {key: list(listings.values()) for key, listings in combined.items()}
 
 
 def split_bbox(bbox: BBox = CONTINENTAL_US) -> tuple[BBox, BBox, BBox, BBox]:

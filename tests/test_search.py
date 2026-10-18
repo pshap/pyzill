@@ -166,6 +166,35 @@ def test_iter_search_default_fn(fake_http, search_success_body):
     assert items[0]["zpid"] == 348914888
 
 
+def test_tiled_search_splits_capped_tiles_and_deduplicates():
+    root = BBox(north=10, east=10, south=0, west=0)
+    calls: list[BBox] = []
+
+    def fake_search(*, bbox: BBox, **kwargs):
+        calls.append(bbox)
+        if bbox == root:
+            return {"mapResults": [{"zpid": index} for index in range(500)]}
+        return {"mapResults": [{"zpid": 500}, {"zpid": 501}], "listResults": []}
+
+    result = search.tiled_search(fake_search, bbox=root, max_depth=1, search_value="x")
+
+    assert len(calls) == 5
+    assert len(result["mapResults"]) == 502
+    assert [item["zpid"] for item in result["mapResults"]][-2:] == [500, 501]
+
+
+def test_tiled_search_reports_cap_at_max_depth():
+    capped: list[bool] = []
+    search.tiled_search(
+        lambda **kwargs: {"mapResults": [{"zpid": index} for index in range(500)]},
+        bbox=BBox(north=10, east=10, south=0, west=0),
+        max_depth=0,
+        on_cap=lambda: capped.append(True),
+    )
+
+    assert capped == [True]
+
+
 def test_normalize_listings_can_normalize_iteration(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
 

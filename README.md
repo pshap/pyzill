@@ -1,3 +1,5 @@
+- `--proxy` applies to Zillow requests; Nominatim geocoding is direct by default.
+`zpid`, `price`, `beds`, `baths`, `area`, `address`, `city`, `state`, `zipcode`,
 # pyzill — Zillow scraper in Python
 
 ## Overview
@@ -135,7 +137,7 @@ pyzill search sale "Schenectady NY" --max-price 400000 --min-beds 3
 - Results are cached on disk (`~/.cache/pyzill/geocode.json`, override with
   `XDG_CACHE_HOME`) so repeated searches for the same place are instant.
 - Pass an explicit bbox to skip geocoding entirely.
-- `--proxy` is honored for the geocode request too.
+- `--proxy` applies to Zillow requests; Nominatim geocoding is direct by default.
 - If geocoding fails, the CLI exits with code 1 and tells you to pass an
   explicit bbox.
 
@@ -436,8 +438,17 @@ for listing in pyzill.iter_sale(search_value="Schenectady NY"):
     print(listing["zpid"])
 ```
 
-If you hit exactly 500 and need more, split the area into quadrants with
-`split_bbox` and run one search per quadrant:
+At exactly 500 results Zillow may have truncated the response. The CLI warns
+and supports bounded recursive tiling with `--tile` (the default maximum depth
+is 4; adjust it with `--max-depth`). The library's `tiled_search` does the same
+and uses the shared request limiter for every tile:
+
+```bash
+pyzill search sale "Schenectady NY" --tile --max-depth 5
+pyzill db sync sale "Schenectady NY" --tile
+```
+
+For manual control, split an area with `split_bbox` and run one search per tile:
 
 ```python
 import pyzill
@@ -454,7 +465,8 @@ All search functions accept:
 
 - `impersonate` (default `"chrome136"`) — the `curl_cffi` TLS profile.
 - `timeout` (default `30.0` seconds).
-- `max_retries` (default `1`) — retries on 5xx / network errors.
+- `max_retries` (default `1`) — retries on 5xx, 429, and network errors. 403
+    responses are not retried.
 
 ```python
 results = pyzill.for_sale(
@@ -473,6 +485,8 @@ Raw Zillow listings are inconsistent: `price` is a preformatted string
 fields, falling back to `hdpData.homeInfo` when a top-level field is absent:
 
 Non-dict entries are skipped by the normalization helpers.
+Zero beds (studio) and zero area values are preserved; `zpid` is always an
+integer or `None`.
 
 ```python
 import pyzill
@@ -607,7 +621,8 @@ data = pyzill.get_from_apartment_url("https://www.zillow.com/apartments/kissimme
 | `for_rent(...)` | For-rent listings (also `is_entire_place`, `is_room`) |
 | `sold(...)` | Recently-sold listings |
 | `search(...)` | Raw search with a custom `filter_state` (the three above reject `filter_state`) |
-| `iter_search(max_items=None, **kwargs)` / `iter_sale(...)` / `iter_rent(...)` / `iter_sold(...)` | Yield individual listings |
+| `iter_search(max_items=None, **kwargs)` / `iter_sale(...)` / `iter_rent(...)` / `iter_sold(...)` | Yield individual listings from the first `mapResults` response |
+| `tiled_search(search_fn, bbox=..., max_depth=4, **kwargs)` | Recursively split capped results and deduplicate by zpid |
 | `split_bbox(bbox)` | Split a `BBox` into 4 quadrants |
 | `get_from_home_url(url, ...)` / `get_from_home_id(id, ...)` | Home details |
 | `get_from_apartment_url(url, ...)` / `get_from_apartment_id(id, ...)` | Apartment details |
@@ -617,7 +632,9 @@ data = pyzill.get_from_apartment_url("https://www.zillow.com/apartments/kissimme
 | `normalize_listing(listing)` / `normalize_listings(listings)` | Flatten raw listings to numeric-or-`None` fields |
 | `Listing` | `TypedDict` describing the normalized listing shape |
 | `parse_price(value)` | Parse a Zillow price string/number into an int |
-| `ZillowBlockedError` | Raised on non-2xx responses from Zillow |
+| `ZillowBlockedError` | Raised for block/rate-limit responses (also remains a base for server errors) |
+| `ZillowNotFoundError` / `ZillowServerError` | HTTP 404 / final 5xx response |
+| `ZillowParseError` | Successful page response with unexpected or missing data |
 
 ## Development
 
