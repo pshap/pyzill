@@ -6,21 +6,14 @@ Uses Typer for command-line interface and Rich for terminal output.
 import datetime as dt
 import json
 import os
-import re
 import sqlite3
-import sys
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass
-from functools import cached_property
-from importlib.metadata import PackageNotFoundError, version
+from functools import wraps
 from pathlib import Path
-from typing import Annotated, Any, NoReturn, cast
+from typing import Annotated, Any
 
 import typer
-from rich.console import Console
-from rich.markup import escape
 
 from pyzill import (
     BBox,
@@ -42,10 +35,21 @@ from pyzill import (
     upsert_listings,
     utc_now,
 )
+from pyzill.cli.console import (
+    Context,
+    context,
+    debug,
+    emit,
+    error,
+    set_context,
+    stderr_line,
+    version_callback,
+    warn,
+    write_output,
+)
 from pyzill.cli.db import ListingKind, resolve_db_path
 from pyzill.cli.detail import home_detail_target
 from pyzill.cli.output import OutputFormat, dumps
-from pyzill.cli.output import write_output as _render_output
 from pyzill.cli.query import QueryValidationError
 from pyzill.cli.query import query_database as _query_database_engine
 from pyzill.cli.query import query_rows as _query_rows_engine
@@ -81,97 +85,15 @@ app.add_typer(db_app)
 
 
 # --------------------------------------------------------------------------- #
-# Shared context and console helpers
+# Search kind -> search function
 # --------------------------------------------------------------------------- #
 
 
-@dataclass
-class Context:
-    """Shared context for CLI commands."""
-
-    quiet: bool = False
-    verbose: bool = False
-    no_color: bool = False
-    proxy: str | None = None
-    impersonate: str = DEFAULT_IMPERSONATE
-    timeout: float = DEFAULT_TIMEOUT
-    max_retries: int = DEFAULT_MAX_RETRIES
-
-    @cached_property
-    def stderr_console(self) -> Console:
-        """Console for diagnostics and progress."""
-        return Console(stderr=True, no_color=self.no_color, force_terminal=False)
-
-    @cached_property
-    def stdout_console(self) -> Console:
-        """Console for human-readable output (not machine formats)."""
-        return Console(stderr=False, no_color=self.no_color, force_terminal=False)
-
-    @property
-    def http_kwargs(self) -> dict[str, Any]:
-        """Keyword arguments every pyzill network call accepts."""
-        try:
-            proxy_url = resolve_proxy(self.proxy)
-        except ValueError as e:
-            # Backstop; the root callback validates the proxy before any
-            # command runs. Keeps a bad ZILLOW_PROXY from becoming a traceback.
-            error(f"Invalid proxy: {e}", code=2)
-        return {
-            "proxy_url": proxy_url,
-            "impersonate": self.impersonate,
-            "timeout": self.timeout,
-            "max_retries": self.max_retries,
-        }
-
-
-_active_context: ContextVar[Context | None] = ContextVar("pyzill_cli_context", default=None)
-
-
-def _context() -> Context:
-    return _active_context.get() or Context()
-
-
-# user:password@ inside a URL (proxy credentials, etc.)
-_USERINFO_RE = re.compile(r"(?<=://)[^/@\s]+@")
-
-
-def _redact(message: str) -> str:
-    """Strip credentials from any URLs embedded in a message."""
-    return _USERINFO_RE.sub("***@", message)
-
-
-def _stderr_line(style: str, label: str, message: str) -> None:
-    """Print one diagnostic line to stderr, redacting credentials."""
-    _context().stderr_console.print(f"[{style}]{label}[/] {escape(_redact(message))}")
-
-
-def error(message: str, code: int = 1) -> NoReturn:
-    """Print error to stderr and exit."""
-    _stderr_line("red", "Error:", message)
-    raise typer.Exit(code)
-
-
-def warn(message: str) -> None:
-    """Print warning to stderr."""
-    if not _context().quiet:
-        _stderr_line("yellow", "Warning:", message)
-
-
-def debug(message: str) -> None:
-    """Print debug message to stderr."""
-    if _context().verbose:
-        _stderr_line("dim", "Debug:", message)
-
-
-def version_callback(value: bool) -> None:
-    """Show version and exit."""
-    if value:
-        try:
-            ver = version("pyzill")
-        except PackageNotFoundError:
-            ver = "unknown"
-        typer.echo(f"pyzill {ver}")
-        raise typer.Exit
+_SEARCH_FNS: dict[ListingKind, Callable[..., dict[str, Any]]] = {
+    ListingKind.sale: for_sale,
+    ListingKind.rent: for_rent,
+    ListingKind.sold: sold,
+}
 
 
 @contextmanager
@@ -257,7 +179,7 @@ def main(  # noqa: PLR0913, PLR0917
 
     # Typer already applies the PYZILL_PROXY / PYZILL_IMPERSONATE env vars (see
     # `envvar=` above), so there is no need to read them again by hand.
-    context = Context(
+    cli_context = Context(
         quiet=quiet,
         verbose=verbose,
         no_color=no_color or any(name in os.environ for name in ("NO_COLOR", "PYZILL_NO_COLOR")),
@@ -266,8 +188,8 @@ def main(  # noqa: PLR0913, PLR0917
         timeout=timeout,
         max_retries=max_retries,
     )
-    ctx.obj = context
-    _active_context.set(ctx.obj)
+    ctx.obj = cli_context
+    set_context(cli_context)
 
     # Validate the proxy (explicit, PYZILL_PROXY, or ZILLOW_PROXY) up front so
     # a bad URL is a clean usage error, not a traceback mid-command. The
@@ -280,59 +202,6 @@ def main(  # noqa: PLR0913, PLR0917
 
     if rate_limit is not None:
         set_min_interval(rate_limit)
-
-
-# --------------------------------------------------------------------------- #
-# Output
-# --------------------------------------------------------------------------- #
-
-
-def _emit(content: str, output: str | None) -> None:
-    """Write text to a file, or to stdout when no file is given."""
-    if content and not content.endswith("\n"):
-        content += "\n"
-
-    if output:
-        try:
-            with Path(output).open("w", encoding="utf-8", newline="") as fh:
-                fh.write(content)
-        except OSError as e:
-            error(f"Failed to write to {output}: {e}", code=1)
-        return
-
-    try:
-        typer.echo(content, nl=False)
-        sys.stdout.flush()
-    except BrokenPipeError:
-        # e.g. `pyzill ... | head`. Point stdout at devnull so Python doesn't
-        # complain again while shutting down.
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        try:
-            os.dup2(devnull, sys.stdout.fileno())
-        finally:
-            os.close(devnull)
-        raise typer.Exit(0) from None
-
-
-def write_output(
-    data: Any,
-    output_format: OutputFormat,
-    output: str | None = None,
-    columns: list[str] | None = None,
-    use_db_columns: bool = False,
-) -> None:
-    """Write output using the standalone renderer and CLI callbacks."""
-    _render_output(
-        data,
-        output_format,
-        output,
-        columns,
-        use_db_columns,
-        emit=_emit,
-        error=error,
-        warn=warn,
-        console=_context().stdout_console,
-    )
 
 
 # --------------------------------------------------------------------------- #
@@ -354,6 +223,8 @@ MaxPrice = Annotated[int | None, typer.Option("--max-price", help="Maximum price
 Tile = Annotated[bool, typer.Option("--tile", help="Recursively split capped map results")]
 MaxDepth = Annotated[int, typer.Option("--max-depth", min=0, max=8, help="Maximum recursive tile depth (default: 4)")]
 Raw = Annotated[bool, typer.Option("--raw", help="Return raw search response (not normalized)")]
+IsRoom = Annotated[bool, typer.Option("--room", help="Filter for rooms for rent")]
+IsEntirePlace = Annotated[bool, typer.Option("--entire-place", help="Filter for entire places for rent")]
 FormatOpt = Annotated[
     OutputFormat,
     typer.Option("--format", "-f", help="Output format (default: json)"),
@@ -362,11 +233,52 @@ OutputOpt = Annotated[
     str | None,
     typer.Option("--output", "-o", help="Output file (default: stdout)"),
 ]
+WhereOpt = Annotated[
+    list[str] | None,
+    typer.Option("--where", help="Filter: FIELD OP VALUE (repeatable; OP: >= <= > < == != ~)"),
+]
+SortOpt = Annotated[str | None, typer.Option("--sort", help="Sort by FIELD or FIELD:asc / FIELD:desc")]
+ColsOpt = Annotated[str | None, typer.Option("--cols", help="Comma-separated columns to output")]
+LimitOpt = Annotated[int | None, typer.Option("--limit", min=1, help="Maximum rows to output")]
 
 
-# --------------------------------------------------------------------------- #
-# Search
-# --------------------------------------------------------------------------- #
+def _search_options(  # noqa: PLR0913, PLR0917
+    query: str,
+    north: float | None,
+    south: float | None,
+    east: float | None,
+    west: float | None,
+    zoom: int | None,
+    min_beds: int | None,
+    max_beds: int | None,
+    min_bathrooms: int | None,
+    max_bathrooms: int | None,
+    min_price: int | None,
+    max_price: int | None,
+    tile: bool,
+    max_depth: int,
+    is_room: bool = False,
+    is_entire_place: bool = False,
+) -> SearchOptions:
+    """Build SearchOptions from CLI params (keyword-only to prevent field-swap bugs)."""
+    return SearchOptions(
+        query=query,
+        north=north,
+        south=south,
+        east=east,
+        west=west,
+        zoom=zoom,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        tile=tile,
+        max_depth=max_depth,
+        is_room=is_room,
+        is_entire_place=is_entire_place,
+    )
 
 
 def build_bbox(
@@ -411,6 +323,7 @@ def extract_listings(data: Any, *, wrap_single: bool = False) -> list[Any]:
                 return extract_listings(data[key])
         return [data] if wrap_single else []
     error("Input must be a JSON object or array", code=2)
+    return []  # unreachable; error() exits
 
 
 def fetch_and_normalize(
@@ -432,7 +345,7 @@ def fetch_and_normalize(
     check_range("price", options.min_price, options.max_price)
 
     bbox = build_bbox(options.north, options.south, options.east, options.west)
-    http_kwargs = _context().http_kwargs
+    http_kwargs = context().http_kwargs
     if bbox is None:
         # No explicit viewport: resolve the query text to one via Nominatim so
         # we never silently fall back to a continental-US search.
@@ -527,7 +440,7 @@ def search_sale(  # noqa: PLR0913, PLR0917
     output: OutputOpt = None,
 ) -> None:
     """Search for-sale listings."""
-    options = SearchOptions(
+    options = _search_options(
         query,
         north,
         south,
@@ -562,17 +475,14 @@ def search_rent(  # noqa: PLR0913, PLR0917
     max_price: MaxPrice = None,
     tile: Tile = False,
     max_depth: MaxDepth = 4,
-    is_room: Annotated[bool, typer.Option("--room", help="Filter for rooms for rent")] = False,
-    is_entire_place: Annotated[
-        bool,
-        typer.Option("--entire-place", help="Filter for entire places for rent"),
-    ] = False,
+    is_room: IsRoom = False,
+    is_entire_place: IsEntirePlace = False,
     raw: Raw = False,
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
 ) -> None:
     """Search for-rent listings."""
-    options = SearchOptions(
+    options = _search_options(
         query,
         north,
         south,
@@ -614,7 +524,7 @@ def search_sold(  # noqa: PLR0913, PLR0917
     output: OutputOpt = None,
 ) -> None:
     """Search sold listings."""
-    options = SearchOptions(
+    options = _search_options(
         query,
         north,
         south,
@@ -686,7 +596,7 @@ def _emit_keys(data: Any, output: str | None = None) -> None:
         error(f"--keys needs an object (got {type(data).__name__}); try --path to reach one", code=2)
     width = max((len(key) for key in data), default=0)
     lines = [f"{key.ljust(width)}  {type(value).__name__}" for key, value in data.items()]
-    _emit("\n".join(lines), output)
+    emit("\n".join(lines), output)
 
 
 def run_detail(  # noqa: PLR0913, PLR0917
@@ -703,7 +613,7 @@ def run_detail(  # noqa: PLR0913, PLR0917
     if keys and path:
         error("--keys and --path can't be used together", code=2)
 
-    http_kwargs = _context().http_kwargs
+    http_kwargs = context().http_kwargs
     debug(f"{fetch.__name__}: {value!r}")
 
     with _network_errors("Detail fetch failed"):
@@ -753,42 +663,61 @@ def detail_apartment(
 # --------------------------------------------------------------------------- #
 
 
-def _query_rows(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], list[str] | None]:
-    try:
-        return _query_rows_engine(*args, **kwargs)
-    except QueryValidationError as exc:
-        error(str(exc), code=2)
+def _as_cli_error[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
+    """Adapt a pure query engine so QueryValidationError becomes a usage error."""
+
+    @wraps(fn)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return fn(*args, **kwargs)
+        except QueryValidationError as exc:
+            error(str(exc), code=2)
+
+    return wrapper
 
 
-def _query_database(*args: Any, **kwargs: Any) -> tuple[list[dict[str, Any]], list[str] | None]:
+_query_rows = _as_cli_error(_query_rows_engine)
+_query_database = _as_cli_error(_query_database_engine)
+
+
+def _read_input(source: str) -> str:
+    """Read text from a file path, or from stdin when source is '-'."""
+    if source == "-":
+        try:
+            return typer.get_text_stream("stdin").read()
+        except (OSError, UnicodeDecodeError) as e:
+            error(f"Failed to read stdin: {e}", code=1)
+
+    path = Path(source)
+    if not path.exists():
+        error(f"Input file not found: {source}", code=2)
     try:
-        return _query_database_engine(*args, **kwargs)
-    except QueryValidationError as exc:
-        error(str(exc), code=2)
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        error(f"Failed to read {source}: {e}", code=1)
+
+
+def _read_json(source: str) -> Any:
+    """Read JSON from a file path or stdin ('-'), failing cleanly on bad input."""
+    text = _read_input(source)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        error(f"Invalid JSON input: {e}", code=1)
 
 
 @app.command("query")
 def query(  # noqa: PLR0913, PLR0917
     input_or_dash: Annotated[str, typer.Argument(help="Saved search JSON file, or '-' for stdin")],
-    where: Annotated[
-        list[str] | None,
-        typer.Option("--where", help="Filter: FIELD OP VALUE (repeatable; OP: >= <= > < == != ~)"),
-    ] = None,
-    sort: Annotated[str | None, typer.Option("--sort", help="Sort by FIELD or FIELD:asc / FIELD:desc")] = None,
-    cols: Annotated[str | None, typer.Option("--cols", help="Comma-separated columns to output")] = None,
-    limit: Annotated[int | None, typer.Option("--limit", help="Maximum rows to output")] = None,
+    where: WhereOpt = None,
+    sort: SortOpt = None,
+    cols: ColsOpt = None,
+    limit: LimitOpt = None,
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
 ) -> None:
     """Re-filter and sort saved search results without hitting Zillow."""
-    if limit is not None and limit < 1:
-        error("--limit must be at least 1", code=2)
-
-    text = _read_input(input_or_dash)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        error(f"Invalid JSON input: {e}", code=1)
+    data = _read_json(input_or_dash)
     if not isinstance(data, list):
         error("query input must be a JSON array of listings (run 'pyzill normalize' first if it isn't)", code=2)
     rows = [row for row in data if isinstance(row, dict)]
@@ -847,7 +776,7 @@ def _upsert_and_report(
     with _db_session(db_path) as conn:
         stats = upsert_listings(conn, rows, seen_utc=seen_utc, kind=kind.value)
     total = stats.added + stats.updated
-    _stderr_line(
+    stderr_line(
         "green",
         f"{verb} {total} listings:",
         f"{stats.added} new, {stats.updated} updated ({stats.price_changes} price changes), {stats.skipped} skipped",
@@ -881,29 +810,17 @@ def db_sync(  # noqa: PLR0913, PLR0917
     max_price: MaxPrice = None,
     tile: Tile = False,
     max_depth: MaxDepth = 4,
-    is_room: Annotated[bool, typer.Option("--room", help="Filter for rooms for rent")] = False,
-    is_entire_place: Annotated[
-        bool,
-        typer.Option("--entire-place", help="Filter for entire places for rent"),
-    ] = False,
+    is_room: IsRoom = False,
+    is_entire_place: IsEntirePlace = False,
     db_path: _DbPath = None,
 ) -> None:
     """Fetch listings from Zillow and upsert to local database."""
     if (is_room or is_entire_place) and kind is not ListingKind.rent:
         error("--room and --entire-place only work with 'rent' kind", code=2)
 
-    # Map kind to search function
-    search_fns: dict[ListingKind, Callable[..., dict[str, Any]]] = {
-        ListingKind.sale: for_sale,
-        ListingKind.rent: for_rent,
-        ListingKind.sold: sold,
-    }
-    search_fn = search_fns[kind]
-
-    # Fetch and normalize
     rows = fetch_and_normalize(
-        search_fn,
-        SearchOptions(
+        _SEARCH_FNS[kind],
+        _search_options(
             query,
             north,
             south,
@@ -945,20 +862,16 @@ def db_import(
     db_path: _DbPath = None,
 ) -> None:
     """Import listings from a saved JSON file (raw response or normalized array)."""
-    text = _read_input(input_or_dash)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        error(f"Invalid JSON input: {e}", code=1)
+    data = _read_json(input_or_dash)
 
     # Detect input shape: raw rows (camelCase / response keys) get normalized,
     # rows that already use normalized field names are kept as-is so a re-import
     # of `db query` output doesn't null out street/city/etc.
     rows = extract_listings(data, wrap_single=True)
-    normalized = [row if _looks_normalized(row) else normalize_listing(row) for row in rows]
-    normalized = [row for row in normalized if row is not None]
+    imported = [row if _looks_normalized(row) else normalize_listing(row) for row in rows]
+    imported = [row for row in imported if row is not None]
 
-    if not normalized:
+    if not imported:
         warn("No listings to import")
         return
 
@@ -974,26 +887,20 @@ def db_import(
     else:
         fetched_at = utc_now()
 
-    _upsert_and_report(cast(list[dict[str, Any]], normalized), db_path, "Imported", seen_utc=fetched_at, kind=kind)
+    _upsert_and_report(imported, db_path, "Imported", seen_utc=fetched_at, kind=kind)
 
 
 @db_app.command("query")
 def db_query(  # noqa: PLR0913, PLR0917
-    where: Annotated[
-        list[str] | None,
-        typer.Option("--where", help="Filter: FIELD OP VALUE (repeatable; OP: >= <= > < == != ~)"),
-    ] = None,
-    sort: Annotated[str | None, typer.Option("--sort", help="Sort by FIELD or FIELD:asc / FIELD:desc")] = None,
-    cols: Annotated[str | None, typer.Option("--cols", help="Comma-separated columns to output")] = None,
-    limit: Annotated[int | None, typer.Option("--limit", help="Maximum rows to output")] = None,
+    where: WhereOpt = None,
+    sort: SortOpt = None,
+    cols: ColsOpt = None,
+    limit: LimitOpt = None,
     db_path: _DbPath = None,
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
 ) -> None:
     """Query listings from the local database."""
-    if limit is not None and limit < 1:
-        error("--limit must be at least 1", code=2)
-
     with _db_session(db_path, must_exist=True) as conn:
         rows, selected = _query_database(conn, where=where, sort=sort, cols=cols, limit=limit)
 
@@ -1018,7 +925,7 @@ def db_history(
         return
 
     # Output as JSON array
-    _emit(dumps(history), None)
+    emit(dumps(history), None)
 
 
 @db_app.command("stats")
@@ -1041,29 +948,12 @@ def db_stats_cmd(db_path: _DbPath = None) -> None:
     if stats.newest_seen:
         lines.append(f"Newest last_seen: {stats.newest_seen}")
 
-    _context().stdout_console.print("\n".join(lines))
+    context().stdout_console.print("\n".join(lines))
 
 
 # --------------------------------------------------------------------------- #
 # Normalize
 # --------------------------------------------------------------------------- #
-
-
-def _read_input(source: str) -> str:
-    """Read text from a file path, or from stdin when source is '-'."""
-    if source == "-":
-        try:
-            return typer.get_text_stream("stdin").read()
-        except (OSError, UnicodeDecodeError) as e:
-            error(f"Failed to read stdin: {e}", code=1)
-
-    path = Path(source)
-    if not path.exists():
-        error(f"Input file not found: {source}", code=2)
-    try:
-        return path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError) as e:
-        error(f"Failed to read {source}: {e}", code=1)
 
 
 @app.command("normalize")
@@ -1076,13 +966,7 @@ def normalize(
     output: OutputOpt = None,
 ) -> None:
     """Normalize raw listing data from file or stdin."""
-    text = _read_input(input_or_dash)
-
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as e:
-        error(f"Invalid JSON input: {e}", code=1)
-
+    data = _read_json(input_or_dash)
     listings = extract_listings(data, wrap_single=True)
     write_output(normalize_listings(listings), output_format, output)
 
