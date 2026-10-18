@@ -13,6 +13,16 @@ All notable changes to this project are documented here.
   tile. The CLI exposes this as `--max-requests` on `search`/`db sync`
   (default 50), lowers the `--max-depth` ceiling from 8 to 6, and prints
   tile progress to stderr (suppressed by `--quiet`).
+- `scripts/capture_fixture.py` captures sanitized live Zillow responses
+  (sale/rent/sold search, home/apartment detail) into `tests/fixtures/` so
+  the offline suite can detect payload drift synthetic bodies cannot. It
+  requires `--confirm`, trims results to `--max-results` (default 5), and
+  redacts agent/broker/phone/email/MLS/attribution fields while keeping
+  public listing data. `tests/test_fixtures.py` validates captured fixtures
+  when present (skipping until then) and unit-tests the capture script's
+  sanitizing, trimming, and gating offline. Hypothesis is now a dev
+  dependency backing a property test that `upsert_listings` final state is
+  independent of batch application order.
 
 ### Changed
 - `upsert_listings` internals were rewritten for bulk syncs: existing-row
