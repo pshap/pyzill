@@ -4,10 +4,12 @@ Uses Typer for command-line interface and Rich for terminal output.
 """
 
 import csv
+import datetime as dt
 import io
 import json
 import os
 import re
+import sqlite3
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -26,16 +28,24 @@ from rich.text import Text
 
 from pyzill import (
     BBox,
+    connect,
+    db_stats,
+    default_db_path,
     for_rent,
     for_sale,
     get_from_apartment_id,
     get_from_apartment_url,
     get_from_home_id,
     get_from_home_url,
+    get_price_history,
+    load_listings,
+    normalize_listing,
     normalize_listings,
     resolve_proxy,
     set_min_interval,
     sold,
+    upsert_listings,
+    utc_now,
 )
 from pyzill.exceptions import ZillowBlockedError
 from pyzill.geocode import geocode
@@ -52,11 +62,13 @@ app = typer.Typer(
 
 search_app = typer.Typer(name="search", help="Search Zillow listings")
 detail_app = typer.Typer(name="detail", help="Fetch property details")
+db_app = typer.Typer(name="db", help="Local SQLite database for tracking listings")
 app.add_typer(search_app)
 app.add_typer(detail_app)
+app.add_typer(db_app)
 
 
-class OutputFormat(str, Enum):  # noqa: UP042
+class OutputFormat(str, Enum):
     """Output format options."""
 
     json = "json"
@@ -166,7 +178,7 @@ def _network_errors(failure: str) -> Iterator[None]:
 
 
 @app.callback()
-def main(  # noqa: PLR0913, PLR0917
+def main(  # noqa: PLR0913
     quiet: Annotated[
         bool,
         typer.Option("--quiet", "-q", help="Suppress progress and nonessential diagnostics"),
@@ -260,6 +272,9 @@ def main(  # noqa: PLR0913, PLR0917
 # Concise column set for --format table (normalized listings, in order).
 _TABLE_COLUMNS = ("address", "price", "beds", "baths", "area", "city", "state", "home_type", "status")
 
+# DB query adds timestamps to the concise set
+_DB_TABLE_COLUMNS = (*_TABLE_COLUMNS, "first_seen_utc", "last_seen_utc")
+
 
 def _cell(value: Any) -> str:
     """Turn any value into a display string (None -> '', nested -> JSON)."""
@@ -301,13 +316,14 @@ def _render_csv(rows: list[dict[str, Any]], columns: list[str] | None = None) ->
     return buffer.getvalue()
 
 
-def _build_table(rows: list[dict[str, Any]], columns: list[str] | None = None) -> Table:
+def _build_table(rows: list[dict[str, Any]], columns: list[str] | None = None, use_db_columns: bool = False) -> Table:
     # Normalized listings carry 21 fields (URLs, coords, ids); showing all of
     # them makes an unreadable wall at any normal terminal width. An explicit
     # --cols selection wins; otherwise display a concise subset, falling back
     # to whatever keys exist for other shapes.
     if columns is None:
-        display = [col for col in _TABLE_COLUMNS if any(col in row for row in rows)]
+        default_cols = _DB_TABLE_COLUMNS if use_db_columns else _TABLE_COLUMNS
+        display = [col for col in default_cols if any(col in row for row in rows)]
         columns = display or _columns(rows)
     table = Table(title="Listings")
     for col in columns:
@@ -350,6 +366,7 @@ def write_output(
     output_format: OutputFormat,
     output: str | None = None,
     columns: list[str] | None = None,
+    use_db_columns: bool = False,
 ) -> None:
     """Write data to stdout or file in specified format."""
     if output == "-":
@@ -372,7 +389,7 @@ def write_output(
     if output_format is OutputFormat.csv:
         _emit(_render_csv(rows, columns), output)
     elif rows:
-        table = _build_table(rows, columns)
+        table = _build_table(rows, columns, use_db_columns=use_db_columns)
         if output:
             # Render to text so --output works for tables too.
             buffer = io.StringIO()
@@ -443,8 +460,10 @@ def check_range(name: str, low: int | None, high: int | None) -> None:
 def extract_listings(data: Any, *, wrap_single: bool = False) -> list[Any]:
     """Pull the listing list out of a Zillow response (or a bare list).
 
-    With wrap_single=True, a dict that has no results key is treated as one
-    listing; otherwise it yields an empty list.
+    Digs through nested response containers (``cat1`` / ``cat2`` /
+    ``searchResults``) so a full saved search body works, not just the
+    unwrapped ``mapResults`` shape. With wrap_single=True, a dict that has no
+    results key is treated as one listing; otherwise it yields an empty list.
     """
     if isinstance(data, list):
         return data
@@ -452,11 +471,16 @@ def extract_listings(data: Any, *, wrap_single: bool = False) -> list[Any]:
         for key in ("mapResults", "listResults"):
             if key in data:
                 return data[key] or []
+        for key in ("cat1", "cat2", "searchResults"):
+            if key in data:
+                # It's a response envelope: honor its (possibly empty) contents
+                # rather than treating the envelope itself as a listing.
+                return extract_listings(data[key])
         return [data] if wrap_single else []
     error("Input must be a JSON object or array", code=2)
 
 
-def run_search(  # noqa: PLR0913
+def fetch_and_normalize(  # noqa: PLR0913
     search_fn: Callable[..., dict[str, Any]],
     *,
     query: str,
@@ -472,13 +496,13 @@ def run_search(  # noqa: PLR0913
     min_price: int | None,
     max_price: int | None,
     raw: bool,
-    output_format: OutputFormat,
-    output: str | None,
     **extra: Any,
-) -> None:
-    """Everything the sale/rent/sold commands have in common."""
-    if raw and output_format is not OutputFormat.json:
-        error("--raw only supports JSON format", code=2)
+) -> Any:
+    """Fetch from Zillow and optionally normalize listings.
+
+    Returns raw response if raw=True, else normalized list of listings.
+    Reused by run_search and db sync.
+    """
     if extra.get("is_room") and extra.get("is_entire_place"):
         error("--room and --entire-place can't be used together", code=2)
 
@@ -515,7 +539,50 @@ def run_search(  # noqa: PLR0913
             **http_kwargs,
         )
 
-    data = result if raw else normalize_listings(extract_listings(result))
+    return result if raw else normalize_listings(extract_listings(result))
+
+
+def run_search(  # noqa: PLR0913
+    search_fn: Callable[..., dict[str, Any]],
+    *,
+    query: str,
+    north: float | None,
+    south: float | None,
+    east: float | None,
+    west: float | None,
+    zoom: int | None,
+    min_beds: int | None,
+    max_beds: int | None,
+    min_bathrooms: int | None,
+    max_bathrooms: int | None,
+    min_price: int | None,
+    max_price: int | None,
+    raw: bool,
+    output_format: OutputFormat,
+    output: str | None,
+    **extra: Any,
+) -> None:
+    """Everything the sale/rent/sold commands have in common."""
+    if raw and output_format is not OutputFormat.json:
+        error("--raw only supports JSON format", code=2)
+
+    data = fetch_and_normalize(
+        search_fn,
+        query=query,
+        north=north,
+        south=south,
+        east=east,
+        west=west,
+        zoom=zoom,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        raw=raw,
+        **extra,
+    )
     write_output(data, output_format, output)
 
 
@@ -524,7 +591,7 @@ def run_search(  # noqa: PLR0913
 
 
 @search_app.command("sale")
-def search_sale(  # noqa: PLR0913, PLR0917
+def search_sale(  # noqa: PLR0913
     query: Query,
     north: North = None,
     south: South = None,
@@ -546,7 +613,7 @@ def search_sale(  # noqa: PLR0913, PLR0917
 
 
 @search_app.command("rent")
-def search_rent(  # noqa: PLR0913, PLR0917
+def search_rent(  # noqa: PLR0913
     query: Query,
     north: North = None,
     south: South = None,
@@ -573,7 +640,7 @@ def search_rent(  # noqa: PLR0913, PLR0917
 
 
 @search_app.command("sold")
-def search_sold(  # noqa: PLR0913, PLR0917
+def search_sold(  # noqa: PLR0913
     query: Query,
     north: North = None,
     south: South = None,
@@ -650,7 +717,7 @@ def _emit_keys(data: Any, output: str | None = None) -> None:
     _emit("\n".join(lines), output)
 
 
-def run_detail(  # noqa: PLR0913, PLR0917
+def run_detail(  # noqa: PLR0913
     fetch: Callable[..., Any],
     value: str | int,
     output_format: OutputFormat,
@@ -715,6 +782,9 @@ def detail_apartment(
 # Normalized listing fields, plus ppsf (computed from price/area on the fly).
 _QUERY_FIELDS = frozenset(Listing.__annotations__) | {"ppsf"}
 
+# DB query adds first_seen_utc and last_seen_utc
+_DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc"}
+
 _WHERE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(>=|<=|!=|==|=|>|<|~)\s*(.+?)\s*$")
 _SORT_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?::\s*(asc|desc))?\s*$", re.IGNORECASE)
 
@@ -732,14 +802,14 @@ def _coerce_value(text: str) -> Any:
     return int(num) if num.is_integer() else num
 
 
-def _parse_where(expr: str) -> tuple[str, str, Any]:
+def _parse_where(expr: str, valid_fields: frozenset[str] = _QUERY_FIELDS) -> tuple[str, str, Any]:
     """Parse one 'FIELD OP VALUE' expression into a condition tuple."""
     match = _WHERE_RE.match(expr)
     if not match:
         error(f"Bad --where {expr!r}. Use: FIELD OP VALUE with OP in >= <= > < == != ~", code=2)
     field, op, raw = match.groups()
-    if field not in _QUERY_FIELDS:
-        error(f"Unknown field {field!r} in --where. Fields: {', '.join(sorted(_QUERY_FIELDS))}", code=2)
+    if field not in valid_fields:
+        error(f"Unknown field {field!r} in --where. Fields: {', '.join(sorted(valid_fields))}", code=2)
     return field, op, _coerce_value(raw)
 
 
@@ -778,14 +848,16 @@ def _where_match(row: dict[str, Any], cond: tuple[str, str, Any]) -> bool:
     return _order_match(have, op, want)
 
 
-def _apply_sort(rows: list[dict[str, Any]], spec: str) -> list[dict[str, Any]]:
+def _apply_sort(
+    rows: list[dict[str, Any]], spec: str, valid_fields: frozenset[str] = _QUERY_FIELDS
+) -> list[dict[str, Any]]:
     """Sort by 'FIELD' or 'FIELD:asc|:desc'; rows missing the field go last."""
     match = _SORT_RE.match(spec)
     if not match:
         error(f"Bad --sort {spec!r}. Use FIELD or FIELD:asc / FIELD:desc", code=2)
     field, direction = match.groups()
-    if field not in _QUERY_FIELDS:
-        error(f"Unknown field {field!r} in --sort. Fields: {', '.join(sorted(_QUERY_FIELDS))}", code=2)
+    if field not in valid_fields:
+        error(f"Unknown field {field!r} in --sort. Fields: {', '.join(sorted(valid_fields))}", code=2)
     reverse = (direction or "asc").lower() == "desc"
     present = [r for r in rows if _field_value(r, field) is not None]
     missing = [r for r in rows if _field_value(r, field) is None]
@@ -793,8 +865,49 @@ def _apply_sort(rows: list[dict[str, Any]], spec: str) -> list[dict[str, Any]]:
     return present + missing
 
 
+def _query_rows(  # noqa: PLR0913
+    rows: list[dict[str, Any]],
+    *,
+    where: list[str] | None = None,
+    sort: str | None = None,
+    cols: str | None = None,
+    limit: int | None = None,
+    valid_fields: frozenset[str] = _QUERY_FIELDS,
+) -> tuple[list[dict[str, Any]], list[str] | None]:
+    """Shared row-query pipeline: filter, sort, select columns, limit.
+
+    Args:
+        rows: Input listing dicts.
+        where: List of FIELD OP VALUE expressions.
+        sort: FIELD or FIELD:asc / FIELD:desc.
+        cols: Comma-separated column names.
+        limit: Maximum rows to return.
+        valid_fields: Set of allowed field names (for validation).
+
+    Returns:
+        Tuple of (processed_rows, selected_columns).
+    """
+    conditions = [_parse_where(expr, valid_fields) for expr in (where or [])]
+    if conditions:
+        rows = [row for row in rows if all(_where_match(row, cond) for cond in conditions)]
+    if sort:
+        rows = _apply_sort(rows, sort, valid_fields)
+    if cols:
+        selected = [col.strip() for col in cols.split(",") if col.strip()]
+        unknown = [col for col in selected if col not in valid_fields]
+        if unknown:
+            error(f"Unknown column(s): {', '.join(unknown)}. Fields: {', '.join(sorted(valid_fields))}", code=2)
+        rows = [{col: _field_value(row, col) for col in selected} for row in rows]
+    else:
+        selected = None
+    if limit is not None:
+        rows = rows[:limit]
+
+    return rows, selected
+
+
 @app.command("query")
-def query(  # noqa: PLR0913, PLR0917
+def query(  # noqa: PLR0913
     input_or_dash: Annotated[str, typer.Argument(help="Saved search JSON file, or '-' for stdin")],
     where: Annotated[
         list[str] | None,
@@ -821,23 +934,247 @@ def query(  # noqa: PLR0913, PLR0917
     if data and not rows:
         error("query input contains no listing objects", code=2)
 
-    conditions = [_parse_where(expr) for expr in (where or [])]
-    if conditions:
-        rows = [row for row in rows if all(_where_match(row, cond) for cond in conditions)]
-    if sort:
-        rows = _apply_sort(rows, sort)
-    if cols:
-        selected = [col.strip() for col in cols.split(",") if col.strip()]
-        unknown = [col for col in selected if col not in _QUERY_FIELDS]
-        if unknown:
-            error(f"Unknown column(s): {', '.join(unknown)}. Fields: {', '.join(sorted(_QUERY_FIELDS))}", code=2)
-        rows = [{col: _field_value(row, col) for col in selected} for row in rows]
-    else:
-        selected = None
-    if limit is not None:
-        rows = rows[:limit]
-
+    rows, selected = _query_rows(rows, where=where, sort=sort, cols=cols, limit=limit)
     write_output(rows, output_format, output, columns=selected)
+
+
+# --------------------------------------------------------------------------- #
+# Database
+# --------------------------------------------------------------------------- #
+
+_DbPath = Annotated[
+    str | None,
+    typer.Option("--db", help="Database path (default: ./pyzill.db or PYZILL_DB env)"),
+]
+
+
+def _resolve_db_path(db_path: str | None) -> Path:
+    """Resolve database path from --db, PYZILL_DB env, or default."""
+    if db_path:
+        return Path(db_path)
+    env_path = os.environ.get("PYZILL_DB")
+    if env_path:
+        return Path(env_path)
+    return default_db_path()
+
+
+def _connect_db(db_path: str | None, *, must_exist: bool = False) -> sqlite3.Connection:
+    """Resolve the db path and open it, creating the schema if needed."""
+    path = _resolve_db_path(db_path)
+    if must_exist and not path.exists():
+        error(f"Database not found: {path}. Run 'pyzill db sync' or 'pyzill db import' first.", code=1)
+    try:
+        return connect(path)
+    except sqlite3.Error as e:
+        error(f"Failed to open database: {e}", code=1)
+
+
+def _upsert_and_report(
+    rows: list[dict[str, Any]],
+    db_path: str | None,
+    verb: str,
+    *,
+    seen_utc: str | None = None,
+) -> None:
+    """Upsert rows in one transaction and print the sync summary to stderr."""
+    conn = _connect_db(db_path)
+    try:
+        stats = upsert_listings(conn, rows, seen_utc=seen_utc)
+    except sqlite3.Error as e:
+        conn.close()
+        error(f"Database write failed: {e}", code=1)
+    conn.close()
+    total = stats.added + stats.updated
+    _stderr_line(
+        "green",
+        f"{verb} {total} listings:",
+        f"{stats.added} new, {stats.updated} updated ({stats.price_changes} price changes), {stats.skipped} skipped",
+    )
+
+
+# Keys a row may have and still count as already-normalized for `db import`:
+# the normalized listing fields, plus the database's own timestamp columns.
+_NORMALIZED_KEYS = frozenset(Listing.__annotations__) | {"first_seen_utc", "last_seen_utc"}
+
+
+def _looks_normalized(row: Any) -> bool:
+    """True when a row uses normalized field names (so normalizing would null them)."""
+    return isinstance(row, dict) and set(row) <= _NORMALIZED_KEYS
+
+
+@db_app.command("sync")
+def db_sync(  # noqa: PLR0913
+    kind: Annotated[str, typer.Argument(help="Search kind: sale, rent, or sold")],
+    query: Query,
+    north: North = None,
+    south: South = None,
+    east: East = None,
+    west: West = None,
+    zoom: Zoom = None,
+    min_beds: MinBeds = None,
+    max_beds: MaxBeds = None,
+    min_bathrooms: MinBaths = None,
+    max_bathrooms: MaxBaths = None,
+    min_price: MinPrice = None,
+    max_price: MaxPrice = None,
+    is_room: Annotated[bool, typer.Option("--room", help="Filter for rooms for rent")] = False,
+    is_entire_place: Annotated[
+        bool,
+        typer.Option("--entire-place", help="Filter for entire places for rent"),
+    ] = False,
+    db_path: _DbPath = None,
+) -> None:
+    """Fetch listings from Zillow and upsert to local database."""
+    if kind not in ("sale", "rent", "sold"):
+        error(f"Invalid kind {kind!r}. Use: sale, rent, or sold", code=2)
+    if (is_room or is_entire_place) and kind != "rent":
+        error("--room and --entire-place only work with 'rent' kind", code=2)
+
+    # Map kind to search function
+    search_fns: dict[str, Callable[..., dict[str, Any]]] = {"sale": for_sale, "rent": for_rent, "sold": sold}
+    search_fn = search_fns[kind]
+    extra: dict[str, Any] = {}
+    if kind == "rent":
+        extra["is_room"] = is_room
+        extra["is_entire_place"] = is_entire_place
+
+    # Fetch and normalize
+    rows = fetch_and_normalize(
+        search_fn,
+        query=query,
+        north=north,
+        south=south,
+        east=east,
+        west=west,
+        zoom=zoom,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        raw=False,
+        **extra,
+    )
+
+    if not rows:
+        warn("No listings found")
+        return
+
+    _upsert_and_report(rows, db_path, "Synced")
+
+
+@db_app.command("import")
+def db_import(
+    input_or_dash: Annotated[str, typer.Argument(help="JSON file path or '-' for stdin")],
+    fetched_at: Annotated[
+        str | None,
+        typer.Option("--fetched-at", help="Timestamp for this batch (default: now)"),
+    ] = None,
+    db_path: _DbPath = None,
+) -> None:
+    """Import listings from a saved JSON file (raw response or normalized array)."""
+    text = _read_input(input_or_dash)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        error(f"Invalid JSON input: {e}", code=1)
+
+    # Detect input shape: raw rows (camelCase / response keys) get normalized,
+    # rows that already use normalized field names are kept as-is so a re-import
+    # of `db query` output doesn't null out street/city/etc.
+    rows = extract_listings(data, wrap_single=True)
+    normalized = [row if _looks_normalized(row) else normalize_listing(row) for row in rows]
+    normalized = [row for row in normalized if row is not None]
+
+    if not normalized:
+        warn("No listings to import")
+        return
+
+    # Parse timestamp; store it in the canonical fixed-width UTC format.
+    if fetched_at:
+        try:
+            parsed = dt.datetime.fromisoformat(fetched_at)
+        except ValueError:
+            error(f"Invalid --fetched-at timestamp: {fetched_at}. Use ISO format like 2026-10-17T12:00:00Z", code=2)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.UTC)
+        fetched_at = parsed.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        fetched_at = utc_now()
+
+    _upsert_and_report(cast(list[dict[str, Any]], normalized), db_path, "Imported", seen_utc=fetched_at)
+
+
+@db_app.command("query")
+def db_query(  # noqa: PLR0913
+    where: Annotated[
+        list[str] | None,
+        typer.Option("--where", help="Filter: FIELD OP VALUE (repeatable; OP: >= <= > < == != ~)"),
+    ] = None,
+    sort: Annotated[str | None, typer.Option("--sort", help="Sort by FIELD or FIELD:asc / FIELD:desc")] = None,
+    cols: Annotated[str | None, typer.Option("--cols", help="Comma-separated columns to output")] = None,
+    limit: Annotated[int | None, typer.Option("--limit", help="Maximum rows to output")] = None,
+    db_path: _DbPath = None,
+    output_format: FormatOpt = OutputFormat.json,
+    output: OutputOpt = None,
+) -> None:
+    """Query listings from the local database."""
+    if limit is not None and limit < 1:
+        error("--limit must be at least 1", code=2)
+
+    conn = _connect_db(db_path, must_exist=True)
+    rows = load_listings(conn)
+    conn.close()
+
+    if not rows:
+        warn("No listings in database")
+        return
+
+    rows, selected = _query_rows(rows, where=where, sort=sort, cols=cols, limit=limit, valid_fields=_DB_QUERY_FIELDS)
+    write_output(rows, output_format, output, columns=selected, use_db_columns=True)
+
+
+@db_app.command("history")
+def db_history(
+    zpid: Annotated[int, typer.Argument(help="Zillow property ID")],
+    db_path: _DbPath = None,
+) -> None:
+    """Show price history for a single listing."""
+    conn = _connect_db(db_path, must_exist=True)
+    history = get_price_history(conn, zpid)
+    conn.close()
+
+    if not history:
+        warn(f"No price history found for zpid {zpid}")
+        return
+
+    # Output as JSON array
+    _emit(_dumps(history), None)
+
+
+@db_app.command("stats")
+def db_stats_cmd(db_path: _DbPath = None) -> None:
+    """Show database statistics."""
+    conn = _connect_db(db_path, must_exist=True)
+    stats = db_stats(conn)
+    conn.close()
+
+    # Format size as human-readable
+    size_mb = stats.db_size_bytes / (1024 * 1024)
+    size_str = f"{size_mb:.2f} MB" if size_mb >= 1 else f"{stats.db_size_bytes / 1024:.2f} KB"
+
+    lines = [
+        f"Database: {stats.db_path}",
+        f"Size: {size_str}",
+        f"Total listings: {stats.total_listings}",
+    ]
+    if stats.oldest_seen:
+        lines.append(f"Oldest first_seen: {stats.oldest_seen}")
+    if stats.newest_seen:
+        lines.append(f"Newest last_seen: {stats.newest_seen}")
+
+    _ctx.stdout_console.print("\n".join(lines))
 
 
 # --------------------------------------------------------------------------- #

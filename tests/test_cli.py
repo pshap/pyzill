@@ -488,7 +488,7 @@ class TestModuleInvocation:
         from pathlib import Path
 
         repo_root = Path(__file__).resolve().parents[1]
-        result = subprocess.run(
+        result = subprocess.run(  # noqa: S603 - trusted local interpreter
             [sys.executable, "-m", "pyzill", "--help"],
             cwd=repo_root,
             capture_output=True,
@@ -746,3 +746,363 @@ class TestDetailExploration:
         result = runner.invoke(app, ["detail", "home", "348914888", "--keys", "-o", str(out)])
         assert result.exit_code == 0
         assert "zpid" in out.read_text()
+
+
+class TestDatabaseCommands:
+    """Test db sub-app commands."""
+
+    def test_db_sync_creates_database(self, fake_http, search_success_body, tmp_path):
+        fake_http.install("PUT", json_data=search_success_body)
+        db_path = tmp_path / "test.db"
+        result = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        assert result.exit_code == 0
+        assert db_path.exists()
+        assert "Synced 2 listings: 2 new, 0 updated (0 price changes), 0 skipped" in result.stderr
+
+    def test_db_sync_empty_results_warns(self, fake_http, tmp_path):
+        fake_http.install("PUT", json_data={"cat1": {"searchResults": {"mapResults": []}}})
+        db_path = tmp_path / "test.db"
+        result = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        assert result.exit_code == 0
+        assert "No listings found" in result.stderr
+        assert not db_path.exists()
+
+    def test_db_sync_re_sync_updates_last_seen(self, fake_http, search_success_body, tmp_path):
+        fake_http.install("PUT", json_data=search_success_body)
+        db_path = tmp_path / "test.db"
+
+        # First sync
+        result1 = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        assert result1.exit_code == 0
+        assert "new" in result1.stderr
+
+        # Re-sync (same data)
+        result2 = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        assert result2.exit_code == 0
+        assert "updated" in result2.stderr
+
+    def test_db_sync_price_change_detection(self, fake_http, tmp_path):
+        # First sync with price 250000
+        body1 = {"cat1": {"searchResults": {"mapResults": [{"zpid": "123", "price": 250000, "address": "test"}]}}}
+        fake_http.install("PUT", json_data=body1)
+        db_path = tmp_path / "test.db"
+
+        result1 = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        assert result1.exit_code == 0
+
+        # Re-sync with price 260000 - use --fetched-at to ensure different timestamp
+        body2 = {"cat1": {"searchResults": {"mapResults": [{"zpid": "123", "price": 260000, "address": "test"}]}}}
+        fake_http.install("PUT", json_data=body2)
+        # Import instead of sync to control timestamp
+        rows = [{"zpid": "123", "price": 260000, "address": "test"}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        result2 = runner.invoke(
+            app, ["db", "import", str(input_file), "--fetched-at", "2026-10-02T12:00:00Z", "--db", str(db_path)]
+        )
+        assert result2.exit_code == 0
+        assert "1 price changes" in result2.stderr
+
+    def test_db_sync_invalid_kind(self, fake_http, search_success_body):
+        fake_http.install("PUT", json_data=search_success_body)
+        result = runner.invoke(app, ["db", "sync", "invalid", "12305"])
+        assert result.exit_code == 2
+        assert "Invalid kind" in result.stderr
+
+    def test_db_sync_room_with_non_rent(self, fake_http, search_success_body):
+        fake_http.install("PUT", json_data=search_success_body)
+        result = runner.invoke(app, ["db", "sync", "sale", "12305", "--room"])
+        assert result.exit_code == 2
+        assert "only work with 'rent' kind" in result.stderr
+
+    def test_db_import_raw_response(self, tmp_path):
+        body = {"cat1": {"searchResults": {"mapResults": [{"zpid": "123", "price": 250000, "address": "test"}]}}}
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(body))
+        db_path = tmp_path / "test.db"
+
+        result = runner.invoke(app, ["db", "import", str(input_file), "--db", str(db_path)])
+        assert result.exit_code == 0
+        assert "Imported 1 listings: 1 new, 0 updated (0 price changes), 0 skipped" in result.stderr
+        assert db_path.exists()
+
+        # The nested response envelope must yield its mapResults rows, not be
+        # treated as a single bogus listing.
+        query = runner.invoke(app, ["db", "query", "--db", str(db_path)])
+        assert query.exit_code == 0
+        data = json.loads(query.stdout)
+        assert len(data) == 1
+        assert data[0]["zpid"] == 123
+        assert data[0]["price"] == 250000
+
+    def test_db_import_normalizes_raw_rows(self, tmp_path):
+        body = {
+            "cat1": {
+                "searchResults": {
+                    "mapResults": [
+                        {
+                            "zpid": "32463997",
+                            "price": "$459,000",
+                            "address": "1230 State St, Schenectady, NY 12305",
+                            "detailUrl": "/homes/1230-State-St.html",
+                            "imgSrc": "https://img.example/x.jpg",
+                            "statusText": "House for sale",
+                        }
+                    ]
+                }
+            }
+        }
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(body))
+        db_path = tmp_path / "test.db"
+
+        result = runner.invoke(app, ["db", "import", str(input_file), "--db", str(db_path)])
+        assert result.exit_code == 0
+
+        query = runner.invoke(app, ["db", "query", "--db", str(db_path)])
+        assert query.exit_code == 0
+        data = json.loads(query.stdout)
+        assert len(data) == 1
+        row = data[0]
+        assert row["price"] == 459000
+        assert row["detail_url"] == "https://www.zillow.com/homes/1230-State-St.html"
+        assert row["image_url"] == "https://img.example/x.jpg"
+        assert row["status"] == "House for sale"
+
+    def test_db_import_preserves_normalized_fields(self, tmp_path):
+        # Rows exported by `db query` carry the timestamp columns; they must be
+        # imported as-is rather than re-normalized (which would null out city).
+        rows = [
+            {
+                "zpid": 123,
+                "price": 250000,
+                "address": "123 Main St",
+                "city": "Schenectady",
+                "first_seen_utc": "2026-10-01T12:00:00Z",
+                "last_seen_utc": "2026-10-01T12:00:00Z",
+            }
+        ]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "test.db"
+
+        result = runner.invoke(app, ["db", "import", str(input_file), "--db", str(db_path)])
+        assert result.exit_code == 0
+        assert "Imported 1 listings: 1 new" in result.stderr
+
+        query = runner.invoke(app, ["db", "query", "--db", str(db_path)])
+        data = json.loads(query.stdout)
+        assert data[0]["city"] == "Schenectady"
+
+    def test_db_import_same_timestamp_price_change(self, tmp_path):
+        db_path = tmp_path / "test.db"
+        first = tmp_path / "first.json"
+        second = tmp_path / "second.json"
+        first.write_text(json.dumps([{"zpid": 123, "price": 250000}]))
+        second.write_text(json.dumps([{"zpid": 123, "price": 260000}]))
+
+        # Two imports stamped at the same second must not collide on the
+        # (zpid, seen_utc) primary key of price_history.
+        for path in (first, second):
+            result = runner.invoke(
+                app,
+                ["db", "import", str(path), "--fetched-at", "2026-10-02T12:00:00Z", "--db", str(db_path)],
+            )
+            assert result.exit_code == 0
+        assert "1 price changes" in result.stderr
+
+        history = runner.invoke(app, ["db", "history", "123", "--db", str(db_path)])
+        assert history.exit_code == 0
+        data = json.loads(history.stdout)
+        assert len(data) == 1
+        assert data[0]["price"] == 260000
+
+    def test_db_import_normalized_array(self, tmp_path):
+        rows = [{"zpid": "123", "price": 250000, "address": "test", "city": "Schenectady"}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "test.db"
+
+        result = runner.invoke(app, ["db", "import", str(input_file), "--db", str(db_path)])
+        assert result.exit_code == 0
+        assert "Imported 1 listings: 1 new, 0 updated (0 price changes), 0 skipped" in result.stderr
+
+    def test_db_import_stdin(self, tmp_path):
+        rows = [{"zpid": "123", "price": 250000, "address": "test"}]
+        db_path = tmp_path / "test.db"
+
+        result = runner.invoke(app, ["db", "import", "-", "--db", str(db_path)], input=json.dumps(rows))
+        assert result.exit_code == 0
+        assert db_path.exists()
+
+    def test_db_import_custom_timestamp(self, tmp_path):
+        rows = [{"zpid": "123", "price": 250000, "address": "test"}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "test.db"
+
+        result = runner.invoke(
+            app, ["db", "import", str(input_file), "--fetched-at", "2026-10-01T12:00:00Z", "--db", str(db_path)]
+        )
+        assert result.exit_code == 0
+
+    def test_db_import_invalid_timestamp(self, tmp_path):
+        rows = [{"zpid": "123", "price": 250000, "address": "test"}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "test.db"
+
+        result = runner.invoke(app, ["db", "import", str(input_file), "--fetched-at", "invalid", "--db", str(db_path)])
+        assert result.exit_code == 2
+        assert "Invalid --fetched-at timestamp" in result.stderr
+
+    def test_db_query_missing_database(self, tmp_path):
+        db_path = tmp_path / "nonexistent.db"
+        result = runner.invoke(app, ["db", "query", "--db", str(db_path)])
+        assert result.exit_code == 1
+        assert "Database not found" in result.stderr
+
+    def test_db_query_with_timestamp_filter(self, tmp_path):
+        # Import data with specific timestamp
+        rows = [
+            {"zpid": "123", "price": 250000, "address": "test", "city": "Schenectady"},
+            {"zpid": "456", "price": 300000, "address": "test2", "city": "Albany"},
+        ]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "test.db"
+
+        runner.invoke(
+            app, ["db", "import", str(input_file), "--fetched-at", "2026-10-01T12:00:00Z", "--db", str(db_path)]
+        )
+
+        # Query with timestamp filter
+        result = runner.invoke(app, ["db", "query", "--where", "last_seen_utc>=2026-10-01", "--db", str(db_path)])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert len(data) == 2
+
+    def test_db_query_reuses_where_sort_cols_limit(self, tmp_path):
+        rows = [
+            {"zpid": "123", "price": 250000, "address": "123 Main St", "city": "Schenectady"},
+            {"zpid": "456", "price": 300000, "address": "456 Oak Ave", "city": "Albany"},
+        ]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "test.db"
+
+        runner.invoke(app, ["db", "import", str(input_file), "--db", str(db_path)])
+
+        # Test --where
+        result = runner.invoke(app, ["db", "query", "--where", "city==Schenectady", "--db", str(db_path)])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert len(data) == 1
+
+        # Test --sort
+        result = runner.invoke(app, ["db", "query", "--sort", "price:desc", "--db", str(db_path)])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert data[0]["price"] == 300000
+
+        # Test --cols
+        result = runner.invoke(app, ["db", "query", "--cols", "zpid,price", "--db", str(db_path)])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert list(data[0].keys()) == ["zpid", "price"]
+
+        # Test --limit
+        result = runner.invoke(app, ["db", "query", "--limit", "1", "--db", str(db_path)])
+        assert result.exit_code == 0
+        data = json.loads(result.stdout)
+        assert len(data) == 1
+
+    def test_db_history_missing_database(self, tmp_path):
+        db_path = tmp_path / "nonexistent.db"
+        result = runner.invoke(app, ["db", "history", "123", "--db", str(db_path)])
+        assert result.exit_code == 1
+        assert "Database not found" in result.stderr
+
+    def test_db_history_shows_price_timeline(self, tmp_path):
+        rows = [{"zpid": "123", "price": 250000, "address": "test"}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "test.db"
+
+        # Import with price 250000
+        runner.invoke(
+            app, ["db", "import", str(input_file), "--fetched-at", "2026-10-01T12:00:00Z", "--db", str(db_path)]
+        )
+
+        # Update with price 260000
+        rows[0]["price"] = 260000
+        input_file.write_text(json.dumps(rows))
+        runner.invoke(
+            app, ["db", "import", str(input_file), "--fetched-at", "2026-10-02T12:00:00Z", "--db", str(db_path)]
+        )
+
+        # Check history
+        result = runner.invoke(app, ["db", "history", "123", "--db", str(db_path)])
+        assert result.exit_code == 0
+        history = json.loads(result.stdout)
+        assert len(history) == 2
+        assert history[0]["price"] == 250000
+        assert history[1]["price"] == 260000
+
+    def test_db_history_empty_for_unknown_zpid(self, tmp_path):
+        rows = [{"zpid": "123", "price": 250000, "address": "test"}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "test.db"
+
+        runner.invoke(app, ["db", "import", str(input_file), "--db", str(db_path)])
+
+        result = runner.invoke(app, ["db", "history", "999", "--db", str(db_path)])
+        assert result.exit_code == 0
+        assert "No price history found" in result.stderr
+
+    def test_db_stats_missing_database(self, tmp_path):
+        db_path = tmp_path / "nonexistent.db"
+        result = runner.invoke(app, ["db", "stats", "--db", str(db_path)])
+        assert result.exit_code == 1
+        assert "Database not found" in result.stderr
+
+    def test_db_stats_shows_statistics(self, tmp_path):
+        rows = [
+            {"zpid": "123", "price": 250000, "address": "test"},
+            {"zpid": "456", "price": 300000, "address": "test2"},
+        ]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "test.db"
+
+        runner.invoke(
+            app, ["db", "import", str(input_file), "--fetched-at", "2026-10-01T12:00:00Z", "--db", str(db_path)]
+        )
+
+        result = runner.invoke(app, ["db", "stats", "--db", str(db_path)])
+        assert result.exit_code == 0
+        assert "Total listings: 2" in result.stdout
+        assert str(db_path) in result.stdout
+
+    def test_db_env_var_path(self, tmp_path, monkeypatch):
+        rows = [{"zpid": "123", "price": 250000, "address": "test"}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "test.db"
+
+        monkeypatch.setenv("PYZILL_DB", str(db_path))
+        result = runner.invoke(app, ["db", "import", str(input_file)])
+        assert result.exit_code == 0
+        assert db_path.exists()
+
+    def test_db_default_path(self, tmp_path, monkeypatch):
+        rows = [{"zpid": "123", "price": 250000, "address": "test"}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+
+        # Change to tmp_path so default db is created there
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["db", "import", str(input_file)])
+        assert result.exit_code == 0
+        assert (tmp_path / "pyzill.db").exists()

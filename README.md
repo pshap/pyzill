@@ -179,6 +179,64 @@ missing values always sort last.
 **Columns** — `--cols zpid,price,beds,area,ppsf` selects and orders output
 columns in table and CSV formats.
 
+### Local database
+
+pyzill includes a SQLite database for tracking listings over time with price history. The database lives at `./pyzill.db` by default (configurable via `--db` or `PYZILL_DB`).
+
+```bash
+# Sync from Zillow (fetch + upsert)
+pyzill db sync sale "Schenectady NY" --max-price 400000 --min-beds 2
+pyzill db sync rent "12305" --room
+pyzill db sync sold "Albany NY"
+
+# Import from a saved file (offline ingest)
+pyzill db import listings.json
+pyzill db import - --fetched-at 2026-10-17T12:00:00Z  # stdin with custom timestamp
+
+# Query the database (reuses --where/--sort/--cols/--limit from pyzill query)
+pyzill db query --where 'city==Schenectady' --where 'last_seen_utc>=2026-10-01' --sort price:asc
+pyzill db query --format table --cols address,price,first_seen_utc,last_seen_utc
+
+# Show price history for a single listing
+pyzill db history 32463997
+
+# Database statistics
+pyzill db stats
+```
+
+**Database path resolution** — `--db PATH` > `PYZILL_DB` env var > `./pyzill.db`. The schema is created automatically on first use (no init command needed).
+
+**Schema** — The database tracks:
+- `listings` table: all listing fields plus `first_seen_utc` (never overwritten) and `last_seen_utc` (refreshed on each sighting)
+- `price_history` table: append-only price change timeline keyed by `(zpid, seen_utc)`
+
+**Upsert semantics** (one transaction per sync/import):
+- New zpid → insert row + initial price_history row (if price known)
+- Existing zpid → overwrite listing fields, bump `last_seen_utc`, keep `first_seen_utc`
+- Price changed (old and new both known, or price newly appearing) → append price_history row
+- Rows without zpid are skipped and counted
+
+**Timestamps** are fixed-width UTC ISO strings (`%Y-%m-%dT%H:%M:%SZ`) — sortable lexicographically, so the existing `--where`/`--sort` machinery works on them unchanged.
+
+**Workflow example**:
+
+```bash
+# Initial sync
+pyzill db sync sale "Schenectady NY" --max-price 400000
+# Synced 15 listings: 15 new, 0 updated (0 price changes), 0 skipped
+
+# Re-sync later (price changes tracked)
+pyzill db sync sale "Schenectady NY" --max-price 400000
+# Synced 15 listings: 0 new, 15 updated (2 price changes), 0 skipped
+
+# Query with timestamp filter
+pyzill db query --where 'last_seen_utc>=2026-10-01' --format table
+
+# Check price history for a specific property
+pyzill db history 32463997
+# [{"price": 250000, "seen_utc": "2026-10-01T12:00:00Z"}, {"price": 260000, "seen_utc": "2026-10-15T12:00:00Z"}]
+```
+
 ### Exploring detail responses
 
 Detail responses are large nested JSON blobs. Two flags help you find your
@@ -244,6 +302,7 @@ The CLI respects these environment variables:
 - `PYZILL_PROXY` - Proxy URL (overridden by `--proxy`)
 - `PYZILL_IMPERSONATE` - TLS impersonation profile (overridden by `--impersonate`)
 - `PYZILL_RATE_LIMIT` - Request interval in seconds (overridden by `--rate-limit`)
+- `PYZILL_DB` - Database path for local tracking (overridden by `--db`)
 - `NO_COLOR` / `PYZILL_NO_COLOR` - Disable colors (same as `--no-color`)
 
 Example:

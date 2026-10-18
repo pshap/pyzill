@@ -51,6 +51,28 @@ All notable changes to this project are documented here.
 - Apartment detail functions are now named `get_from_apartment_id` and
   `get_from_apartment_url`; the former department spellings remain as
   deprecated aliases that emit `DeprecationWarning`.
+- Local SQLite database for tracking listings over time: `pyzill db
+  sync sale|rent|sold` fetches and upserts (all search filters apply,
+  geocoding included), `pyzill db import FILE|-` ingests a saved raw response
+  or a normalized array (`--fetched-at` overrides the batch timestamp),
+  `pyzill db query` reuses `--where`/`--sort`/`--cols`/`--limit`/`--format`/
+  `--output` with the added `first_seen_utc`/`last_seen_utc` fields,
+  `pyzill db history ZPID` prints one listing's price timeline, and
+  `pyzill db stats` summarizes the store. Path resolution: `--db` > `PYZILL_DB`
+  > `./pyzill.db`; the schema is created on first use. Listings carry a
+  never-overwritten `first_seen_utc`, a refreshed `last_seen_utc`, and an
+  append-only `price_history` table. Library entry points: `connect`,
+  `upsert_listings`, `load_listings`, `get_price_history`, `db_stats`,
+  `SyncStats`, `DBStats`, `utc_now`, `default_db_path`.
+
+### Fixed
+- `pyzill normalize` and `pyzill db import` now unwrap full saved search
+  bodies (`cat1.searchResults`) instead of treating the envelope as a single
+  bogus listing, detect raw `mapResults` rows and normalize them (so
+  `"$459,000"` prices and camelCase fields ingest correctly) while leaving
+  already-normalized rows untouched, and tolerate a price change landing in
+  the same second as an earlier sighting instead of violating the
+  `(zpid, seen_utc)` primary key.
 
 ### Changed
 - Centralized HTTP handling in a new internal `pyzill.http` module
