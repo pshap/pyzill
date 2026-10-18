@@ -14,6 +14,15 @@ All notable changes to this project are documented here.
   (default 50), lowers the `--max-depth` ceiling from 8 to 6, and prints
   tile progress to stderr (suppressed by `--quiet`).
 
+### Changed
+- `upsert_listings` internals were rewritten for bulk syncs: existing-row
+  state and prior prices are now read in two batched (chunked) queries
+  instead of up to three SELECTs per row, and the write path is a single
+  generated `INSERT ... ON CONFLICT(zpid) DO UPDATE` per row instead of a
+  wide hand-written UPDATE. Behavior (stats, missing-field semantics,
+  kind transitions, price history) is unchanged; all database tests pass
+  without modification.
+
 ### Changed (breaking)
 - Search functions (`for_sale`, `for_rent`, `sold`, `search`, and the
   `iter_*` helpers) no longer fall back to a continental-US viewport when

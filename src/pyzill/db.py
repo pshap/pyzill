@@ -210,6 +210,108 @@ def connect(path: Path | str) -> sqlite3.Connection:
     return conn
 
 
+_DATA_COLUMNS = (
+    "price_label",
+    "beds",
+    "baths",
+    "area",
+    "address",
+    "street",
+    "city",
+    "state",
+    "zipcode",
+    "latitude",
+    "longitude",
+    "home_type",
+    "status",
+    "status_type",
+    "detail_url",
+    "image_url",
+    "zestimate",
+    "rent_zestimate",
+)
+
+_CHUNK = 500
+
+
+def _placeholders(count: int) -> str:
+    return ", ".join("?" * count)
+
+
+def _listing_upsert_sql() -> str:
+    """Build the listings UPSERT used by upsert_listings.
+
+    A sighting updates the row only when it is at least as recent as the
+    stored one; older backfills extend first_seen_utc only. Descriptive
+    fields use COALESCE so missing values never erase known ones; a kind
+    change takes the new price outright.
+    """
+    columns = ", ".join(_LISTING_TABLE_COLUMNS)
+    placeholders = _placeholders(len(_LISTING_TABLE_COLUMNS))
+    current = "excluded.last_seen_utc >= listings.last_seen_utc"
+    assignments = [
+        f"kind = CASE WHEN {current} THEN excluded.kind ELSE listings.kind END",
+        (
+            f"price = CASE WHEN {current} THEN "
+            "CASE WHEN listings.kind != excluded.kind THEN excluded.price "
+            "ELSE COALESCE(excluded.price, listings.price) END "
+            "ELSE listings.price END"
+        ),
+    ]
+    assignments.extend(
+        f"{column} = CASE WHEN {current} THEN COALESCE(excluded.{column}, listings.{column}) ELSE listings.{column} END"
+        for column in _DATA_COLUMNS
+    )
+    assignments.append("first_seen_utc = MIN(listings.first_seen_utc, excluded.first_seen_utc)")
+    assignments.append("last_seen_utc = MAX(listings.last_seen_utc, excluded.last_seen_utc)")
+    assignment_sql = ",\n        ".join(assignments)
+    # Column names and placeholders come from fixed module constants, not user input.
+    return (
+        f"INSERT INTO listings ({columns}) VALUES ({placeholders}) ON CONFLICT(zpid) DO UPDATE SET"  # noqa: S608
+        f"\n        {assignment_sql}"
+    )
+
+
+_LISTING_UPSERT_SQL = _listing_upsert_sql()
+
+
+def _prefetch(
+    conn: sqlite3.Connection, zpids: list[int], kind: str, seen_utc: str
+) -> tuple[dict[int, tuple[Any, str]], dict[int, int | None]]:
+    """Read pre-batch listing state and prior prices for the batch zpids.
+
+    Returns zpid -> (price, kind) for listings that already exist, and
+    zpid -> previous price for this kind (an entry with the batch timestamp
+    wins over the latest strictly-earlier one; missing when none exists).
+    """
+    existing: dict[int, tuple[Any, str]] = {}
+    prior_prices: dict[int, int | None] = {}
+    for start in range(0, len(zpids), _CHUNK):
+        chunk = zpids[start : start + _CHUNK]
+        marks = _placeholders(len(chunk))
+        for zpid, price, stored_kind in conn.execute(
+            f"SELECT zpid, price, kind FROM listings WHERE zpid IN ({marks})",  # noqa: S608
+            chunk,
+        ):
+            existing[zpid] = (price, stored_kind)
+        exact: dict[int, int] = {}
+        latest_before: dict[int, tuple[str, int]] = {}
+        for zpid, price, row_seen in conn.execute(
+            f"SELECT zpid, price, seen_utc FROM price_history WHERE zpid IN ({marks}) AND kind = ? AND seen_utc <= ?",  # noqa: S608
+            (*chunk, kind, seen_utc),
+        ):
+            if row_seen == seen_utc:
+                exact[zpid] = price
+            elif zpid not in latest_before or row_seen > latest_before[zpid][0]:
+                latest_before[zpid] = (row_seen, price)
+        for zpid in chunk:
+            if zpid in exact:
+                prior_prices[zpid] = exact[zpid]
+            elif zpid in latest_before:
+                prior_prices[zpid] = latest_before[zpid][1]
+    return existing, prior_prices
+
+
 def upsert_listings(
     conn: sqlite3.Connection,
     rows: list[dict[str, Any]],
@@ -224,6 +326,9 @@ def upsert_listings(
         - ``price_history`` stores priced sightings partitioned by kind.
         - Missing fields never erase known values; a missing price keeps the last
             price for the same kind.
+
+    Existing-row state and prior prices are read in two batched queries
+    before any writes; the write itself is one UPSERT per row.
 
     Args:
         conn: Database connection.
@@ -241,170 +346,60 @@ def upsert_listings(
 
     stats = SyncStats(added=0, updated=0, price_changes=0, skipped=0)
 
+    # parse_price tolerates raw "$459,000" strings from unnormalized rows
+    # and maps 0/"$0" (Zillow's unknown sentinel) to None.
+    prepared: list[tuple[int, dict[str, Any], int | None]] = []
     for row in rows:
         zpid = row.get("zpid")
         if zpid is None:
             stats.skipped += 1
             continue
-
-        # Cast zpid to int (might be float from API)
         try:
             zpid = int(zpid)
         except (ValueError, TypeError):
             stats.skipped += 1
             continue
+        prepared.append((zpid, row, parse_price(row.get("price"))))
 
-        # Check if listing exists
-        cursor = conn.execute(
-            "SELECT price, first_seen_utc, last_seen_utc, kind FROM listings WHERE zpid = ?",
-            (zpid,),
-        )
-        existing = cursor.fetchone()
+    zpids = list(dict.fromkeys(zpid for zpid, _, _ in prepared))
+    existing, prior_prices = _prefetch(conn, zpids, kind, seen_utc)
 
-        # parse_price tolerates raw "$459,000" strings from unnormalized rows
-        # and maps 0/"$0" (Zillow's unknown sentinel) to None.
-        price_int = parse_price(row.get("price"))
-
-        if existing is None:
-            # New listing
-            stats.added += 1
-            conn.execute(
-                """
-                INSERT INTO listings (
-                    zpid, kind, price, price_label, beds, baths, area,
-                    address, street, city, state, zipcode,
-                    latitude, longitude, home_type, status, status_type,
-                    detail_url, image_url, zestimate, rent_zestimate,
-                    first_seen_utc, last_seen_utc
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    zpid,
-                    kind,
-                    price_int,
-                    row.get("price_label"),
-                    row.get("beds"),
-                    row.get("baths"),
-                    row.get("area"),
-                    row.get("address"),
-                    row.get("street"),
-                    row.get("city"),
-                    row.get("state"),
-                    row.get("zipcode"),
-                    row.get("latitude"),
-                    row.get("longitude"),
-                    row.get("home_type"),
-                    row.get("status"),
-                    row.get("status_type"),
-                    row.get("detail_url"),
-                    row.get("image_url"),
-                    row.get("zestimate"),
-                    row.get("rent_zestimate"),
-                    seen_utc,
-                    seen_utc,
-                ),
-            )
-
-        else:
-            # Existing listing
+    listing_params: list[tuple[Any, ...]] = []
+    history_params: list[tuple[int, str, int, str]] = []
+    added_in_batch: set[int] = set()
+    for zpid, row, price_int in prepared:
+        if zpid in existing:
             stats.updated += 1
-            old_price, _first_seen, last_seen, old_kind = existing
-            is_current_sighting = seen_utc >= last_seen
-            previous = conn.execute(
-                "SELECT price FROM price_history WHERE zpid = ? AND kind = ? AND seen_utc < ? "
-                "ORDER BY seen_utc DESC LIMIT 1",
-                (zpid, kind, seen_utc),
-            ).fetchone()
-            same_timestamp = conn.execute(
-                "SELECT price FROM price_history WHERE zpid = ? AND kind = ? AND seen_utc = ?",
-                (zpid, kind, seen_utc),
-            ).fetchone()
-            previous_price = same_timestamp[0] if same_timestamp is not None else (previous[0] if previous else None)
-            descriptive_values = tuple(
-                value
-                for key in (
-                    "price_label",
-                    "beds",
-                    "baths",
-                    "area",
-                    "address",
-                    "street",
-                    "city",
-                    "state",
-                    "zipcode",
-                    "latitude",
-                    "longitude",
-                    "home_type",
-                    "status",
-                    "status_type",
-                    "detail_url",
-                    "image_url",
-                    "zestimate",
-                    "rent_zestimate",
-                )
-                for value in (is_current_sighting, row.get(key))
-            )
-
-            conn.execute(
-                """
-                UPDATE listings SET
-                    kind = CASE WHEN ? THEN ? ELSE kind END,
-                    price = CASE WHEN ? THEN
-                        CASE WHEN kind != ? THEN ? ELSE COALESCE(?, price) END
-                        ELSE price END,
-                    price_label = CASE WHEN ? THEN COALESCE(?, price_label) ELSE price_label END,
-                    beds = CASE WHEN ? THEN COALESCE(?, beds) ELSE beds END,
-                    baths = CASE WHEN ? THEN COALESCE(?, baths) ELSE baths END,
-                    area = CASE WHEN ? THEN COALESCE(?, area) ELSE area END,
-                    address = CASE WHEN ? THEN COALESCE(?, address) ELSE address END,
-                    street = CASE WHEN ? THEN COALESCE(?, street) ELSE street END,
-                    city = CASE WHEN ? THEN COALESCE(?, city) ELSE city END,
-                    state = CASE WHEN ? THEN COALESCE(?, state) ELSE state END,
-                    zipcode = CASE WHEN ? THEN COALESCE(?, zipcode) ELSE zipcode END,
-                    latitude = CASE WHEN ? THEN COALESCE(?, latitude) ELSE latitude END,
-                    longitude = CASE WHEN ? THEN COALESCE(?, longitude) ELSE longitude END,
-                    home_type = CASE WHEN ? THEN COALESCE(?, home_type) ELSE home_type END,
-                    status = CASE WHEN ? THEN COALESCE(?, status) ELSE status END,
-                    status_type = CASE WHEN ? THEN COALESCE(?, status_type) ELSE status_type END,
-                    detail_url = CASE WHEN ? THEN COALESCE(?, detail_url) ELSE detail_url END,
-                    image_url = CASE WHEN ? THEN COALESCE(?, image_url) ELSE image_url END,
-                    zestimate = CASE WHEN ? THEN COALESCE(?, zestimate) ELSE zestimate END,
-                    rent_zestimate = CASE WHEN ? THEN COALESCE(?, rent_zestimate) ELSE rent_zestimate END,
-                    first_seen_utc = MIN(first_seen_utc, ?),
-                    last_seen_utc = MAX(last_seen_utc, ?)
-                WHERE zpid = ?
-                """,
-                (
-                    is_current_sighting,
-                    kind,
-                    is_current_sighting,
-                    kind,
-                    price_int,
-                    price_int,
-                    *descriptive_values,
-                    seen_utc,
-                    seen_utc,
-                    zpid,
-                ),
-            )
-
+            old_price, old_kind = existing[zpid]
+            prior_price = prior_prices.get(zpid)
             if (
                 price_int is not None
                 and old_kind == kind
                 and (
-                    (previous_price is not None and previous_price != price_int)
-                    or (previous_price is None and old_price is None)
+                    (prior_price is not None and prior_price != price_int)
+                    or (prior_price is None and old_price is None)
                 )
             ):
                 stats.price_changes += 1
+        elif zpid in added_in_batch:
+            stats.updated += 1
+        else:
+            stats.added += 1
+            added_in_batch.add(zpid)
 
+        listing_params.append(
+            (zpid, kind, price_int, *(row.get(column) for column in _DATA_COLUMNS), seen_utc, seen_utc)
+        )
         if price_int is not None:
-            conn.execute(
-                "INSERT INTO price_history (zpid, kind, price, seen_utc) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(zpid, kind, seen_utc) DO UPDATE SET price = excluded.price",
-                (zpid, kind, price_int, seen_utc),
-            )
+            history_params.append((zpid, kind, price_int, seen_utc))
 
+    conn.executemany(_LISTING_UPSERT_SQL, listing_params)
+    if history_params:
+        conn.executemany(
+            "INSERT INTO price_history (zpid, kind, price, seen_utc) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(zpid, kind, seen_utc) DO UPDATE SET price = excluded.price",
+            history_params,
+        )
     conn.commit()
     return stats
 
