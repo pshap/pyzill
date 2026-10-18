@@ -1,9 +1,13 @@
 """Tests for pyzill.db module."""
 
+import datetime as dt
 import itertools
 import sqlite3
 from pathlib import Path
 from typing import Any
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from pyzill.db import (
     connect,
@@ -637,3 +641,95 @@ def test_db_stats_memory_database_has_no_file_size():
     assert db_stats(conn).db_size_bytes == 0
 
     conn.close()
+
+
+_ZPID = 424242
+
+
+def _complete_sighting(ts: str, price: int) -> dict[str, Any]:
+    """A sighting with every data column filled and a non-None price.
+
+    Completeness matters: sparse sightings make final state order-dependent
+    by design (the newest batch COALESCEs over older ones, and an older
+    backfill cannot refill a field the newest sighting omitted). The
+    permutation property only holds for fully-specified sightings, which is
+    what real sync batches provide after normalization.
+    """
+    return {
+        "zpid": _ZPID,
+        "price": price,
+        "price_label": f"${price}",
+        "beds": 3,
+        "baths": 2.0,
+        "area": 1500,
+        "address": f"{price} Test St",
+        "street": f"{price} Test St",
+        "city": "Testville",
+        "state": "TS",
+        "zipcode": "00000",
+        "latitude": 40.0,
+        "longitude": -75.0,
+        "home_type": "SINGLE_FAMILY",
+        "status": "FOR_SALE",
+        "status_type": "FOR_SALE",
+        "detail_url": f"https://www.zillow.com/homedetails/{_ZPID}/",
+        "image_url": "https://photos.example/x.jpg",
+        "zestimate": price,
+        "rent_zestimate": price // 2,
+    }
+
+
+@st.composite
+def _sightings(draw: st.DrawFn) -> list[tuple[str, int]]:
+    """A random set of (fixed-width UTC timestamp, price) sightings, timestamps distinct."""
+    count = draw(st.integers(min_value=1, max_value=5))
+    prices = draw(st.lists(st.integers(min_value=1, max_value=10_000_000), min_size=count, max_size=count))
+    offsets = draw(st.lists(st.integers(min_value=0, max_value=86_400), min_size=count, max_size=count, unique=True))
+    base = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    return [
+        ((base + dt.timedelta(seconds=offset)).strftime("%Y-%m-%dT%H:%M:%SZ"), price)
+        for offset, price in zip(offsets, prices, strict=True)
+    ]
+
+
+def _apply_batches(batches: list[tuple[str, int]]) -> tuple[Any, list[dict[str, Any]]]:
+    """Upsert each (ts, price) sighting as its own batch; return final listing + history."""
+    conn = connect(":memory:")
+    try:
+        for ts, price in batches:
+            upsert_listings(conn, [_complete_sighting(ts, price)], seen_utc=ts)
+        listing = conn.execute(
+            "SELECT price, city, first_seen_utc, last_seen_utc FROM listings WHERE zpid = ?",
+            (_ZPID,),
+        ).fetchone()
+        history = get_price_history(conn, _ZPID)
+    finally:
+        conn.close()
+    assert listing is not None
+    return listing, history
+
+
+@settings(max_examples=50, deadline=None)
+@given(sightings=_sightings())
+def test_upsert_permutation_invariance(sightings: list[tuple[str, int]]) -> None:
+    """Applying complete sightings in any batch order converges to the same state.
+
+    The listings row must end at the newest sighting (price/city from the max
+    timestamp, first_seen at the min, last_seen at the max), and price_history
+    must hold exactly one row per sighting — for every permutation of batch
+    order. Stats are not asserted: price_changes is a documented per-batch
+    heuristic and is legitimately order-sensitive.
+    """
+    baseline = _apply_batches(sorted(sightings))
+    newest_ts, newest_price = max(sightings)
+    oldest_ts = min(ts for ts, _ in sightings)
+
+    listing, history = baseline
+    assert listing[0] == newest_price
+    assert listing[2] == oldest_ts
+    assert listing[3] == newest_ts
+    assert [row["price"] for row in history] == [price for _, price in sorted(sightings)]
+    assert [row["seen_utc"] for row in history] == [ts for ts, _ in sorted(sightings)]
+
+    for order in itertools.permutations(sightings):
+        assert _apply_batches(list(order)) == baseline
