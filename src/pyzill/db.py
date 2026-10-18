@@ -36,10 +36,38 @@ def utc_now() -> str:
 
 
 _SCHEMA_VERSION = 2
-_SCHEMA_V2 = (
-    """CREATE TABLE IF NOT EXISTS listings (
+
+# Canonical listings columns, in schema order. Shared by the schema DDL, the
+# v1->v2 migration, and upsert_listings so the three can never drift apart.
+_LISTING_TABLE_COLUMNS = (
+    "zpid",
+    "kind",
+    "price",
+    "price_label",
+    "beds",
+    "baths",
+    "area",
+    "address",
+    "street",
+    "city",
+    "state",
+    "zipcode",
+    "latitude",
+    "longitude",
+    "home_type",
+    "status",
+    "status_type",
+    "detail_url",
+    "image_url",
+    "zestimate",
+    "rent_zestimate",
+    "first_seen_utc",
+    "last_seen_utc",
+)
+
+_CREATE_LISTINGS_SQL = """CREATE TABLE IF NOT EXISTS {name} (
   zpid INTEGER PRIMARY KEY,
-    kind TEXT NOT NULL DEFAULT 'sale',
+  kind TEXT NOT NULL DEFAULT 'sale',
   price INTEGER,
   price_label TEXT,
   beds REAL,
@@ -61,36 +89,59 @@ _SCHEMA_V2 = (
   rent_zestimate INTEGER,
   first_seen_utc TEXT NOT NULL,
   last_seen_utc TEXT NOT NULL
-);""",
-    """CREATE TABLE IF NOT EXISTS price_history (
+);"""
+
+_CREATE_PRICE_HISTORY_SQL = """CREATE TABLE IF NOT EXISTS {name} (
   zpid INTEGER NOT NULL REFERENCES listings(zpid) ON DELETE CASCADE,
   kind TEXT NOT NULL DEFAULT 'sale',
   price INTEGER NOT NULL,
   seen_utc TEXT NOT NULL,
   PRIMARY KEY (zpid, kind, seen_utc)
-);""",
-    "CREATE INDEX IF NOT EXISTS ix_listings_last_seen ON listings(last_seen_utc)",
-)
+);"""
+
+_CREATE_INDEX_SQL = "CREATE INDEX IF NOT EXISTS ix_listings_last_seen ON listings(last_seen_utc)"
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
-    conn.execute("ALTER TABLE listings ADD COLUMN kind TEXT NOT NULL DEFAULT 'sale'")
+    """Rebuild listings so ``kind`` sits second, matching a fresh v2 schema.
+
+    The naive ``ALTER TABLE listings ADD COLUMN kind`` would append it after
+    ``last_seen_utc``, leaving migrated and fresh databases with different
+    column orders. Rebuilding the parent listings table with foreign_keys=ON
+    would cascade-delete price_history rows, and ``ALTER TABLE ... RENAME``
+    would repoint child foreign keys at the renamed-away table, so the price
+    history is staged in a plain (FK-free) table across the rebuild.
+    """
+    old_columns = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
+    carried = [col for col in _LISTING_TABLE_COLUMNS if col != "kind" and col in old_columns]
+
     conn.execute(
-        """CREATE TABLE price_history_v2 (
-            zpid INTEGER NOT NULL REFERENCES listings(zpid) ON DELETE CASCADE,
-            kind TEXT NOT NULL DEFAULT 'sale',
+        """CREATE TABLE price_history_staging (
+            zpid INTEGER NOT NULL,
             price INTEGER NOT NULL,
-            seen_utc TEXT NOT NULL,
-            PRIMARY KEY (zpid, kind, seen_utc)
+            seen_utc TEXT NOT NULL
         )"""
     )
     conn.execute(
-        "INSERT INTO price_history_v2 (zpid, kind, price, seen_utc) "
-        "SELECT zpid, 'sale', price, seen_utc FROM price_history"
+        "INSERT INTO price_history_staging (zpid, price, seen_utc) SELECT zpid, price, seen_utc FROM price_history"
     )
     conn.execute("DROP TABLE price_history")
-    conn.execute("ALTER TABLE price_history_v2 RENAME TO price_history")
-    conn.execute("CREATE INDEX IF NOT EXISTS ix_listings_last_seen ON listings(last_seen_utc)")
+
+    conn.execute(_CREATE_LISTINGS_SQL.format(name="listings_v2"))
+    columns_sql = ", ".join(carried)
+    # columns_sql is built from the fixed _LISTING_TABLE_COLUMNS constant, not user input.
+    conn.execute(f"INSERT INTO listings_v2 ({columns_sql}) SELECT {columns_sql} FROM listings")  # noqa: S608
+    conn.execute("ALTER TABLE listings RENAME TO listings_v1")
+    conn.execute("ALTER TABLE listings_v2 RENAME TO listings")
+    conn.execute("DROP TABLE listings_v1")
+
+    conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
+    conn.execute(
+        "INSERT INTO price_history (zpid, kind, price, seen_utc) "
+        "SELECT zpid, 'sale', price, seen_utc FROM price_history_staging"
+    )
+    conn.execute("DROP TABLE price_history_staging")
+    conn.execute(_CREATE_INDEX_SQL)
 
 
 _MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2}
@@ -130,8 +181,9 @@ def connect(path: Path | str) -> sqlite3.Connection:
     try:
         conn.execute("BEGIN IMMEDIATE")
         if version == 0:
-            for statement in _SCHEMA_V2:
-                conn.execute(statement)
+            conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
+            conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
+            conn.execute(_CREATE_INDEX_SQL)
             version = _SCHEMA_VERSION
         while version < _SCHEMA_VERSION:
             migration = _MIGRATIONS.get(version)

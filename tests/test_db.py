@@ -482,6 +482,69 @@ def test_v1_database_migrates_kind_columns_and_history(tmp_path: Path):
     assert conn.execute("SELECT kind FROM price_history WHERE zpid = 1").fetchone()[0] == "sale"
     assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
     assert conn.execute("PRAGMA busy_timeout").fetchone()[0] > 0
+
+    # A migrated database must have the same listings column order as a
+    # freshly created one (kind second, not appended after last_seen_utc).
+    migrated_cols = [row[1] for row in conn.execute("PRAGMA table_info(listings)")]
+    fresh = connect(tmp_path / "fresh.db")
+    fresh_cols = [row[1] for row in fresh.execute("PRAGMA table_info(listings)")]
+    assert migrated_cols == fresh_cols
+    assert migrated_cols.index("kind") == 1
+
+    # Price history rows survive the listings rebuild (no cascade delete).
+    assert conn.execute("SELECT COUNT(*) FROM price_history").fetchone()[0] == 1
+
+    conn.close()
+    fresh.close()
+
+
+def test_v1_migration_carries_wide_columns_across_rebuild(tmp_path: Path):
+    db_path = tmp_path / "wide_v1.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(
+        """
+        CREATE TABLE listings (
+            zpid INTEGER PRIMARY KEY,
+            price INTEGER,
+            address TEXT,
+            city TEXT,
+            latitude REAL,
+            longitude REAL,
+            first_seen_utc TEXT NOT NULL,
+            last_seen_utc TEXT NOT NULL
+        );
+        CREATE TABLE price_history (
+            zpid INTEGER NOT NULL REFERENCES listings(zpid) ON DELETE CASCADE,
+            price INTEGER NOT NULL,
+            seen_utc TEXT NOT NULL,
+            PRIMARY KEY (zpid, seen_utc)
+        );
+        INSERT INTO listings VALUES (7, 450000, '1 Main St', 'Schenectady', 42.8, -73.9,
+            '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z');
+        INSERT INTO price_history VALUES (7, 450000, '2026-01-01T00:00:00Z');
+        PRAGMA user_version = 1;
+        """
+    )
+    legacy.close()
+
+    conn = connect(db_path)
+
+    row = conn.execute(
+        "SELECT zpid, kind, price, address, city, latitude, longitude, "
+        "first_seen_utc, last_seen_utc FROM listings WHERE zpid = 7"
+    ).fetchone()
+    assert row == (
+        7,
+        "sale",
+        450000,
+        "1 Main St",
+        "Schenectady",
+        42.8,
+        -73.9,
+        "2026-01-01T00:00:00Z",
+        "2026-01-02T00:00:00Z",
+    )
+    assert conn.execute("SELECT COUNT(*) FROM price_history").fetchone()[0] == 1
     conn.close()
 
 

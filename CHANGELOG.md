@@ -48,6 +48,14 @@ All notable changes to this project are documented here.
   environment settings take precedence over `ZILLOW_*` fallbacks; proxy parsing
   validates scheme/port and brackets IPv6. Detail functions accept
   `RequestOptions`, and `db sync`/`db import --kind` use validated kind enums.
+- The v1-to-v2 database migration no longer appends `kind` after
+  `last_seen_utc` via `ALTER TABLE ADD COLUMN`; it rebuilds the listings
+  table so a migrated database has the same column order as a fresh one
+  (`kind` second). The rebuild stages `price_history` in a temporary
+  FK-free table first, so history rows are neither cascade-deleted nor
+  repointed by the parent-table rename. Schema DDL is now shared between
+  the fresh-create and migration paths (`_CREATE_LISTINGS_SQL` etc.) so
+  they cannot drift.
 
 ### Unverified (live Zillow validation required)
 - TODO: Confirm Zillow's default rent filter payload semantics and whether
