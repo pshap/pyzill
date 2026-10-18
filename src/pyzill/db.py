@@ -149,7 +149,16 @@ _MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2}
 
 @dataclass
 class SyncStats:
-    """Statistics from a sync/import operation."""
+    """Statistics from a sync/import operation.
+
+    ``price_changes`` is a per-batch heuristic, not a durable metric: each
+    priced sighting of an existing same-kind listing is compared against the
+    recorded state, so it counts a price that differs from the most recent
+    prior recorded price. New zpids and kind changes never count; the
+    first-ever price on an existing listing counts. It is useful for
+    "what changed in this sync" reporting, not for long-term tracking —
+    use ``price_history`` for that.
+    """
 
     added: int
     updated: int
@@ -223,6 +232,7 @@ def upsert_listings(
 
     Returns:
         SyncStats with counts of added/updated/price_changes/skipped.
+        ``price_changes`` is a per-batch heuristic — see :class:`SyncStats`.
     """
     if seen_utc is None:
         seen_utc = utc_now()

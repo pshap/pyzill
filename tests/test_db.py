@@ -200,6 +200,34 @@ def test_upsert_price_newly_appearing(tmp_path: Path):
     conn.close()
 
 
+def test_price_change_counting_rules(tmp_path: Path):
+    """Pin the documented SyncStats.price_changes semantics."""
+    conn = connect(tmp_path / "rules.db")
+
+    # New zpid never counts.
+    stats = upsert_listings(conn, [{"zpid": 1, "price": 300000}], seen_utc="2026-10-01T00:00:00Z")
+    assert stats.price_changes == 0
+
+    # Same price, same kind: no change.
+    stats = upsert_listings(conn, [{"zpid": 1, "price": 300000}], seen_utc="2026-10-02T00:00:00Z")
+    assert stats.price_changes == 0
+
+    # Different price, same kind: change.
+    stats = upsert_listings(conn, [{"zpid": 1, "price": 310000}], seen_utc="2026-10-03T00:00:00Z")
+    assert stats.price_changes == 1
+
+    # Kind change never counts, even with a different price.
+    stats = upsert_listings(conn, [{"zpid": 1, "price": 2200}], kind="rent", seen_utc="2026-10-04T00:00:00Z")
+    assert stats.price_changes == 0
+
+    # First-ever price on an existing listing counts.
+    upsert_listings(conn, [{"zpid": 2}], seen_utc="2026-10-01T00:00:00Z")  # no price
+    stats = upsert_listings(conn, [{"zpid": 2, "price": 500000}], seen_utc="2026-10-05T00:00:00Z")
+    assert stats.price_changes == 1
+
+    conn.close()
+
+
 def test_upsert_skip_no_zpid(tmp_path: Path):
     """Test upsert_listings skips rows without zpid."""
     db_path = tmp_path / "test.db"
