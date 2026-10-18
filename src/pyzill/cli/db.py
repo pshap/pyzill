@@ -17,6 +17,7 @@ from pyzill import (
     for_rent,
     for_sale,
     get_price_history,
+    is_building_result,
     normalize_listing,
     sold,
     upsert_listings,
@@ -219,7 +220,7 @@ def db_import(
     # of `db query` output doesn't null out street/city/etc.
     rows = extract_listings(data, wrap_single=True)
     imported = [row if _looks_normalized(row) else normalize_listing(row) for row in rows]
-    imported = [row for row in imported if row is not None]
+    imported = [row for row in imported if row is not None and not is_building_result(row)]
 
     if not imported:
         warn("No listings to import")

@@ -1,11 +1,11 @@
 import warnings
 from collections.abc import Callable, Iterator, Mapping
-from itertools import islice
 from typing import Any, TypedDict, Unpack, cast
 
 from pyzill import http
 from pyzill.bbox import CONTINENTAL_US, BBox
 from pyzill.exceptions import ZillowBlockedError
+from pyzill.normalize import is_building_result
 
 _SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
 _RESULT_CAP = 500
@@ -318,8 +318,12 @@ def _iter_search(
     kwargs: dict[str, Any],
 ) -> Iterator[Mapping[str, Any]]:
     map_results = search_fn(**kwargs).get("mapResults", [])
-    for listing in islice(map_results, max_items):
-        if isinstance(listing, Mapping):
+    yielded = 0
+    for listing in map_results:
+        if max_items is not None and yielded >= max_items:
+            break
+        if isinstance(listing, Mapping) and not is_building_result(listing):
+            yielded += 1
             yield listing
 
 

@@ -7,6 +7,7 @@ into a flat dict of predictable, numeric-or-``None`` values.
 """
 
 import re
+from collections.abc import Mapping
 from typing import Any, TypedDict, overload
 
 from pyzill.http import ZILLOW_HOME
@@ -133,6 +134,33 @@ def _integer_zpid(value: Any) -> int | None:
     return number
 
 
+def is_building_result(listing: Any) -> bool:
+    """Return True for a building-only map/list result that has no ``zpid``.
+
+    Zillow's search ``mapResults`` and ``listResults`` mix real listings with
+    building-level cards (``isBuilding: True``, a ``buildingId``, ``unitCount``
+    and a "starting at" ``price``, and no ``zpid`` at the top level or under
+    ``hdpData.homeInfo``). Live captures show rental and even sale/sold results
+    can be *entirely* building cards in some areas, so callers that want real
+    listings must drop these. A card that is flagged ``isBuilding`` but does
+    carry a ``zpid`` is treated as a real listing and kept.
+
+    Args:
+        listing: A single raw entry from ``mapResults`` / ``listResults``.
+
+    Returns:
+        bool: True if the entry is a building card with no usable ``zpid``.
+    """
+    if not isinstance(listing, Mapping):
+        return False
+    if not listing.get("isBuilding"):
+        return False
+    if _integer_zpid(listing.get("zpid")) is not None:
+        return False
+    info = get_nested_value(listing, "hdpData.homeInfo", {})
+    return not (isinstance(info, dict) and _integer_zpid(info.get("zpid")) is not None)
+
+
 @overload
 def normalize_listing(listing: dict[str, Any]) -> Listing: ...
 
@@ -198,7 +226,10 @@ def normalize_listing(listing: Any) -> Listing | None:
 
 
 def normalize_listings(listings: Any) -> list[Listing]:
-    """Normalize an iterable of raw listings, skipping non-dict entries.
+    """Normalize an iterable of raw listings, skipping unusable entries.
+
+    Non-dict entries and building-only cards (see :func:`is_building_result`)
+    are dropped, so the result contains one :class:`Listing` per real listing.
 
     Args:
         listings: Iterable of raw listing dicts.
@@ -206,4 +237,8 @@ def normalize_listings(listings: Any) -> list[Listing]:
     Returns:
         list[Listing]: Normalized listings.
     """
-    return [normalized for item in (listings or []) if (normalized := normalize_listing(item)) is not None]
+    return [
+        normalized
+        for item in (listings or [])
+        if not is_building_result(item) and (normalized := normalize_listing(item)) is not None
+    ]

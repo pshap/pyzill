@@ -6,7 +6,14 @@ from typing import Any, cast
 
 import typer
 
-from pyzill import for_rent, for_sale, normalize_listings, sold
+from pyzill import (
+    for_rent,
+    for_sale,
+    is_building_result,
+    normalize_listing,
+    normalize_listings,
+    sold,
+)
 from pyzill.bbox import BBox
 from pyzill.cli.console import (
     context,
@@ -114,6 +121,24 @@ def _cli_check_range(name: str, low: int | None, high: int | None) -> None:
         error(str(exc), code=2)
 
 
+def _usable_row_count(rows: list[Any]) -> int:
+    """Count rows that normalize to a real listing with an integer zpid.
+
+    ``isBuilding`` cards are the common case, but Zillow sometimes stamps a
+    building card with a non-numeric ``zpid`` (a ``buildingId`` like
+    ``"47.61503--122.34274"``), so the check is on the normalized zpid
+    rather than the flag alone.
+    """
+    count = 0
+    for row in rows:
+        if not isinstance(row, dict) or is_building_result(row):
+            continue
+        normalized = normalize_listing(row)
+        if normalized is not None and isinstance(normalized["zpid"], int):
+            count += 1
+    return count
+
+
 def extract_listings(data: Any, *, wrap_single: bool = False) -> list[Any]:
     """Pull the listing list out of a Zillow response (or a bare list).
 
@@ -121,13 +146,19 @@ def extract_listings(data: Any, *, wrap_single: bool = False) -> list[Any]:
     ``searchResults``) so a full saved search body works, not just the
     unwrapped ``mapResults`` shape. With wrap_single=True, a dict that has no
     results key is treated as one listing; otherwise it yields an empty list.
+
+    When both ``mapResults`` and ``listResults`` are present, the list with
+    real listings wins. Zillow's ``mapResults`` often contain only
+    building-level cards (``isBuilding``, no zpid), while ``listResults``
+    hold the individual units, so returning the first key blindly would drop
+    every usable row in those areas.
     """
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
-        for key in ("mapResults", "listResults"):
-            if key in data:
-                return data[key] or []
+        candidates = [data[key] or [] for key in ("mapResults", "listResults") if key in data]
+        if candidates:
+            return max(candidates, key=_usable_row_count)
         for key in ("cat1", "cat2", "searchResults"):
             if key in data:
                 # It's a response envelope: honor its (possibly empty) contents

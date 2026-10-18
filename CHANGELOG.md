@@ -85,20 +85,30 @@ All notable changes to this project are documented here.
   they cannot drift.
 
 ### Unverified (live Zillow validation required)
-- TODO: Confirm Zillow's default rent filter payload semantics. Captured
-  Seattle samples (2026-10-18, `tests/fixtures/search_rent.json`) show
-  rental `mapResults` can be entirely building-only entries
-  (`isBuilding: true`, a `buildingId`, no zpid at any depth) even in
-  residential areas; building-detail responses expose a `floorPlans` list
-  with unit metadata, which is the concrete expansion path, but whether
-  and how `for_rent` should expand units remains open.
+- TODO: Decide whether `for_rent` should expand building cards into units.
+  Building-only search results are now understood and handled rather than
+  guessed at: a card is a building when `isBuilding` is true *and* it has no
+  integer `zpid` at the top level or under `hdpData.homeInfo`. Zillow
+  sometimes stamps a `buildingId` (a lat-lng string such as
+  `"47.61503--122.34274"`) into the `zpid` field, which does not parse to an
+  integer, so the check is on the normalized zpid and not the flag alone.
+  Building cards are dropped from `normalize_listings` and the raw
+  `iter_sale`/`iter_rent`/`iter_sold` iterators, and `extract_listings`
+  prefers whichever of `mapResults`/`listResults` holds real listings --
+  `listResults` carries the individual units. Captures on 2026-10-18 against
+  a dense downtown-Seattle bbox returned *only* building cards for both sale
+  and rent, while a Schenectady NY bbox returned real listings (5/5 for
+  sale/sold, 1/5 for rent), so the effect is area-dependent. The remaining
+  open question is whether `for_rent` should fetch the building-detail
+  `floorPlans` list (unit beds/baths/description) to synthesize unit rows;
+  that is an added request per building and is deliberately not done.
 - TODO: Compare Nominatim ZIP viewports with known ZCTA boundaries. Synthetic
   point-like viewports now trigger a CLI warning, but are not treated as ZIP
   boundaries.
 - Live sale/rent/sold search and home/apartment-detail responses were
   captured and sanitized locally on 2026-10-18 via
-  `scripts/capture_fixture.py` (Seattle samples; mixed building and
-  individual-listing mapResults). Captured fixtures contain real listing
+  `scripts/capture_fixture.py` (Schenectady NY samples; mixed building and
+  individual-listing results). Captured fixtures contain real listing
   data and are intentionally not committed (`tests/fixtures/*.json` is
   gitignored); run the capture script on demand to regenerate them, and
   the fixture tests skip until then.

@@ -126,19 +126,20 @@ def _load_fixture(name: str) -> Any | None:
 
 @pytest.mark.parametrize("name", ["search_sale.json", "search_rent.json", "search_sold.json"])
 def test_search_fixture_extracts_and_normalizes(name: str) -> None:
-    """A captured search fixture must produce normalized listing rows.
+    """A captured search fixture must yield only usable normalized listings.
 
-    Real mapResults mix individual listings with building-only entries
-    (``isBuilding``, no zpid at any depth); normalization keeps both, with
-    ``zpid=None`` for buildings. Assert the documented int-or-None zpid
-    shape and that rows carry parseable content -- not that every row is a
-    home, since rental mapResults can be entirely building entries.
+    Real ``mapResults``/``listResults`` mix individual listings with
+    building-level cards (``isBuilding``, a non-numeric ``zpid`` that is a
+    ``buildingId`` like ``"47.61503--122.34274"``).     Building cards are
+    dropped, so every surviving row has an integer zpid. A dense capture can
+    legitimately be all-building (a downtown-Seattle bbox was, for both sale
+    and rent); that is the documented reality rather than a failure, so only
+    the row shape is asserted.
     """
     payload = _load_fixture(name)
     listings = normalize_listings(extract_listings(payload))
-    assert listings, f"{name} produced no rows"
-    assert all(listing["zpid"] is None or isinstance(listing["zpid"], int) for listing in listings)
-    assert any(listing["address"] or listing["price"] is not None for listing in listings)
+    assert all(isinstance(listing["zpid"], int) for listing in listings)
+    assert all(listing["address"] or listing["price"] is not None for listing in listings)
 
 
 @pytest.mark.parametrize("name", ["detail_home.json", "detail_apartment.json"])

@@ -2,12 +2,14 @@
 
 import json
 import sys
+from typing import Any, ClassVar
 
 import pytest
 from typer.testing import CliRunner
 
 from pyzill.bbox import BBox
 from pyzill.cli import app
+from pyzill.cli.search import extract_listings
 from pyzill.geocode import GeoResult
 
 runner = CliRunner()
@@ -211,6 +213,35 @@ class TestSearchCommands:
         result = runner.invoke(app, ["search", "sale", "12305", "--raw", "--format", "csv"])
         assert result.exit_code == 2
         assert "--raw only supports JSON" in result.stderr
+
+
+class TestExtractListings:
+    """extract_listings must prefer the result list holding real listings."""
+
+    building: ClassVar[dict[str, Any]] = {
+        "isBuilding": True,
+        "zpid": "47.61503--122.34274",
+        "address": "2208 4th Ave",
+    }
+    unit: ClassVar[dict[str, Any]] = {"zpid": "12345", "address": "1 Main St", "price": "$2,000"}
+
+    def test_prefers_list_results_when_map_results_are_building_cards(self):
+        body = {"mapResults": [self.building, self.building], "listResults": [self.unit]}
+        assert extract_listings(body) == [self.unit]
+
+    def test_prefers_map_results_when_both_have_real_listings(self):
+        # max() is stable, so a tie keeps mapResults (the historical first key).
+        body = {"mapResults": [self.unit], "listResults": [self.unit]}
+        assert extract_listings(body) == [self.unit]
+
+    def test_falls_back_to_map_results_when_list_results_are_empty(self):
+        body = {"mapResults": [self.unit], "listResults": []}
+        assert extract_listings(body) == [self.unit]
+
+    def test_counts_building_id_zpid_cards_as_unusable(self):
+        # A building card stamped with a non-numeric zpid still has no usable zpid.
+        body = {"mapResults": [self.building], "listResults": [self.building]}
+        assert extract_listings(body) == [self.building]
 
 
 class TestDetailCommands:

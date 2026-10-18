@@ -160,3 +160,41 @@ def test_normalize_listings_empty():
 
 def test_normalize_listing_skips_non_dict():
     assert normalize.normalize_listing(["not a dict"]) is None
+
+
+def test_is_building_result_true_for_building_card_with_no_zpid():
+    assert normalize.is_building_result(
+        {"isBuilding": True, "buildingId": "47.61503--122.34274", "address": "2208 4th Ave"}
+    )
+
+
+def test_is_building_result_true_when_zpid_is_non_numeric_building_id():
+    # Real Zillow rental cards stamp a buildingId (a lat-lng string) into the
+    # zpid field; it does not parse to an integer, so the card is still a building.
+    assert normalize.is_building_result({"isBuilding": True, "zpid": "47.61503--122.34274"})
+
+
+def test_is_building_result_false_when_flagged_but_has_real_zpid():
+    assert not normalize.is_building_result({"isBuilding": True, "zpid": "12345"})
+
+
+def test_is_building_result_false_when_nested_home_info_has_zpid():
+    raw = {"isBuilding": True, "hdpData": {"homeInfo": {"zpid": "12345"}}}
+    assert not normalize.is_building_result(raw)
+
+
+def test_is_building_result_false_for_regular_listing_and_non_mapping():
+    assert not normalize.is_building_result({"zpid": "12345", "address": "1 Main St"})
+    assert not normalize.is_building_result(["not a mapping"])
+    assert not normalize.is_building_result(None)
+
+
+def test_normalize_listings_drops_building_cards():
+    out = normalize.normalize_listings(
+        [
+            {"isBuilding": True, "buildingId": "47.61503--122.34274"},
+            {"zpid": "2"},
+        ]
+    )
+    assert len(out) == 1
+    assert out[0]["zpid"] == 2

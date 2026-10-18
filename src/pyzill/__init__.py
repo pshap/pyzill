@@ -24,7 +24,13 @@ from pyzill.exceptions import (
     ZillowParseError,
     ZillowServerError,
 )
-from pyzill.normalize import Listing, normalize_listing, normalize_listings, parse_price
+from pyzill.normalize import (
+    Listing,
+    is_building_result,
+    normalize_listing,
+    normalize_listings,
+    parse_price,
+)
 from pyzill.ratelimit import get_min_interval, set_min_interval
 from pyzill.search import (
     for_rent,
@@ -66,6 +72,7 @@ __all__ = [
     "get_from_home_url",
     "get_min_interval",
     "get_price_history",
+    "is_building_result",
     "iter_rent",
     "iter_sale",
     "iter_search",

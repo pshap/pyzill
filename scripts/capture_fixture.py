@@ -47,9 +47,11 @@ _FIXTURE_NAMES = {
     "detail-apartment": "detail_apartment.json",
 }
 
-# Small dense patch of downtown Seattle; narrow enough to stay well under the
-# 500-result cap so the fixture exercises a complete (not truncated) response.
-_DEFAULT_BBOX = BBox(north=47.62, south=47.59, east=-122.32, west=-122.36)
+# Small patch of Schenectady NY; narrow enough to stay well under the
+# 500-result cap so the fixture exercises a complete (not truncated) response,
+# and residential enough to return real listings rather than only building
+# cards (a dense downtown-Seattle patch came back entirely building-only).
+_DEFAULT_BBOX = BBox(north=42.83, south=42.81, east=-73.92, west=-73.95)
 
 # Keys whose entire subtree is contact info (agent/broker/realtor blocks get
 # every string redacted, including inner "name"/"role" fields).
