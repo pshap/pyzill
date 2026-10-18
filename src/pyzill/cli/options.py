@@ -42,6 +42,10 @@ WhereOpt = Annotated[
     list[str] | None,
     typer.Option("--where", help="Filter: FIELD OP VALUE (repeatable; OP: >= <= > < == != ~)"),
 ]
+WhereJSONOpt = Annotated[
+    str | None,
+    typer.Option("--where-json", help="Filter using a JSON array of {field,op,value} objects"),
+]
 SortOpt = Annotated[str | None, typer.Option("--sort", help="Sort by FIELD or FIELD:asc / FIELD:desc")]
 ColsOpt = Annotated[str | None, typer.Option("--cols", help="Comma-separated columns to output")]
 LimitOpt = Annotated[int | None, typer.Option("--limit", min=1, help="Maximum rows to output")]

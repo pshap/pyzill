@@ -22,12 +22,13 @@ def home_detail_target(value: str) -> tuple[str, int | str]:
     if match:
         return "id", int(match.group(1))
     try:
-        host = urlsplit(cleaned).hostname
+        parsed = urlsplit(cleaned)
+        host = parsed.hostname or ""
     except ValueError as exc:
-        raise ValueError("Home detail input must be a zpid or an https://www.zillow.com URL") from exc
-    if cleaned.startswith("https://") and host == "www.zillow.com":
+        raise ValueError("Home detail input must be a zpid or an HTTPS Zillow URL") from exc
+    if parsed.scheme == "https" and (host == "zillow.com" or host.endswith(".zillow.com")):
         return "url", cleaned
-    raise ValueError("Home detail input must be a zpid or an https://www.zillow.com URL")
+    raise ValueError("Home detail input must be a zpid or an HTTPS Zillow URL")
 
 
 def _path_segments(path: str) -> list[str | int]:

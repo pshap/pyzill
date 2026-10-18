@@ -22,17 +22,19 @@ class RateLimiter:
         self._lock = threading.Lock()
         self._last = float("-inf")
 
-    def wait(self) -> None:
+    def wait(self, minimum_delay: float = 0.0) -> None:
         """Block until at least ``min_interval`` (+ jitter) since the last call.
 
-        If ``min_interval`` is 0 or negative, throttling is disabled and this
-        returns immediately.
+        ``minimum_delay`` can combine a retry delay with the rate limit so a
+        retry does not sleep once for each constraint. A zero interval only
+        disables the rate-limit component.
         """
-        if self.min_interval <= 0:
+        if self.min_interval <= 0 and minimum_delay <= 0:
             return
         with self._lock:
             now = time.monotonic()
-            target = self.min_interval + random.uniform(0, self.jitter)  # noqa: S311 (jitter, not crypto)
+            interval = max(0.0, self.min_interval)
+            target = max(interval + random.uniform(0, self.jitter), minimum_delay)  # noqa: S311 (not crypto)
             elapsed = now - self._last
             if elapsed < target:
                 time.sleep(target - elapsed)

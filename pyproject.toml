@@ -14,7 +14,7 @@ readme= "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 keywords=['zillow', 'scraper', 'crawler']
-dependencies=['beautifulsoup4','curl_cffi','typer>=0.27','rich>=13.8']
+dependencies=['curl_cffi','typer>=0.27','rich>=13.8']
 
 [project.scripts]
 pyzill = "pyzill.cli:main_entry"
@@ -28,6 +28,9 @@ Homepage='https://github.com/pshap/pyzill'
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+pyzill = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

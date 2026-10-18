@@ -44,6 +44,15 @@ def _validate_search_kwargs(kwargs: Mapping[str, Any]) -> None:
 
 
 def for_sale(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
+    """Get listings for sale through the lazily initialized default client."""
+    from pyzill.client import get_default_client
+
+    return get_default_client().search_sale(**kwargs)
+
+
+def _for_sale_impl(
+    *, options: http.RequestOptions | None = None, **kwargs: Unpack[SearchParams]
+) -> dict[str, Any]:
     """Get listings that are for sale.
 
     Accepts the same keyword arguments as :func:`search`, except
@@ -64,13 +73,26 @@ def for_sale(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         **kwargs,
         "filter_state": _flags(sortSelection="globalrelevanceex", isAllHomes=True),
     }
-    return search(**search_kwargs)
+    return _search_impl(**search_kwargs, options=options)
 
 
 def for_rent(
     *,
     is_room: bool = False,
     is_entire_place: bool = False,
+    **kwargs: Unpack[SearchParams],
+) -> dict[str, Any]:
+    """Get rental listings through the lazily initialized default client."""
+    from pyzill.client import get_default_client
+
+    return get_default_client().search_rent(is_room=is_room, is_entire_place=is_entire_place, **kwargs)
+
+
+def _for_rent_impl(
+    *,
+    is_room: bool = False,
+    is_entire_place: bool = False,
+    options: http.RequestOptions | None = None,
     **kwargs: Unpack[SearchParams],
 ) -> dict[str, Any]:
     """Get listings that are for rent.
@@ -94,10 +116,19 @@ def for_rent(
     if not is_entire_place:
         filter_state["isEntirePlaceForRent"] = {"value": False}
     search_kwargs = cast(SearchParams, {**kwargs, "filter_state": filter_state})
-    return search(**search_kwargs)
+    return _search_impl(**search_kwargs, options=options)
 
 
 def sold(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
+    """Get sold listings through the lazily initialized default client."""
+    from pyzill.client import get_default_client
+
+    return get_default_client().search_sold(**kwargs)
+
+
+def _sold_impl(
+    *, options: http.RequestOptions | None = None, **kwargs: Unpack[SearchParams]
+) -> dict[str, Any]:
     """Get listings that were sold.
 
     Accepts the same keyword arguments as :func:`for_sale`, except
@@ -115,7 +146,7 @@ def sold(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         **_flags(sortSelection="globalrelevanceex", isForRent=False, isRecentlySold=True),
     }
     search_kwargs = cast(SearchParams, {**kwargs, "filter_state": filter_state})
-    return search(**search_kwargs)
+    return _search_impl(**search_kwargs, options=options)
 
 
 class _QueryStateParams(TypedDict):
@@ -210,6 +241,15 @@ def _build_search_query_state(**kwargs: Unpack[_QueryStateParams]) -> dict[str, 
 
 
 def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
+    """Run a raw search through the lazily initialized default client."""
+    from pyzill.client import get_default_client
+
+    return get_default_client().search(**kwargs)
+
+
+def _search_impl(
+    *, options: http.RequestOptions | None = None, **kwargs: Unpack[SearchParams]
+) -> dict[str, Any]:
     """Run a raw Zillow search with a custom filter_state.
 
     Most callers should use :func:`for_sale`, :func:`for_rent`, or
@@ -277,15 +317,16 @@ def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         "requestId": 10,
         "isDebugRequest": False,
     }
+    request_options = options or http.RequestOptions(
+        proxy_url=proxy_url,
+        impersonate=impersonate,
+        timeout=timeout,
+        max_retries=max_retries,
+    )
     response = http.put_json(
         _SEARCH_URL,
         input_data,
-        options=http.RequestOptions(
-            proxy_url=proxy_url,
-            impersonate=impersonate,
-            timeout=timeout,
-            max_retries=max_retries,
-        ),
+        options=request_options,
     )
     body_snippet = response.text or ""
     lowered_body = body_snippet.lower()

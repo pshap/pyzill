@@ -1,8 +1,10 @@
 """Offline query/normalize commands plus the pure filtering engines they use."""
 
+import json
 import re
 import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass
 from functools import wraps
 from typing import Annotated, Any
 
@@ -16,6 +18,7 @@ from pyzill.cli.options import (
     LimitOpt,
     OutputOpt,
     SortOpt,
+    WhereJSONOpt,
     WhereOpt,
 )
 from pyzill.cli.output import OutputFormat
@@ -28,12 +31,20 @@ _NUMERIC_FIELDS = frozenset(
     {"price", "beds", "baths", "area", "ppsf", "zestimate", "rent_zestimate", "latitude", "longitude"}
 )
 _QUOTED_LITERAL_LENGTH = 2
+_STRING_OPS = frozenset({"=", "==", "!=", "~"})
 _WHERE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(>=|<=|!=|==|=|>|<|~)\s*(.+?)\s*$")
 _SORT_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?::\s*(asc|desc))?\s*$", re.IGNORECASE)
 
 
 class QueryValidationError(ValueError):
     """Invalid query expression or unrecognized listing field."""
+
+
+@dataclass(frozen=True)
+class Condition:
+    field: str
+    operator: str
+    value: Any
 
 
 def coerce_value(text: str, field: str | None = None) -> Any:
@@ -51,14 +62,42 @@ def coerce_value(text: str, field: str | None = None) -> Any:
     return int(number) if number.is_integer() else number
 
 
-def _parse_where(expression: str, valid_fields: frozenset[str]) -> tuple[str, str, Any]:
+def _parse_where(expression: str, valid_fields: frozenset[str]) -> Condition:
     match = _WHERE_RE.match(expression)
     if not match:
         raise QueryValidationError(f"Bad --where {expression!r}. Use: FIELD OP VALUE with OP in >= <= > < == != ~")
     field, operator, raw_value = match.groups()
     if field not in valid_fields:
         raise QueryValidationError(f"Unknown field {field!r} in --where. Fields: {', '.join(sorted(valid_fields))}")
-    return field, operator, coerce_value(raw_value, field)
+    return Condition(field, operator, coerce_value(raw_value, field))
+
+
+def _parse_conditions(
+    where: list[str] | None,
+    where_json: str | None,
+    valid_fields: frozenset[str],
+) -> list[Condition]:
+    conditions = [_parse_where(expression, valid_fields) for expression in (where or [])]
+    if where_json is None:
+        return conditions
+    try:
+        raw_conditions = json.loads(where_json)
+    except json.JSONDecodeError as exc:
+        raise QueryValidationError(f"--where-json must be a JSON array: {exc.msg}") from exc
+    if not isinstance(raw_conditions, list):
+        raise QueryValidationError("--where-json must be a JSON array of condition objects")
+    for item in raw_conditions:
+        if not isinstance(item, dict) or not {"field", "op", "value"} <= item.keys():
+            raise QueryValidationError("Each --where-json condition needs field, op, and value")
+        field, operator, value = item["field"], item["op"], item["value"]
+        if not isinstance(field, str) or field not in valid_fields:
+            raise QueryValidationError(f"Unknown field {field!r} in --where-json")
+        if not isinstance(operator, str) or operator not in {">", "<", ">=", "<=", "==", "=", "!=", "~"}:
+            raise QueryValidationError(f"Unknown operator {operator!r} in --where-json")
+        if not isinstance(value, (str, int, float, bool, type(None))):
+            raise QueryValidationError("--where-json values must be strings, numbers, booleans, or null")
+        conditions.append(Condition(field, operator, value))
+    return conditions
 
 
 def _field_value(row: dict[str, Any], field: str) -> Any:
@@ -66,29 +105,6 @@ def _field_value(row: dict[str, Any], field: str) -> Any:
         price, area = row.get("price"), row.get("area")
         return round(price / area, 2) if price and area else None
     return row.get(field)
-
-
-def _order_match(have: Any, operator: str, want: Any) -> bool:
-    try:
-        return bool({">": have > want, "<": have < want, ">=": have >= want, "<=": have <= want}[operator])
-    except TypeError:
-        return False
-
-
-def _where_match(row: dict[str, Any], condition: tuple[str, str, Any]) -> bool:
-    field, operator, want = condition
-    have = _field_value(row, field)
-    if operator in ("==", "="):
-        if isinstance(have, str) or isinstance(want, str):
-            return str(have).lower() == str(want).lower() if have is not None and want is not None else have is want
-        return bool(have == want)
-    if operator == "!=":
-        return not _where_match(row, (field, "==", want))
-    if have is None or want is None:
-        return False
-    if operator == "~":
-        return str(want).lower() in str(have).lower()
-    return _order_match(have, operator, want)
 
 
 def _selected_columns(cols: str | None, valid_fields: frozenset[str]) -> list[str] | None:
@@ -102,91 +118,64 @@ def _selected_columns(cols: str | None, valid_fields: frozenset[str]) -> list[st
     return selected
 
 
-def _sort_rows(rows: list[dict[str, Any]], spec: str, valid_fields: frozenset[str]) -> list[dict[str, Any]]:
+def _sort_condition(spec: str, valid_fields: frozenset[str]) -> tuple[str, str]:
     match = _SORT_RE.match(spec)
     if not match:
         raise QueryValidationError(f"Bad --sort {spec!r}. Use FIELD or FIELD:asc / FIELD:desc")
     field, direction = match.groups()
     if field not in valid_fields:
         raise QueryValidationError(f"Unknown field {field!r} in --sort. Fields: {', '.join(sorted(valid_fields))}")
-    reverse = (direction or "asc").lower() == "desc"
-    present = [row for row in rows if _field_value(row, field) is not None]
-    missing = [row for row in rows if _field_value(row, field) is None]
-    present.sort(key=lambda row: _field_value(row, field), reverse=reverse)
-    return present + missing
-
-
-def query_rows(  # noqa: PLR0913
-    rows: list[dict[str, Any]],
-    *,
-    where: list[str] | None = None,
-    sort: str | None = None,
-    cols: str | None = None,
-    limit: int | None = None,
-    valid_fields: frozenset[str] = _QUERY_FIELDS,
-) -> tuple[list[dict[str, Any]], list[str] | None]:
-    conditions = [_parse_where(expression, valid_fields) for expression in (where or [])]
-    if conditions:
-        rows = [row for row in rows if all(_where_match(row, condition) for condition in conditions)]
-    if sort:
-        rows = _sort_rows(rows, sort, valid_fields)
-    selected = _selected_columns(cols, valid_fields)
-    if selected:
-        rows = [{column: _field_value(row, column) for column in selected} for row in rows]
-    if limit is not None:
-        rows = rows[:limit]
-    return rows, selected
+    return field, (direction or "asc").lower()
 
 
 def _sql_column(field: str) -> str:
-    return "(CAST(price AS REAL) / NULLIF(area, 0))" if field == "ppsf" else f'"{field}"'
+    if field == "ppsf":
+        return "(CAST(price AS REAL) / NULLIF(area, 0))"
+    column = f'"{field}"'
+    return f"CAST({column} AS REAL)" if field in _NUMERIC_FIELDS else f"CAST({column} AS TEXT)"
 
 
-def _sql_condition(field: str, operator: str, value: Any) -> tuple[str, list[Any]]:
+def _sql_condition(condition: Condition) -> tuple[str, list[Any]]:
+    field, operator, value = condition.field, condition.operator, condition.value
     column = _sql_column(field)
     if operator in ("=", "==", "!=") and value is None:
         return f"{column} IS {'NOT ' if operator == '!=' else ''}NULL", []
     if operator == "~":
         return f"instr(lower(CAST({column} AS TEXT)), lower(?)) > 0", [str(value)]
-    if operator in ("=", "==", "!=") and isinstance(value, str):
-        sql_operator = "<>" if operator == "!=" else "="
-        return f"lower(CAST({column} AS TEXT)) {sql_operator} lower(?)", [value]
+    if operator in _STRING_OPS and isinstance(value, str):
+        string_column = f"lower(CAST({column} AS TEXT))"
+        return f"{string_column} {'<>' if operator == '!=' else '='} lower(?)", [value]
     return f"{column} {'=' if operator == '==' else operator} ?", [value]
 
 
-def query_database(
+def _run_query(  # noqa: PLR0913
     conn: sqlite3.Connection,
     *,
-    where: list[str] | None = None,
-    sort: str | None = None,
-    cols: str | None = None,
-    limit: int | None = None,
+    table: str,
+    where: list[str] | None,
+    where_json: str | None,
+    sort: str | None,
+    cols: str | None,
+    limit: int | None,
+    valid_fields: frozenset[str],
+    default_order: str,
 ) -> tuple[list[dict[str, Any]], list[str] | None]:
-    conditions = [_parse_where(expression, _DB_QUERY_FIELDS) for expression in (where or [])]
-    selected = _selected_columns(cols, _DB_QUERY_FIELDS)
-    parameters: list[Any] = []
+    conditions = _parse_conditions(where, where_json, valid_fields)
+    selected = _selected_columns(cols, valid_fields)
     clauses: list[str] = []
-    for field, operator, value in conditions:
-        clause, values = _sql_condition(field, operator, value)
+    parameters: list[Any] = []
+    for condition in conditions:
+        clause, values = _sql_condition(condition)
         clauses.append(clause)
         parameters.extend(values)
 
-    order_clause = '"last_seen_utc" DESC, "zpid" DESC'
+    order_clause = default_order
     if sort:
-        match = _SORT_RE.match(sort)
-        if not match:
-            raise QueryValidationError(f"Bad --sort {sort!r}. Use FIELD or FIELD:asc / FIELD:desc")
-        field, direction = match.groups()
-        if field not in _DB_QUERY_FIELDS:
-            raise QueryValidationError(
-                f"Unknown field {field!r} in --sort. Fields: {', '.join(sorted(_DB_QUERY_FIELDS))}"
-            )
+        field, direction = _sort_condition(sort, valid_fields)
         column = _sql_column(field)
-        order_clause = (
-            f'({column}) IS NULL ASC, {column} {(direction or "asc").upper()}, "last_seen_utc" DESC, "zpid" DESC'
-        )
+        order_clause = f'({column}) IS NULL ASC, {column} {direction.upper()}, "zpid" ASC'
 
-    sql = "SELECT * FROM listings"
+    sql = f'SELECT * FROM "{table}"'  # noqa: S608 - table names are internal constants
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY " + order_clause
@@ -195,10 +184,79 @@ def query_database(
         parameters.append(limit)
     cursor = conn.execute(sql, parameters)
     names = [description[0] for description in cursor.description]
-    rows = [dict(zip(names, record, strict=True)) for record in cursor.fetchall()]
-    if selected:
-        rows = [{column: _field_value(row, column) for column in selected} for row in rows]
+    rows: list[dict[str, Any]] = []
+    for record in cursor.fetchall():
+        row = dict(zip(names, record, strict=True))
+        payload = json.loads(row.pop("__payload")) if "__payload" in row else row
+        rows.append(
+            {column: _field_value(payload, column) for column in selected}
+            if selected
+            else payload
+        )
     return rows, selected
+
+
+def query_rows(  # noqa: PLR0913
+    rows: list[dict[str, Any]],
+    *,
+    where: list[str] | None = None,
+    where_json: str | None = None,
+    sort: str | None = None,
+    cols: str | None = None,
+    limit: int | None = None,
+    valid_fields: frozenset[str] = _QUERY_FIELDS,
+) -> tuple[list[dict[str, Any]], list[str] | None]:
+    fields = sorted(valid_fields)
+    column_types = [f'"{field}" {"REAL" if field in _NUMERIC_FIELDS else "TEXT"}' for field in fields]
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute(f'CREATE TABLE "query_rows" ("__payload" TEXT, {", ".join(column_types)})')
+        placeholders = ", ".join("?" for _ in range(len(fields) + 1))
+        values: list[tuple[Any, ...]] = []
+        for row in rows:
+            row_values = tuple(
+                json.dumps(row.get(field), ensure_ascii=False)
+                if isinstance(row.get(field), dict | list)
+                else row.get(field)
+                for field in fields
+            )
+            values.append((json.dumps(row, ensure_ascii=False), *row_values))
+        conn.executemany(f'INSERT INTO "query_rows" VALUES ({placeholders})', values)  # noqa: S608
+        return _run_query(
+            conn,
+            table="query_rows",
+            where=where,
+            where_json=where_json,
+            sort=sort,
+            cols=cols,
+            limit=limit,
+            valid_fields=valid_fields,
+            default_order="rowid ASC",
+        )
+    finally:
+        conn.close()
+
+
+def query_database(  # noqa: PLR0913
+    conn: sqlite3.Connection,
+    *,
+    where: list[str] | None = None,
+    where_json: str | None = None,
+    sort: str | None = None,
+    cols: str | None = None,
+    limit: int | None = None,
+) -> tuple[list[dict[str, Any]], list[str] | None]:
+    return _run_query(
+        conn,
+        table="listings",
+        where=where,
+        where_json=where_json,
+        sort=sort,
+        cols=cols,
+        limit=limit,
+        valid_fields=_DB_QUERY_FIELDS,
+        default_order='"last_seen_utc" DESC, "zpid" DESC',
+    )
 
 
 def _as_cli_error[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
@@ -221,6 +279,7 @@ cli_query_database = _as_cli_error(query_database)
 def query(  # noqa: PLR0913, PLR0917
     input_or_dash: Annotated[str, typer.Argument(help="Saved search JSON file, or '-' for stdin")],
     where: WhereOpt = None,
+    where_json: WhereJSONOpt = None,
     sort: SortOpt = None,
     cols: ColsOpt = None,
     limit: LimitOpt = None,
@@ -235,7 +294,7 @@ def query(  # noqa: PLR0913, PLR0917
     if data and not rows:
         error("query input contains no listing objects", code=2)
 
-    rows, selected = cli_query_rows(rows, where=where, sort=sort, cols=cols, limit=limit)
+    rows, selected = cli_query_rows(rows, where=where, where_json=where_json, sort=sort, cols=cols, limit=limit)
     write_output(rows, output_format, output, columns=selected)
 
 

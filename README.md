@@ -18,6 +18,8 @@ It supports two capabilities:
 - Browser TLS impersonation via [`curl_cffi`](https://github.com/yifeikong/curl_cffi)
 - Configurable proxy (explicit or via environment variable)
 - Built-in request throttling to avoid 403s
+- A reusable `ZillowClient` with a persistent session, per-client rate limiter,
+  and optional proxy rotation after a block
 - Clear `ZillowBlockedError` when Zillow blocks a request
 
 ## Current status (as of 2025-10)
@@ -155,6 +157,7 @@ pyzill query listings.json --where 'city==Schenectady' --where 'area>=1000'
 pyzill query listings.json --where 'home_type==SINGLE_FAMILY' --sort price:asc --limit 20
 pyzill query listings.json --where 'ppsf>=130' --where 'ppsf<=200' --format csv
 cat listings.json | pyzill query - --where 'zipcode==12308' --format table
+pyzill query listings.json --where-json '[{"field":"price","op":"<=","value":300000}]'
 ```
 
 **Filtering** — repeat `--where FIELD OP VALUE` for AND logic:
@@ -175,6 +178,8 @@ cat listings.json | pyzill query - --where 'zipcode==12308' --format table
 - Strings compare case-insensitively, so `city==schenectady` matches
   `"Schenectady"`.
 - `null` / `none` match missing values.
+- `--where-json` accepts a JSON array of `{ "field", "op", "value" }`
+    objects and can be combined with `--where`.
 
 **Fields** — the normalized listing fields (`zpid`, `price`, `beds`, `baths`,
 `area`, `address`, `city`, `state`, `zipcode`, `latitude`, `longitude`,
@@ -370,6 +375,23 @@ results = pyzill.for_sale(
 map_results = results["mapResults"]  # up to 500 listings
 print(len(map_results), "listings")
 ```
+
+For repeated work, create one client to reuse its cookie jar and connections:
+
+```python
+with pyzill.ZillowClient(proxy=["http://proxy-a:8080", "http://proxy-b:8080"]) as client:
+    sale = client.search_sale(
+        search_value="Schenectady NY",
+        bbox=pyzill.BBox(north=42.85, east=-73.90, south=42.78, west=-74.00),
+    )
+    home = client.home(sale["mapResults"][0]["zpid"])
+```
+
+Module-level functions remain available and use a lazy default client. Search
+and detail requests from a client share its limiter and session; on a 403 with
+multiple proxies, the client retries once with a fresh session and the next
+proxy. Retry-After is capped at 60 seconds by default and can be configured on
+the client.
 
 > **Coordinates define the results.** Zillow searches the `mapBounds`
 > viewport you pass. `search_value` labels the search but does **not**

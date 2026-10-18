@@ -4,19 +4,18 @@ Centralizes header construction, proxy resolution, throttling, retries, and
 status handling so that search and detail requests stay consistent.
 """
 
-import time
-from dataclasses import dataclass
+import random
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from curl_cffi import requests
 from curl_cffi.requests import ProxySpec, Response
 from curl_cffi.requests.exceptions import RequestException
 
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 from pyzill.exceptions import ZillowBlockedError, ZillowNetworkError, ZillowNotFoundError, ZillowServerError
-from pyzill.ratelimit import _limiter
+from pyzill.ratelimit import RateLimiter
 from pyzill.utils import resolve_proxy
 
 __all__ = [
@@ -43,12 +42,17 @@ class RequestOptions:
     impersonate: str = DEFAULT_IMPERSONATE
     timeout: float = DEFAULT_TIMEOUT
     max_retries: int = DEFAULT_MAX_RETRIES
+    session: Any | None = field(default=None, repr=False, compare=False)
+    limiter: RateLimiter | None = field(default=None, repr=False, compare=False)
+    max_retry_after: float = 60.0
 
     def __post_init__(self) -> None:
         if self.timeout <= 0:
             raise ValueError("timeout must be greater than 0")
         if self.max_retries < 0:
             raise ValueError("max_retries must be at least 0")
+        if self.max_retry_after < 0:
+            raise ValueError("max_retry_after must be at least 0")
 
 
 _HTTP_OK_MIN = 200
@@ -60,10 +64,10 @@ _HTTP_TOO_MANY_REQUESTS = 429
 _RETRY_DELAY = 1.0
 
 
-def _retry_delay(attempt: int, retry_after: str | None = None) -> float:
+def _retry_delay(attempt: int, retry_after: str | None = None, max_retry_after: float = 60.0) -> float:
     if retry_after:
         try:
-            return max(0.0, float(retry_after))
+            return min(max_retry_after, max(0.0, float(retry_after)))
         except ValueError:
             try:
                 retry_time = parsedate_to_datetime(retry_after)
@@ -71,14 +75,11 @@ def _retry_delay(attempt: int, retry_after: str | None = None) -> float:
                     retry_time = retry_time.replace(tzinfo=UTC)
                 delta = retry_time - datetime.now(UTC)
                 retry_delay_seconds = delta.days * 86_400 + delta.seconds + delta.microseconds / 1_000_000
-                return max(0.0, retry_delay_seconds)
+                return min(max_retry_after, max(0.0, retry_delay_seconds))
             except (TypeError, ValueError, OverflowError):
                 pass
     delay: float = _RETRY_DELAY * (2**attempt)
-    monotonic_ns = int(time.monotonic_ns())
-    jitter_fraction: float = (monotonic_ns % 1_000_000_000) / 1_000_000_000
-    jitter: float = jitter_fraction * min(1.0, delay * 0.25)
-    return float(delay + jitter)
+    return delay + random.uniform(0.0, min(1.0, delay * 0.25))  # noqa: S311 (retry jitter, not crypto)
 
 
 _ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"  # noqa: E501
@@ -136,6 +137,9 @@ def get_page(
         impersonate=options.impersonate,
         timeout=options.timeout,
         max_retries=options.max_retries,
+        session=options.session,
+        limiter=options.limiter,
+        max_retry_after=options.max_retry_after,
     )
 
 
@@ -162,6 +166,9 @@ def put_json(
         timeout=options.timeout,
         max_retries=options.max_retries,
         json=payload,
+        session=options.session,
+        limiter=options.limiter,
+        max_retry_after=options.max_retry_after,
     )
 
 
@@ -175,6 +182,9 @@ def request(  # noqa: PLR0913 - central request primitive
     timeout: float = DEFAULT_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
     json: Any = None,
+    session: Any | None = None,
+    limiter: RateLimiter | None = None,
+    max_retry_after: float = 60.0,
 ) -> Response:
     """Issue a throttled Zillow request, retrying transient 5xx and 429 failures.
 
@@ -198,25 +208,41 @@ def request(  # noqa: PLR0913 - central request primitive
     Raises:
         ZillowError: If the response status is not 2xx.
     """
-    options = RequestOptions(proxy_url, impersonate, timeout, max_retries)
+    options = RequestOptions(
+        proxy_url,
+        impersonate,
+        timeout,
+        max_retries,
+        max_retry_after=max_retry_after,
+    )
     proxies = build_proxies(options.proxy_url)
     last_exception: Exception = RuntimeError("pyzill.http.request sent no requests")
+    retry_delay = 0.0
 
     for attempt in range(options.max_retries + 1):
-        _limiter.wait()
+        if session is None or limiter is None:
+            from pyzill.client import get_default_client
+
+            default_client = get_default_client()
+            session = session or default_client.session
+            limiter = limiter or default_client.limiter
+        limiter.wait(retry_delay)
         try:
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                proxies=proxies,
-                impersonate=options.impersonate,
-                timeout=options.timeout,
-                json=json,
+            response = cast(
+                Response,
+                session.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    proxies=proxies,
+                    impersonate=options.impersonate,
+                    timeout=options.timeout,
+                    json=json,
+                ),
             )
         except RequestException as exc:
             if attempt < options.max_retries:
-                time.sleep(_retry_delay(attempt))
+                retry_delay = _retry_delay(attempt, max_retry_after=options.max_retry_after)
                 continue
             raise ZillowNetworkError(url) from exc
 
@@ -232,10 +258,8 @@ def request(  # noqa: PLR0913 - central request primitive
             last_exception = ZillowBlockedError(response.status_code, url, body_snippet)
         should_retry = response.status_code >= _HTTP_SERVER_ERROR_MIN or response.status_code == _HTTP_TOO_MANY_REQUESTS
         if should_retry and attempt < options.max_retries:
-            retry_after = (
-                response.headers.get("Retry-After") if response.status_code == _HTTP_TOO_MANY_REQUESTS else None
-            )
-            time.sleep(_retry_delay(attempt, retry_after))
+            retry_after = response.headers.get("Retry-After")
+            retry_delay = _retry_delay(attempt, retry_after, options.max_retry_after)
             continue
         raise last_exception
 

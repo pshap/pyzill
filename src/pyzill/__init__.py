@@ -1,5 +1,6 @@
 import pyzill.details as _details
 from pyzill.bbox import CONTINENTAL_US, BBox
+from pyzill.client import ZillowClient
 from pyzill.db import (
     DBStats,
     SyncStats,
@@ -20,6 +21,7 @@ from pyzill.details import (
 from pyzill.exceptions import (
     ZillowBlockedError,
     ZillowError,
+    ZillowNetworkError,
     ZillowNotFoundError,
     ZillowParseError,
     ZillowServerError,
@@ -55,7 +57,9 @@ __all__ = [
     "Listing",
     "SyncStats",
     "ZillowBlockedError",
+    "ZillowClient",
     "ZillowError",
+    "ZillowNetworkError",
     "ZillowNotFoundError",
     "ZillowParseError",
     "ZillowServerError",

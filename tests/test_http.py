@@ -1,4 +1,5 @@
 import time
+from typing import Any
 
 import pytest
 from curl_cffi import requests as cffi_requests
@@ -6,6 +7,7 @@ from curl_cffi.requests.exceptions import RequestException
 
 from pyzill import http
 from pyzill.exceptions import ZillowBlockedError, ZillowNetworkError, ZillowNotFoundError, ZillowServerError
+from pyzill.ratelimit import _limiter
 
 
 def test_build_headers_derives_chrome_version() -> None:
@@ -64,23 +66,34 @@ def test_request_distinguishes_server_failure(fake_http, monkeypatch) -> None:
 def test_request_honors_retry_after_for_429(fake_http, monkeypatch) -> None:
     fake_http.install("GET", status_code=429, text="Slow down", headers={"Retry-After": "2"})
     delays: list[float] = []
-    monkeypatch.setattr(time, "sleep", delays.append)
+    monkeypatch.setattr(_limiter, "wait", delays.append)
 
     with pytest.raises(ZillowBlockedError):
         http.request("GET", "https://www.zillow.com/", headers={}, max_retries=1)
 
-    assert delays == [2.0]
+    assert delays == [0.0, 2.0]
+
+
+def test_request_honors_capped_retry_after_for_503(fake_http, monkeypatch) -> None:
+    fake_http.install("GET", status_code=503, text="Unavailable", headers={"Retry-After": "120"})
+    delays: list[float] = []
+    monkeypatch.setattr(_limiter, "wait", delays.append)
+
+    with pytest.raises(ZillowServerError):
+        http.request("GET", "https://www.zillow.com/", headers={}, max_retries=1, max_retry_after=30)
+
+    assert delays == [0.0, 30.0]
 
 
 def test_request_retries_request_exceptions(monkeypatch) -> None:
     attempts = 0
 
-    def fail(**kwargs):
+    def fail(**kwargs: Any) -> None:
         nonlocal attempts
         attempts += 1
         raise RequestException("network down")
 
-    monkeypatch.setattr(cffi_requests, "request", fail)
+    monkeypatch.setattr(cffi_requests.Session, "request", lambda self, **kwargs: fail(**kwargs))
     monkeypatch.setattr(time, "sleep", lambda *args, **kwargs: None)
 
     with pytest.raises(ZillowNetworkError) as exc_info:
@@ -94,12 +107,12 @@ def test_request_retries_request_exceptions(monkeypatch) -> None:
 def test_request_does_not_retry_other_exceptions(monkeypatch) -> None:
     attempts = 0
 
-    def fail(**kwargs):
+    def fail(**kwargs: Any) -> None:
         nonlocal attempts
         attempts += 1
         raise RuntimeError("unexpected")
 
-    monkeypatch.setattr(cffi_requests, "request", fail)
+    monkeypatch.setattr(cffi_requests.Session, "request", lambda self, **kwargs: fail(**kwargs))
     monkeypatch.setattr(time, "sleep", lambda *args, **kwargs: None)
 
     with pytest.raises(RuntimeError):

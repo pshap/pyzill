@@ -19,4 +19,5 @@
 - When stdout is not a TTY, errors are JSON on stderr by default. Use `--json-errors` or `--no-json-errors` to select explicitly. Shape: `{"error":{"code":"blocked","message":"...","retryable":false,"status_code":403}}`; `status_code` is optional and credentials are redacted.
 - Listing/search output is JSON by default. `db sync` and `db import` accept `--format json` for count summaries; `db stats` and `db history` also support JSON output.
 - Normalized listings use the `Listing` TypedDict shape. Obtain the versioned schema with `pyzill schema listing`.
+- Filter saved/database rows with repeated `--where FIELD OP VALUE` or `--where-json` condition arrays. Both sources use the same SQLite query engine.
 - Search commands may return up to 500 listings. Avoid pulling all fields or rows when automating: use `--cols` to project fields, `--limit` to bound rows, and `--where` to filter server-independent saved/database data before consuming results.

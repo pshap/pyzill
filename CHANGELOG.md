@@ -5,6 +5,14 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- Added `ZillowClient` for persistent-session search/detail workflows, with
+  per-client rate limiting and one fresh-session retry on a 403 when a proxy
+  list is configured. Existing module-level functions use a lazy default
+  client. Detail parsing no longer depends on BeautifulSoup and selects the
+  requested zpid from the page cache when available.
+- Saved JSON and database queries now compile typed conditions into one SQLite
+  engine; `--where-json` accepts structured filter arrays. Added a property
+  test that compares randomized file and database query results.
 - CLI failures now expose stable error codes and retryability, distinct exit
   codes for blocked/not-found/schema/server/network failures, and structured
   JSON diagnostics on stderr when stdout is not a TTY (overridable with

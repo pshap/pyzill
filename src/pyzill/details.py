@@ -4,7 +4,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from pyzill import http
-from pyzill.parse import parse_body_departments, parse_body_home
 
 _Parser = Callable[[bytes], dict[str, Any]]
 
@@ -40,10 +39,11 @@ def get_from_home_id(  # noqa: PLR0913
     *,
     options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
-    return _fetch(
-        f"{http.ZILLOW_HOME}/homedetails/any-title/{property_id}_zpid/",
-        parse_body_home,
-        _options(options, proxy_url, impersonate, timeout, max_retries),
+    from pyzill.client import get_default_client
+
+    return get_default_client().home(
+        property_id,
+        options=_options(options, proxy_url, impersonate, timeout, max_retries),
     )
 
 
@@ -56,10 +56,11 @@ def get_from_apartment_id(  # noqa: PLR0913
     *,
     options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
-    return _fetch(
-        f"{http.ZILLOW_HOME}/apartments/{apartment_id}/",
-        parse_body_departments,
-        _options(options, proxy_url, impersonate, timeout, max_retries),
+    from pyzill.client import get_default_client
+
+    return get_default_client().apartment(
+        apartment_id,
+        options=_options(options, proxy_url, impersonate, timeout, max_retries),
     )
 
 
@@ -72,10 +73,11 @@ def get_from_apartment_url(  # noqa: PLR0913
     *,
     options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
-    return _fetch(
+    from pyzill.client import get_default_client
+
+    return get_default_client().apartment(
         apartment_url,
-        parse_body_departments,
-        _options(options, proxy_url, impersonate, timeout, max_retries),
+        options=_options(options, proxy_url, impersonate, timeout, max_retries),
     )
 
 
@@ -88,10 +90,11 @@ def get_from_home_url(  # noqa: PLR0913
     *,
     options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
-    return _fetch(
+    from pyzill.client import get_default_client
+
+    return get_default_client().home(
         home_url,
-        parse_body_home,
-        _options(options, proxy_url, impersonate, timeout, max_retries),
+        options=_options(options, proxy_url, impersonate, timeout, max_retries),
     )
 
 

@@ -42,6 +42,23 @@ def test_parse_body_home_rejects_missing_gdp_cache() -> None:
         parse_body_home(body)
 
 
+def test_parse_body_home_selects_requested_zpid_from_cache():
+    cache = {
+        "first": {"property": {"zpid": 1, "address": "First"}},
+        "requested": {"property": {"zpid": 2, "address": "Requested"}},
+    }
+    payload = {
+        "props": {
+            "pageProps": {
+                "componentProps": {"gdpClientCache": json.dumps(cache)},
+            }
+        }
+    }
+    body = f'<script type="application/json" id="__NEXT_DATA__">{json.dumps(payload)}</script>'.encode()
+
+    assert parse_body_home(body, zpid=2)["address"] == "Requested"
+
+
 def test_parse_body_departments_rejects_missing_gdp() -> None:
     body = (
         b'<script id="__NEXT_DATA__" type="application/json">'

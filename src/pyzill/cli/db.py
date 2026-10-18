@@ -56,12 +56,13 @@ from pyzill.cli.options import (
     South,
     Tile,
     West,
+    WhereJSONOpt,
     WhereOpt,
     Zoom,
 )
 from pyzill.cli.output import OutputFormat, dumps
 from pyzill.cli.query import cli_query_database
-from pyzill.cli.search import extract_listings, fetch_and_normalize, search_options
+from pyzill.cli.search import extract_listings, fetch_and_normalize, search_filter_options, search_options
 from pyzill.config import read_env
 from pyzill.db import SyncStats, connect_readonly
 from pyzill.normalize import Listing
@@ -199,20 +200,22 @@ def db_sync(  # noqa: PLR0913, PLR0917
         _SEARCH_FNS[kind],
         search_options(
             query,
-            north,
-            south,
-            east,
-            west,
-            zoom,
-            min_beds,
-            max_beds,
-            min_bathrooms,
-            max_bathrooms,
-            min_price,
-            max_price,
-            tile,
-            max_depth,
-            max_requests,
+            search_filter_options(
+                north=north,
+                south=south,
+                east=east,
+                west=west,
+                zoom=zoom,
+                min_beds=min_beds,
+                max_beds=max_beds,
+                min_bathrooms=min_bathrooms,
+                max_bathrooms=max_bathrooms,
+                min_price=min_price,
+                max_price=max_price,
+                tile=tile,
+                max_depth=max_depth,
+                max_requests=max_requests,
+            ),
             is_room,
             is_entire_place,
         ),
@@ -280,6 +283,7 @@ def db_import(
 @db_app.command("query")
 def db_query(  # noqa: PLR0913, PLR0917
     where: WhereOpt = None,
+    where_json: WhereJSONOpt = None,
     sort: SortOpt = None,
     cols: ColsOpt = None,
     limit: LimitOpt = None,
@@ -289,7 +293,14 @@ def db_query(  # noqa: PLR0913, PLR0917
 ) -> None:
     """Query listings from the local database."""
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
-        rows, selected = cli_query_database(conn, where=where, sort=sort, cols=cols, limit=limit)
+        rows, selected = cli_query_database(
+            conn,
+            where=where,
+            where_json=where_json,
+            sort=sort,
+            cols=cols,
+            limit=limit,
+        )
 
     if not rows:
         warn("No listings in database")

@@ -48,16 +48,13 @@ from pyzill.cli.options import (
 )
 from pyzill.cli.output import OutputFormat
 from pyzill.geocode import geocode
-from pyzill.search import tiled_search
-
-_RESULT_CAP = 500
+from pyzill.search import _RESULT_CAP, tiled_search
 
 search_app = typer.Typer(name="search", help="Search Zillow listings")
 
 
 @dataclass(frozen=True, slots=True)
-class SearchOptions:
-    query: str
+class SearchFilters:
     north: float | None = None
     south: float | None = None
     east: float | None = None
@@ -72,8 +69,49 @@ class SearchOptions:
     tile: bool = False
     max_depth: int = 4
     max_requests: int = 50
+
+
+@dataclass(frozen=True, slots=True)
+class SearchOptions:
+    query: str
+    filters: SearchFilters
     is_room: bool = False
     is_entire_place: bool = False
+
+
+def search_filter_options(  # noqa: PLR0913, PLR0917
+    north: North = None,
+    south: South = None,
+    east: East = None,
+    west: West = None,
+    zoom: Zoom = None,
+    min_beds: MinBeds = None,
+    max_beds: MaxBeds = None,
+    min_bathrooms: MinBaths = None,
+    max_bathrooms: MaxBaths = None,
+    min_price: MinPrice = None,
+    max_price: MaxPrice = None,
+    tile: Tile = False,
+    max_depth: MaxDepth = 4,
+    max_requests: MaxRequests = 50,
+) -> SearchFilters:
+    """Build shared filter options used by search variants and database sync."""
+    return SearchFilters(
+        north=north,
+        south=south,
+        east=east,
+        west=west,
+        zoom=zoom,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        tile=tile,
+        max_depth=max_depth,
+        max_requests=max_requests,
+    )
 
 
 def build_bbox(north: float | None, south: float | None, east: float | None, west: float | None) -> BBox | None:
@@ -169,42 +207,16 @@ def extract_listings(data: Any, *, wrap_single: bool = False) -> list[Any]:
     return []  # unreachable; error() exits
 
 
-def search_options(  # noqa: PLR0913, PLR0917
+def search_options(
     query: str,
-    north: float | None,
-    south: float | None,
-    east: float | None,
-    west: float | None,
-    zoom: int | None,
-    min_beds: int | None,
-    max_beds: int | None,
-    min_bathrooms: int | None,
-    max_bathrooms: int | None,
-    min_price: int | None,
-    max_price: int | None,
-    tile: bool,
-    max_depth: int,
-    max_requests: int,
+    filters: SearchFilters,
     is_room: bool = False,
     is_entire_place: bool = False,
 ) -> SearchOptions:
-    """Build SearchOptions from CLI params (positional to prevent field-swap bugs)."""
+    """Combine a query, shared search filters, and rental-only switches."""
     return SearchOptions(
         query=query,
-        north=north,
-        south=south,
-        east=east,
-        west=west,
-        zoom=zoom,
-        min_beds=min_beds,
-        max_beds=max_beds,
-        min_bathrooms=min_bathrooms,
-        max_bathrooms=max_bathrooms,
-        min_price=min_price,
-        max_price=max_price,
-        tile=tile,
-        max_depth=max_depth,
-        max_requests=max_requests,
+        filters=filters,
         is_room=is_room,
         is_entire_place=is_entire_place,
     )
@@ -224,11 +236,12 @@ def fetch_and_normalize(
     if options.is_room and options.is_entire_place:
         error("--room and --entire-place can't be used together", code=2)
 
-    _cli_check_range("beds", options.min_beds, options.max_beds)
-    _cli_check_range("bathrooms", options.min_bathrooms, options.max_bathrooms)
-    _cli_check_range("price", options.min_price, options.max_price)
+    filters = options.filters
+    _cli_check_range("beds", filters.min_beds, filters.max_beds)
+    _cli_check_range("bathrooms", filters.min_bathrooms, filters.max_bathrooms)
+    _cli_check_range("price", filters.min_price, filters.max_price)
 
-    bbox = _cli_build_bbox(options.north, options.south, options.east, options.west)
+    bbox = _cli_build_bbox(filters.north, filters.south, filters.east, filters.west)
     http_kwargs = context().http_kwargs
     if bbox is None:
         # No explicit viewport: resolve the query text to one via Nominatim so
@@ -248,32 +261,32 @@ def fetch_and_normalize(
     debug(f"{search_fn.__name__}: query={options.query!r} bbox={bbox}")
     search_kwargs = {
         "search_value": options.query,
-        "zoom_value": options.zoom,
-        "min_beds": options.min_beds,
-        "max_beds": options.max_beds,
-        "min_bathrooms": options.min_bathrooms,
-        "max_bathrooms": options.max_bathrooms,
-        "min_price": options.min_price,
-        "max_price": options.max_price,
+        "zoom_value": filters.zoom,
+        "min_beds": filters.min_beds,
+        "max_beds": filters.max_beds,
+        "min_bathrooms": filters.min_bathrooms,
+        "max_bathrooms": filters.max_bathrooms,
+        "min_price": filters.min_price,
+        "max_price": filters.max_price,
         **http_kwargs,
     }
     if search_fn is for_rent:
         search_kwargs.update(is_room=options.is_room, is_entire_place=options.is_entire_place)
 
     with network_errors("Search failed"):
-        if options.tile:
+        if filters.tile:
             result = tiled_search(
                 search_fn,
                 bbox=bbox,
-                max_depth=options.max_depth,
-                max_requests=options.max_requests,
+                max_depth=filters.max_depth,
+                max_requests=filters.max_requests,
                 on_cap=lambda: warn(
-                    f"A tile still returned {_RESULT_CAP} listings at --max-depth {options.max_depth}; "
+                    f"A tile still returned {_RESULT_CAP} listings at --max-depth {filters.max_depth}; "
                     "results may be truncated"
                 ),
                 on_progress=lambda used, total: progress(f"tile {used}:", f"{total} listings so far"),
                 on_budget=lambda: warn(
-                    f"request budget of {options.max_requests} exhausted; returning partial results "
+                    f"request budget of {filters.max_requests} exhausted; returning partial results "
                     "(raise --max-requests or lower --max-depth for more)"
                 ),
                 **search_kwargs,
@@ -331,23 +344,23 @@ def search_sale(  # noqa: PLR0913, PLR0917
     output: OutputOpt = None,
 ) -> None:
     """Search for-sale listings."""
-    options = search_options(
-        query,
-        north,
-        south,
-        east,
-        west,
-        zoom,
-        min_beds,
-        max_beds,
-        min_bathrooms,
-        max_bathrooms,
-        min_price,
-        max_price,
-        tile,
-        max_depth,
-        max_requests,
+    filters = search_filter_options(
+        north=north,
+        south=south,
+        east=east,
+        west=west,
+        zoom=zoom,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        tile=tile,
+        max_depth=max_depth,
+        max_requests=max_requests,
     )
+    options = search_options(query, filters)
     run_search(for_sale, options=options, raw=raw, output_format=output_format, output=output)
 
 
@@ -375,25 +388,23 @@ def search_rent(  # noqa: PLR0913, PLR0917
     output: OutputOpt = None,
 ) -> None:
     """Search for-rent listings."""
-    options = search_options(
-        query,
-        north,
-        south,
-        east,
-        west,
-        zoom,
-        min_beds,
-        max_beds,
-        min_bathrooms,
-        max_bathrooms,
-        min_price,
-        max_price,
-        tile,
-        max_depth,
-        max_requests,
-        is_room,
-        is_entire_place,
+    filters = search_filter_options(
+        north=north,
+        south=south,
+        east=east,
+        west=west,
+        zoom=zoom,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        tile=tile,
+        max_depth=max_depth,
+        max_requests=max_requests,
     )
+    options = search_options(query, filters, is_room, is_entire_place)
     run_search(for_rent, options=options, raw=raw, output_format=output_format, output=output)
 
 
@@ -419,21 +430,21 @@ def search_sold(  # noqa: PLR0913, PLR0917
     output: OutputOpt = None,
 ) -> None:
     """Search sold listings."""
-    options = search_options(
-        query,
-        north,
-        south,
-        east,
-        west,
-        zoom,
-        min_beds,
-        max_beds,
-        min_bathrooms,
-        max_bathrooms,
-        min_price,
-        max_price,
-        tile,
-        max_depth,
-        max_requests,
+    filters = search_filter_options(
+        north=north,
+        south=south,
+        east=east,
+        west=west,
+        zoom=zoom,
+        min_beds=min_beds,
+        max_beds=max_beds,
+        min_bathrooms=min_bathrooms,
+        max_bathrooms=max_bathrooms,
+        min_price=min_price,
+        max_price=max_price,
+        tile=tile,
+        max_depth=max_depth,
+        max_requests=max_requests,
     )
+    options = search_options(query, filters)
     run_search(sold, options=options, raw=raw, output_format=output_format, output=output)

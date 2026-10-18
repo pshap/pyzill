@@ -70,7 +70,7 @@ class _FakeHTTP:
             headers=headers,
         )
 
-        def handler(**kwargs: Any) -> FakeResponse:
+        def handler(*_args: Any, **kwargs: Any) -> FakeResponse:
             call = dict(kwargs)
             actual_method = str(call["method"]).lower()
             if actual_method != method.lower():
@@ -80,6 +80,7 @@ class _FakeHTTP:
             return response
 
         self._monkeypatch.setattr(cffi_requests, "request", handler)
+        self._monkeypatch.setattr(cffi_requests.Session, "request", handler)
         return response
 
 

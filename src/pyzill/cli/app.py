@@ -70,7 +70,7 @@ def main(  # noqa: PLR0913, PLR0917
     ] = DEFAULT_IMPERSONATE,
     timeout: Annotated[
         float,
-        typer.Option("--timeout", min=0, help="Request timeout in seconds (must be greater than 0; default: 30)"),
+        typer.Option("--timeout", help="Request timeout in seconds (must be greater than 0; default: 30)"),
     ] = DEFAULT_TIMEOUT,
     max_retries: Annotated[
         int,

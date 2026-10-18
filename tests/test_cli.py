@@ -162,10 +162,10 @@ class TestSearchCommands:
         from curl_cffi import requests as cffi_requests
         from curl_cffi.requests.exceptions import RequestException
 
-        def fail_network(**kwargs):
+        def fail_network(**kwargs: Any) -> None:
             raise RequestException("offline")
 
-        monkeypatch.setattr(cffi_requests, "request", fail_network)
+        monkeypatch.setattr(cffi_requests.Session, "request", lambda self, **kwargs: fail_network(**kwargs))
 
         result = runner.invoke(app, ["--json-errors", "search", "sale", "12305"])
 
@@ -837,6 +837,24 @@ class TestQueryCommand:
             result = runner.invoke(app, ["query", str(path), "--where", expression])
             assert result.exit_code == 0
             assert [row["zpid"] for row in json.loads(result.stdout)] == [1]
+
+    def test_where_json_filter(self, saved):
+        result = runner.invoke(
+            app,
+            ["query", str(saved), "--where-json", '[{"field":"price","op":"<=","value":250000}]'],
+        )
+
+        assert result.exit_code == 0
+        assert {row["zpid"] for row in json.loads(result.stdout)} == {1, 2, 4}
+
+    def test_where_json_rejects_unknown_operators(self, saved):
+        result = runner.invoke(
+            app,
+            ["query", str(saved), "--where-json", '[{"field":"price","op":"like","value":1}]'],
+        )
+
+        assert result.exit_code == 2
+        assert "Unknown operator" in result.stderr
 
     def test_db_query_preserves_leading_zero_zipcodes_during_write(self, tmp_path):
         from pyzill.db import connect, upsert_listings
