@@ -393,6 +393,32 @@ def test_split_bbox_quadrants():
         assert isinstance(q, BBox)
 
 
+def test_tiled_search_dedup_does_not_crash_on_unorderable_listing_values():
+    """A listing with a non-numeric zpid and mixed-type values must not crash
+    the dedup key (``repr(sorted(items()))`` raises TypeError on mixed types)."""
+
+    def fake_search(*, bbox: BBox, **kwargs):
+        return {
+            "mapResults": [
+                # A building card whose zpid is a lat-lng string and whose
+                # values are unorderable when sorted.
+                {"zpid": "47.61503--122.34274", "price": {"x": 1}, "address": "2208 4th Ave"},
+                {"zpid": 1, "address": "a"},
+            ],
+            "listResults": [],
+        }
+
+    result = search.tiled_search(
+        fake_search,
+        bbox=BBox(north=10, east=10, south=0, west=0),
+        max_depth=0,
+        max_requests=5,
+    )
+
+    assert len(result["mapResults"]) == 2
+    assert result["budget_exhausted"] is False
+
+
 @pytest.mark.parametrize("fn", [search.for_sale, search.for_rent, search.sold])
 def test_listing_type_functions_reject_filter_state(fake_http, fn):
     fake_http.install("PUT", json_data={"cat1": {"searchResults": {}}})

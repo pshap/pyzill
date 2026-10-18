@@ -198,11 +198,11 @@ def request(  # noqa: PLR0913 - central request primitive
     Raises:
         ZillowError: If the response status is not 2xx.
     """
-    RequestOptions(proxy_url, impersonate, timeout, max_retries)
-    proxies = build_proxies(proxy_url)
+    options = RequestOptions(proxy_url, impersonate, timeout, max_retries)
+    proxies = build_proxies(options.proxy_url)
     last_exception: Exception = RuntimeError("pyzill.http.request sent no requests")
 
-    for attempt in range(max_retries + 1):
+    for attempt in range(options.max_retries + 1):
         _limiter.wait()
         try:
             response = requests.request(
@@ -210,12 +210,12 @@ def request(  # noqa: PLR0913 - central request primitive
                 url=url,
                 headers=headers,
                 proxies=proxies,
-                impersonate=impersonate,
-                timeout=timeout,
+                impersonate=options.impersonate,
+                timeout=options.timeout,
                 json=json,
             )
         except RequestException:
-            if attempt < max_retries:
+            if attempt < options.max_retries:
                 time.sleep(_retry_delay(attempt))
                 continue
             raise
@@ -231,7 +231,7 @@ def request(  # noqa: PLR0913 - central request primitive
         else:
             last_exception = ZillowBlockedError(response.status_code, url, body_snippet)
         should_retry = response.status_code >= _HTTP_SERVER_ERROR_MIN or response.status_code == _HTTP_TOO_MANY_REQUESTS
-        if should_retry and attempt < max_retries:
+        if should_retry and attempt < options.max_retries:
             retry_after = (
                 response.headers.get("Retry-After") if response.status_code == _HTTP_TOO_MANY_REQUESTS else None
             )

@@ -1,3 +1,4 @@
+import json
 import warnings
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any, TypedDict, Unpack, cast
@@ -409,7 +410,20 @@ def tiled_search(  # noqa: PLR0913
     requests_used = 0
     budget_exhausted = False
 
-    def collect(tile: BBox, depth: int) -> None:
+    def _listing_identity(listing: Mapping[str, Any]) -> str:
+        """A stable dedup key for a raw listing.
+
+        Prefers the canonical identifiers (``zpid`` then ``detailUrl``); falls
+        back to a JSON serialization of the whole row. ``repr(sorted(...))``
+        is avoided because mixed-type values (e.g. a building card whose
+        ``zpid`` is a lat-lng string) make ``sorted`` raise ``TypeError``.
+        """
+        identity = listing.get("zpid") or listing.get("detailUrl")
+        if identity is None:
+            identity = json.dumps(listing, sort_keys=True, default=str)
+        return str(identity)
+
+    def _absorb_tile(tile: BBox, depth: int) -> None:
         nonlocal requests_used, budget_exhausted
         if requests_used >= max_requests:
             if not budget_exhausted:
@@ -431,19 +445,18 @@ def tiled_search(  # noqa: PLR0913
             for listing in response.get(result_key, []) or []:
                 if not isinstance(listing, Mapping):
                     continue
-                identity = listing.get("zpid") or listing.get("detailUrl") or repr(sorted(listing.items()))
-                combined[result_key].setdefault(str(identity), dict(listing))
+                combined[result_key].setdefault(_listing_identity(listing), dict(listing))
         if on_progress is not None:
             on_progress(requests_used, len(combined["mapResults"]))
 
         if len(map_results) >= _RESULT_CAP:
             if depth < max_depth:
                 for child in tile.split():
-                    collect(child, depth + 1)
+                    _absorb_tile(child, depth + 1)
             elif on_cap is not None:
                 on_cap()
 
-    collect(bbox, 0)
+    _absorb_tile(bbox, 0)
     return {
         "mapResults": list(combined["mapResults"].values()),
         "listResults": list(combined["listResults"].values()),

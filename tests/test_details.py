@@ -77,32 +77,21 @@ def test_detail_url_rejects_non_zillow_hosts(monkeypatch, fake_http, fetch):
     assert fake_http.calls == []
 
 
-@pytest.mark.parametrize(
-    "alias",
-    [
-        details.get_from_department_id,
-        details.get_from_deparment_id,
-    ],
-)
-def test_department_id_aliases_warn(fake_http, department_detail_body, alias):
+def test_department_aliases_warn_and_delegate(fake_http, department_detail_body):
+    """The deprecated `department` aliases warn and delegate to the apartment fetchers."""
     fake_http.install("GET", content=department_detail_body)
 
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        assert alias("CgKZT4")["id"] == "CgKZT4"
-
-
-@pytest.mark.parametrize(
-    "alias",
-    [
-        details.get_from_department_url,
-        details.get_from_deparment_url,
-    ],
-)
-def test_department_url_aliases_warn(fake_http, department_detail_body, alias):
-    fake_http.install("GET", content=department_detail_body)
-
+        assert details.get_from_department_id("CgKZT4")["id"] == "CgKZT4"
     with pytest.warns(DeprecationWarning, match="deprecated"):
-        assert alias("https://www.zillow.com/apartments/CgKZT4/")["id"] == "CgKZT4"
+        assert details.get_from_department_url("https://www.zillow.com/apartments/CgKZT4/")["id"] == "CgKZT4"
+    assert fake_http.calls[-1]["url"] == "https://www.zillow.com/apartments/CgKZT4/"
+
+
+def test_deprecated_misspelling_removed():
+    """The historical `deparment` misspellings are gone from the public API."""
+    assert not hasattr(details, "get_from_deparment_id")
+    assert not hasattr(details, "get_from_deparment_url")
 
 
 def test_detail_http_error_raises(fake_http):
