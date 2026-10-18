@@ -126,16 +126,19 @@ def _load_fixture(name: str) -> Any | None:
 
 @pytest.mark.parametrize("name", ["search_sale.json", "search_rent.json", "search_sold.json"])
 def test_search_fixture_extracts_and_normalizes(name: str) -> None:
-    """A captured search fixture must produce normalized listings with zpids.
+    """A captured search fixture must produce normalized listing rows.
 
-    Rent fixtures are only structurally checked: whether rental mapResults
-    contain building-only entries needing unit expansion is an open question
-    (see CHANGELOG Unverified), so no behavioral assertion is made here.
+    Real mapResults mix individual listings with building-only entries
+    (``isBuilding``, no zpid at any depth); normalization keeps both, with
+    ``zpid=None`` for buildings. Assert the documented int-or-None zpid
+    shape and that rows carry parseable content -- not that every row is a
+    home, since rental mapResults can be entirely building entries.
     """
     payload = _load_fixture(name)
     listings = normalize_listings(extract_listings(payload))
-    assert listings, f"{name} produced no listings"
-    assert all(isinstance(listing["zpid"], int) for listing in listings)
+    assert listings, f"{name} produced no rows"
+    assert all(listing["zpid"] is None or isinstance(listing["zpid"], int) for listing in listings)
+    assert any(listing["address"] or listing["price"] is not None for listing in listings)
 
 
 @pytest.mark.parametrize("name", ["detail_home.json", "detail_apartment.json"])

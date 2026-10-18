@@ -3,11 +3,12 @@
 
 These fixtures let the offline test suite detect Zillow payload drift that
 synthetic conftest bodies cannot. This script hits real Zillow endpoints
-(rate-limited by pyzill); run it manually and review the output before
-committing. Captured payloads are trimmed to --max-results listings and
-contact/PII-prone fields (agent, broker, phone, email, MLS, attribution)
-are redacted; public listing data (zpid, price, address components) is
-kept because the parsers depend on it.
+(rate-limited by pyzill); run it manually when you want to validate against
+current payloads. Captured fixtures contain real listing data and are
+gitignored -- keep them local. Payloads are trimmed to --max-results
+listings and contact/PII-prone fields (agent, broker, phone, email, MLS,
+attribution) are redacted; public listing data (zpid, price, address
+components) is kept because the parsers depend on it.
 
 Usage:
     python scripts/capture_fixture.py search-sale --confirm
@@ -143,8 +144,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.confirm:
         print(
             "Refusing to contact Zillow without --confirm.\n"
-            "This captures real responses (rate-limited) for tests/fixtures/.\n"
-            "Review and sanitize output before committing.",
+            "This captures real responses (rate-limited) into tests/fixtures/,\n"
+            "which is gitignored: fixtures stay local and are never committed.",
             file=sys.stderr,
         )
         return 2

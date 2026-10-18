@@ -84,16 +84,23 @@ All notable changes to this project are documented here.
   they cannot drift.
 
 ### Unverified (live Zillow validation required)
-- TODO: Confirm Zillow's default rent filter payload semantics and whether
-  rental `mapResults` contain building-only entries that need unit expansion.
+- TODO: Confirm Zillow's default rent filter payload semantics. Captured
+  Seattle samples (2026-10-18, `tests/fixtures/search_rent.json`) show
+  rental `mapResults` can be entirely building-only entries
+  (`isBuilding: true`, a `buildingId`, no zpid at any depth) even in
+  residential areas; building-detail responses expose a `floorPlans` list
+  with unit metadata, which is the concrete expansion path, but whether
+  and how `for_rent` should expand units remains open.
 - TODO: Compare Nominatim ZIP viewports with known ZCTA boundaries. Synthetic
   point-like viewports now trigger a CLI warning, but are not treated as ZIP
   boundaries.
-- Zillow responses were not fetched or captured during this work; these items
-  remain open rather than relying on speculative payload assumptions.
-- TODO: Capture and sanitize real sale, rent/building, sold, home-detail, and
-  apartment-detail responses before adding schema fixtures. Existing fixtures
-  are synthetic, so they cannot validate current Zillow payload drift.
+- Live sale/rent/sold search and home/apartment-detail responses were
+  captured and sanitized locally on 2026-10-18 via
+  `scripts/capture_fixture.py` (Seattle samples; mixed building and
+  individual-listing mapResults). Captured fixtures contain real listing
+  data and are intentionally not committed (`tests/fixtures/*.json` is
+  gitignored); run the capture script on demand to regenerate them, and
+  the fixture tests skip until then.
 
 ## [1.3.0] - 2026-10
 
