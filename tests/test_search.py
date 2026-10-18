@@ -1,5 +1,6 @@
 import inspect
 import time
+import warnings
 
 import pytest
 
@@ -227,24 +228,43 @@ def test_tiled_search_reports_cap_at_max_depth():
     assert capped == [True]
 
 
-def test_tiled_search_stops_at_request_budget_and_warns(capsys):
+def test_tiled_search_stops_at_request_budget_and_warns():
     calls: list[BBox] = []
 
     def always_capped(**kwargs):
         calls.append(kwargs["bbox"])
         return {"mapResults": [{"zpid": len(calls) * 1000 + index} for index in range(500)]}
 
-    result = search.tiled_search(
-        always_capped,
-        bbox=BBox(north=10, east=10, south=0, west=0),
-        max_depth=4,
-        max_requests=3,
-    )
+    with pytest.warns(UserWarning, match="request budget of 3 exhausted"):
+        result = search.tiled_search(
+            always_capped,
+            bbox=BBox(north=10, east=10, south=0, west=0),
+            max_depth=4,
+            max_requests=3,
+        )
 
     assert len(calls) == 3
     assert result["budget_exhausted"] is True
     assert len(result["mapResults"]) == 1500
-    assert "budget of 3 exhausted" in capsys.readouterr().err
+
+
+def test_tiled_search_on_budget_callback_overrides_warning():
+    def always_capped(**kwargs):
+        return {"mapResults": [{"zpid": index} for index in range(500)]}
+
+    seen: list[str] = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # no UserWarning should escape when on_budget is set
+        result = search.tiled_search(
+            always_capped,
+            bbox=BBox(north=10, east=10, south=0, west=0),
+            max_depth=4,
+            max_requests=2,
+            on_budget=lambda: seen.append("budget"),
+        )
+
+    assert result["budget_exhausted"] is True
+    assert seen == ["budget"]
 
 
 def test_tiled_search_default_budget_of_fifty_requests():
@@ -254,11 +274,12 @@ def test_tiled_search_default_budget_of_fifty_requests():
         calls[0] += 1
         return {"mapResults": [{"zpid": calls[0] * 1000 + index} for index in range(500)]}
 
-    result = search.tiled_search(
-        always_capped,
-        bbox=BBox(north=10, east=10, south=0, west=0),
-        max_depth=3,
-    )
+    with pytest.warns(UserWarning, match="budget of 50 exhausted"):
+        result = search.tiled_search(
+            always_capped,
+            bbox=BBox(north=10, east=10, south=0, west=0),
+            max_depth=3,
+        )
 
     assert calls[0] == 50
     assert result["budget_exhausted"] is True

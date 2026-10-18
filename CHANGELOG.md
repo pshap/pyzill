@@ -7,8 +7,9 @@ All notable changes to this project are documented here.
 ### Added
 - `tiled_search` now takes `max_requests` (default 50) bounding the total
   number of search requests in a recursive tiling run; when the budget runs
-  out mid-tree a warning is printed to stderr and partial results are
-  returned with a `budget_exhausted` flag. An optional `on_progress`
+  out mid-tree partial results are returned with a `budget_exhausted` flag
+  and a `UserWarning` is emitted (an `on_budget` callback can override the
+  warning). An optional `on_progress`
   callback reports `(requests_used, unique_map_results_so_far)` after each
   tile. The CLI exposes this as `--max-requests` on `search`/`db sync`
   (default 50), lowers the `--max-depth` ceiling from 8 to 6, and prints

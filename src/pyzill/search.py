@@ -1,4 +1,4 @@
-import sys
+import warnings
 from collections.abc import Callable, Iterator, Mapping
 from itertools import islice
 from typing import Any, TypedDict, Unpack, cast
@@ -375,6 +375,7 @@ def tiled_search(  # noqa: PLR0913
     max_requests: int = _DEFAULT_MAX_REQUESTS,
     on_cap: Callable[[], None] | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    on_budget: Callable[[], None] | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Recursively split capped map searches and deduplicate their results.
@@ -386,9 +387,10 @@ def tiled_search(  # noqa: PLR0913
 
     ``max_requests`` (default 50) bounds the total number of search requests.
     Without a budget, ``--max-depth``-style deep tiling can issue tens of
-    thousands of requests. When the budget runs out mid-tree, a warning is
-    printed to stderr, recursion stops, and the partial results are returned
-    with ``budget_exhausted`` set to True.
+    thousands of requests. When the budget runs out mid-tree, recursion
+    stops and the partial results are returned with ``budget_exhausted``
+    set to True; ``on_budget`` (if given) is called once when that happens,
+    otherwise a ``UserWarning`` is emitted.
 
     Returns:
         dict[str, Any]: ``mapResults`` and ``listResults`` lists, plus a
@@ -408,11 +410,15 @@ def tiled_search(  # noqa: PLR0913
         if requests_used >= max_requests:
             if not budget_exhausted:
                 budget_exhausted = True
-                print(
-                    f"pyzill: warning: request budget of {max_requests} exhausted; "
-                    "returning partial results (raise max_requests or lower max_depth for more)",
-                    file=sys.stderr,
-                )
+                if on_budget is not None:
+                    on_budget()
+                else:
+                    warnings.warn(
+                        f"request budget of {max_requests} exhausted; returning partial results "
+                        "(raise max_requests or lower max_depth for more)",
+                        UserWarning,
+                        stacklevel=2,
+                    )
             return
         response = search_fn(**kwargs, bbox=tile)
         requests_used += 1

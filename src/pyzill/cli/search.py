@@ -241,6 +241,10 @@ def fetch_and_normalize(
                     "results may be truncated"
                 ),
                 on_progress=lambda used, total: progress(f"tile {used}:", f"{total} listings so far"),
+                on_budget=lambda: warn(
+                    f"request budget of {options.max_requests} exhausted; returning partial results "
+                    "(raise --max-requests or lower --max-depth for more)"
+                ),
                 **search_kwargs,
             )
         else:
