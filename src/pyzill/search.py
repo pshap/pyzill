@@ -1,6 +1,6 @@
 from collections.abc import Callable, Iterator, Mapping
 from itertools import islice
-from typing import Any, TypedDict, Unpack
+from typing import Any, TypedDict, Unpack, cast
 
 from pyzill import http
 from pyzill.bbox import CONTINENTAL_US, BBox
@@ -75,7 +75,7 @@ def for_rent(
         filter_state["isRoomForRent"] = {"value": True}
     if not is_entire_place:
         filter_state["isEntirePlaceForRent"] = {"value": False}
-    search_kwargs: SearchParams = {**kwargs, "filter_state": filter_state}
+    search_kwargs = cast(SearchParams, {**kwargs, "filter_state": filter_state})
     return search(**search_kwargs)
 
 
@@ -95,7 +95,7 @@ def sold(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         **_RENT_SOLD_BASE,
         **_flags(sortSelection="globalrelevanceex", isForRent=False, isRecentlySold=True),
     }
-    search_kwargs: SearchParams = {**kwargs, "filter_state": filter_state}
+    search_kwargs = cast(SearchParams, {**kwargs, "filter_state": filter_state})
     return search(**search_kwargs)
 
 
