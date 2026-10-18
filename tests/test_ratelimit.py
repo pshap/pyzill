@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from pyzill.ratelimit import RateLimiter
 
 
@@ -42,3 +44,13 @@ def test_pyzill_rate_limit_env_precedes_legacy(monkeypatch):
     monkeypatch.setenv("ZILLOW_MIN_INTERVAL", "9")
 
     assert _read_min_interval() == 2.5
+
+
+@pytest.mark.parametrize(("raw", "expected"), [("bad", 1.5), ("-3", 0.0), ("0", 0.0)])
+def test_min_interval_environment_parsing(monkeypatch, raw, expected):
+    from pyzill.ratelimit import _read_min_interval
+
+    monkeypatch.setenv("PYZILL_RATE_LIMIT", raw)
+    monkeypatch.delenv("ZILLOW_MIN_INTERVAL", raising=False)
+
+    assert _read_min_interval() == expected

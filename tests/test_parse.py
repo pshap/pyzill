@@ -51,3 +51,38 @@ def test_parse_body_departments_rejects_missing_gdp() -> None:
 
     with pytest.raises(ZillowParseError):
         parse_body_departments(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'<script id="__NEXT_DATA__">{"props":{"pageProps":{"componentProps":[]}}}</script>',
+    ],
+)
+def test_parse_rejects_unexpected_component_shapes(body: bytes) -> None:
+    with pytest.raises(ZillowParseError):
+        parse_body(body)
+
+
+def test_parse_departments_rejects_unexpected_gdp_shape() -> None:
+    body = (
+        b'<script id="__NEXT_DATA__">'
+        b'{"props":{"pageProps":{"componentProps":{"initialReduxState":{"gdp":[]}}}}}</script>'
+    )
+
+    with pytest.raises(ZillowParseError):
+        parse_body_departments(body)
+
+
+def test_parse_home_rejects_malformed_gdp_cache_json() -> None:
+    body = b'<script id="__NEXT_DATA__">{"props":{"pageProps":{"componentProps":{"gdpClientCache":"{"}}}}</script>'
+
+    with pytest.raises(ZillowParseError):
+        parse_body_home(body)
+
+
+def test_parse_home_rejects_cache_without_property() -> None:
+    body = b'<script id="__NEXT_DATA__">{"props":{"pageProps":{"componentProps":{"gdpClientCache":"{}"}}}}</script>'
+
+    with pytest.raises(ZillowParseError):
+        parse_body_home(body)

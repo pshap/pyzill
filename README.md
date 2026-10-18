@@ -649,6 +649,10 @@ ruff format .     # format
 mypy              # type-check (strict; config in pyproject.toml)
 ```
 
+The `@pytest.mark.live` smoke checks are skipped by default and in CI. To opt
+in, set `PYZILL_LIVE=1`; set `PYZILL_LIVE_HOME_ID` to a current home zpid for
+the detail check. The live search uses a small fixed Schenectady viewport.
+
 ## License
 
 MIT

@@ -38,6 +38,9 @@ All notable changes to this project are documented here.
   boundaries.
 - Zillow responses were not fetched or captured during this work; these items
   remain open rather than relying on speculative payload assumptions.
+- TODO: Capture and sanitize real sale, rent/building, sold, home-detail, and
+  apartment-detail responses before adding schema fixtures. Existing fixtures
+  are synthetic, so they cannot validate current Zillow payload drift.
 
 ## [1.3.0] - 2026-10
 
