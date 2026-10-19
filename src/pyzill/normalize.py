@@ -111,6 +111,8 @@ def _to_number(value: Any) -> int | float | None:
 
 
 def _format_epoch_ms(value: Any) -> str | None:
+    if isinstance(value, bool):
+        return None
     if isinstance(value, (int, float)) and value > 0:
         try:
             return datetime.fromtimestamp(value / 1000, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -264,16 +266,20 @@ def normalize_listing(listing: Any) -> Listing | None:
         price = parse_price(info.get("price"))
 
     detail_url = listing.get("detailUrl")
-    if detail_url and detail_url.startswith("/"):
+    if isinstance(detail_url, str) and detail_url.startswith("/"):
         detail_url = _BASE_URL + detail_url
+    elif not isinstance(detail_url, str):
+        detail_url = None
 
     days_on_zillow_raw = (
         info.get("daysOnZillow") if info.get("daysOnZillow") is not None else listing.get("daysOnZillow")
     )
-    days_on_zillow = int(days_on_zillow_raw) if isinstance(days_on_zillow_raw, (int, float)) else None
+    days_on_zillow_number = _to_number(days_on_zillow_raw)
+    days_on_zillow = int(days_on_zillow_number) if days_on_zillow_number is not None else None
 
     price_change_raw = info.get("priceChange") if info.get("priceChange") is not None else listing.get("priceChange")
-    price_change = int(price_change_raw) if isinstance(price_change_raw, (int, float)) else None
+    price_change_number = _to_number(price_change_raw)
+    price_change = int(price_change_number) if price_change_number is not None else None
 
     date_price_changed_raw = info.get("datePriceChanged") or listing.get("datePriceChanged")
     price_change_date = _format_epoch_ms(date_price_changed_raw)
@@ -285,7 +291,8 @@ def normalize_listing(listing: Any) -> Listing | None:
     lot_area_unit = info.get("lotAreaUnit") or listing.get("lotAreaUnit")
 
     year_built_raw = info.get("yearBuilt") if info.get("yearBuilt") is not None else listing.get("yearBuilt")
-    year_built = int(year_built_raw) if isinstance(year_built_raw, (int, float)) and year_built_raw > 0 else None
+    year_built_number = _to_number(year_built_raw)
+    year_built = int(year_built_number) if year_built_number is not None and year_built_number > 0 else None
 
     tax_assessed = parse_price(info.get("taxAssessedValue") or listing.get("taxAssessedValue"))
     listing_sub_type = _extract_listing_sub_type(info.get("listing_sub_type") or listing.get("listing_sub_type"))
@@ -300,10 +307,10 @@ def normalize_listing(listing: Any) -> Listing | None:
         "baths": _number_with_zero_fallback(listing.get("baths"), info.get("bathrooms"), preserve_zero=True),
         "area": _number_with_zero_fallback(listing.get("area"), info.get("livingArea"), preserve_zero=False),
         "address": listing.get("address"),
-        "street": info.get("streetAddress"),
-        "city": info.get("city"),
+        "street": _first(info.get("streetAddress"), listing.get("addressStreet")),
+        "city": _first(info.get("city"), listing.get("addressCity")),
         "state": _first(listing.get("addressState"), info.get("state")),
-        "zipcode": info.get("zipcode"),
+        "zipcode": _first(info.get("zipcode"), listing.get("addressZipcode")),
         "latitude": _first_number(lat_long.get("latitude"), info.get("latitude")),
         "longitude": _first_number(lat_long.get("longitude"), info.get("longitude")),
         "home_type": info.get("homeType"),
@@ -373,7 +380,8 @@ def normalize_property_detail(property_data: Mapping[str, Any]) -> PropertyDetai
     year_built_val = (
         reso_dict.get("yearBuilt") if reso_dict.get("yearBuilt") is not None else property_data.get("yearBuilt")
     )
-    year_built = int(year_built_val) if isinstance(year_built_val, (int, float)) and year_built_val > 0 else None
+    year_built_number = _to_number(year_built_val)
+    year_built = int(year_built_number) if year_built_number is not None and year_built_number > 0 else None
 
     lot_size_val = property_data.get("lotSize") or reso_dict.get("lotSize") or property_data.get("lotAreaValue")
     lot_size = str(lot_size_val) if lot_size_val is not None else None
@@ -382,8 +390,9 @@ def normalize_property_detail(property_data: Mapping[str, Any]) -> PropertyDetai
     hoa_fee = _to_number(hoa_fee_val)
 
     photo_count_val = property_data.get("photoCount")
-    if isinstance(photo_count_val, (int, float)):
-        photos_count = int(photo_count_val)
+    photo_count_number = _to_number(photo_count_val)
+    if photo_count_number is not None:
+        photos_count = int(photo_count_number)
     elif isinstance(property_data.get("originalPhotos"), list):
         photos_count = len(property_data["originalPhotos"])
     elif isinstance(property_data.get("responsivePhotos"), list):

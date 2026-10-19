@@ -20,20 +20,23 @@ class _GeoStub:
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.kwargs: list[dict[str, object]] = []
         self.result = GeoResult(
             display_name="Testville",
             bbox=BBox(north=42.9, south=42.7, east=-73.8, west=-74.0),
         )
         self.error: Exception | None = None
 
-    def __call__(self, place: str, **_kwargs: object) -> GeoResult:
+    def __call__(self, place: str, **kwargs: object) -> GeoResult:
         self.calls.append(place)
+        self.kwargs.append(kwargs)
         if self.error is not None:
             raise self.error
         return self.result
 
     def reset(self) -> None:
         self.calls.clear()
+        self.kwargs.clear()
         self.error = None
 
 
@@ -361,6 +364,18 @@ class TestDetailCommands:
         )
         assert result.exit_code == 0
 
+    def test_detail_apartment_rejects_non_zillow_url_as_usage_error(self, fake_http):
+        fake_http.install("GET")
+        result = runner.invoke(app, ["detail", "apartment", "https://example.com/listing"])
+        assert result.exit_code == 2
+        assert fake_http.calls == []
+
+    def test_detail_apartment_encodes_id_in_url(self, fake_http, department_detail_body):
+        fake_http.install("GET", content=department_detail_body)
+        result = runner.invoke(app, ["detail", "apartment", "Cg KZT4"])
+        assert result.exit_code == 0
+        assert fake_http.calls[-1]["url"] == "https://www.zillow.com/apartments/Cg%20KZT4/"
+
     def test_detail_requires_url_or_id(self):
         result = runner.invoke(app, ["detail", "home"])
         assert result.exit_code == 2
@@ -576,6 +591,12 @@ class TestErrorHandling:
 
 class TestGlobalOptions:
     """Test global options."""
+
+    def test_geocode_receives_configured_proxy(self, fake_http, search_success_body):
+        fake_http.install("PUT", json_data=search_success_body)
+        result = runner.invoke(app, ["--proxy", "http://user:pass@proxy:8080", "search", "sale", "12305"])
+        assert result.exit_code == 0
+        assert _GEO_STUB.kwargs[-1]["proxy_url"] == "http://user:pass@proxy:8080"
 
     def test_proxy_option(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
@@ -1506,6 +1527,25 @@ class TestDatabaseCommands:
         event_types = {(event["event"], event["zpid"]) for event in json.loads(result.stdout)}
         assert ("price_drop", 1) in event_types
         assert ("delisted", 2) in event_types
+
+    def test_db_changes_normalizes_since_with_offset(self, tmp_path):
+        rows = [{"zpid": 1, "price": 250000}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "changes.db"
+        runner.invoke(
+            app, ["db", "import", str(input_file), "--fetched-at", "2026-10-01T12:00:00Z", "--db", str(db_path)]
+        )
+
+        # An offset timestamp must compare the same as its canonical UTC form.
+        result = runner.invoke(app, ["db", "changes", "2026-10-01T14:00:00+02:00", "--db", str(db_path)])
+        assert result.exit_code == 0
+
+    def test_db_changes_rejects_invalid_since(self, tmp_path):
+        db_path = tmp_path / "changes.db"
+        runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        result = runner.invoke(app, ["db", "changes", "not-a-date", "--db", str(db_path)])
+        assert result.exit_code == 2
 
     def test_db_stats_missing_database(self, tmp_path):
         db_path = tmp_path / "nonexistent.db"

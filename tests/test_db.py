@@ -221,6 +221,38 @@ def test_status_history_records_only_transitions(tmp_path: Path):
     conn.close()
 
 
+def test_status_history_tracks_later_status_within_one_batch(tmp_path: Path):
+    """A batch with repeated zpids must compare each row to the status staged just before it."""
+    conn = connect(tmp_path / "batch_status.db")
+
+    # Pre-batch status is Active; the batch first confirms Active then moves to
+    # Pending, and only the transition should be recorded (using a batched
+    # pre-read rather than a per-row SELECT).
+    upsert_listings(conn, [{"zpid": 1, "status": "Active"}], seen_utc="2026-10-01T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "status": "Active"}, {"zpid": 1, "status": "Pending"}],
+        seen_utc="2026-10-02T00:00:00Z",
+    )
+
+    history = conn.execute(
+        "SELECT status, first_seen_utc FROM status_history WHERE zpid = 1 ORDER BY first_seen_utc"
+    ).fetchall()
+    assert history == [("Active", "2026-10-01T00:00:00Z"), ("Pending", "2026-10-02T00:00:00Z")]
+    conn.close()
+
+
+def test_upsert_does_not_change_kind_for_existing_pair(tmp_path: Path):
+    """The (zpid, kind) primary key means a sighting never rewrites another kind's row."""
+    conn = connect(tmp_path / "kinds.db")
+    upsert_listings(conn, [{"zpid": 1, "price": 300000}], kind="sale", seen_utc="2026-10-01T00:00:00Z")
+    upsert_listings(conn, [{"zpid": 1, "price": 2200}], kind="rent", seen_utc="2026-10-01T00:00:00Z")
+
+    rows = conn.execute("SELECT kind, price FROM listings WHERE zpid = 1 ORDER BY kind").fetchall()
+    assert rows == [("rent", 2200), ("sale", 300000)]
+    conn.close()
+
+
 def test_load_listings_supports_filters_and_limit(tmp_path: Path):
     conn = connect(tmp_path / "filtered.db")
     upsert_listings(

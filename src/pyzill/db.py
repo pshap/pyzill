@@ -324,10 +324,9 @@ class SyncStats:
     ``price_changes`` is a per-batch heuristic, not a durable metric: each
     priced sighting of an existing same-kind listing is compared against the
     recorded state, so it counts a price that differs from the most recent
-    prior recorded price. New zpids and kind changes never count; the
-    first-ever price on an existing listing counts. It is useful for
-    "what changed in this sync" reporting, not for long-term tracking —
-    use ``price_history`` for that.
+    prior recorded price. New zpids never count; the first-ever price on an
+    existing listing counts. It is useful for "what changed in this sync"
+    reporting, not for long-term tracking — use ``price_history`` for that.
     """
 
     added: int
@@ -466,21 +465,15 @@ def _listing_upsert_sql() -> str:
 
     A sighting updates the row only when it is at least as recent as the
     stored one; older backfills extend first_seen_utc only. Descriptive
-    fields use COALESCE so missing values never erase known ones; a kind
-    change takes the new price outright.
+    fields use COALESCE so missing values never erase known ones.
+
+    The conflict target is ``(zpid, kind)``, so an insert can never change a
+    row's kind; there is no kind-transition branch.
     """
     columns = ", ".join(_LISTING_TABLE_COLUMNS)
     placeholders = _placeholders(len(_LISTING_TABLE_COLUMNS))
     current = "excluded.last_seen_utc >= listings.last_seen_utc"
-    assignments = [
-        f"kind = CASE WHEN {current} THEN excluded.kind ELSE listings.kind END",
-        (
-            f"price = CASE WHEN {current} THEN "
-            "CASE WHEN listings.kind != excluded.kind THEN excluded.price "
-            "ELSE COALESCE(excluded.price, listings.price) END "
-            "ELSE listings.price END"
-        ),
-    ]
+    assignments = [f"price = CASE WHEN {current} THEN COALESCE(excluded.price, listings.price) ELSE listings.price END"]
     assignments.extend(
         f"{column} = CASE WHEN {current} THEN COALESCE(excluded.{column}, listings.{column}) ELSE listings.{column} END"
         for column in _DATA_COLUMNS
@@ -536,6 +529,29 @@ def _prefetch(
     return existing, prior_prices
 
 
+def _latest_statuses(
+    conn: sqlite3.Connection, zpids: list[int], kind: str, seen_utc: str
+) -> dict[int, str]:
+    """Return zpid -> latest status recorded at or before ``seen_utc``.
+
+    Replaces a per-row SELECT so a batch issues one query per chunk instead of
+    one per listing.
+    """
+    latest: dict[int, tuple[str, str]] = {}
+    for start in range(0, len(zpids), _CHUNK):
+        chunk = zpids[start : start + _CHUNK]
+        marks = _placeholders(len(chunk))
+        query = (
+            "SELECT zpid, status, first_seen_utc FROM status_history "  # noqa: S608 - values are bound
+            f"WHERE zpid IN ({marks}) AND kind = ? AND first_seen_utc <= ?"
+        )
+        for zpid, status, row_seen in conn.execute(query, (*chunk, kind, seen_utc)):
+            current = latest.get(zpid)
+            if current is None or row_seen > current[0]:
+                latest[zpid] = (row_seen, status)
+    return {zpid: status for zpid, (_, status) in latest.items()}
+
+
 def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
     conn: sqlite3.Connection,
     rows: Sequence[Mapping[str, Any]],
@@ -549,12 +565,11 @@ def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
     """Upsert listing rows into the database and finalize their sync run.
 
     Skips rows without a zpid (counted in stats). For each zpid:
-        - ``listings`` stores the latest sighting for each zpid and its kind
-          (the primary key is ``(zpid, kind)``, so a sighting never changes a
-          row's kind).
+        - ``listings`` stores the latest sighting for each ``(zpid, kind)``
+          pair, so a sighting never changes a row's kind.
         - ``price_history`` stores priced sightings partitioned by kind.
-        - Missing fields never erase known values; a missing price keeps the last
-            price for the same kind.
+        - Missing fields never erase known values; a missing price keeps the
+          last price for the same ``(zpid, kind)``.
 
     Existing-row state, prior prices, and prior statuses are read in batched
     queries before any writes; the write itself is one UPSERT per row. The run
@@ -599,6 +614,7 @@ def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
 
     zpids = list(dict.fromkeys(zpid for zpid, _, _, _ in prepared))
     existing, prior_prices = _prefetch(conn, zpids, kind, seen_utc)
+    prior_statuses = _latest_statuses(conn, zpids, kind, seen_utc)
     if run_id is None:
         run_id = begin_sync_run(conn, kind=kind, started_utc=seen_utc)
 
@@ -642,14 +658,11 @@ def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
                 json.dumps(raw_row, ensure_ascii=False, allow_nan=False),
             )
         )
-        if isinstance(status, str) and status:
-            previous_status = conn.execute(
-                "SELECT status FROM status_history WHERE zpid = ? AND kind = ? "
-                "AND first_seen_utc <= ? ORDER BY first_seen_utc DESC LIMIT 1",
-                (zpid, kind, seen_utc),
-            ).fetchone()
-            if previous_status is None or previous_status[0] != status:
-                status_entries.append((zpid, kind, status, seen_utc))
+        if isinstance(status, str) and status and prior_statuses.get(zpid) != status:
+            status_entries.append((zpid, kind, status, seen_utc))
+            # Later rows for the same zpid in this batch must compare against
+            # the status we just staged, not the stale pre-batch one.
+            prior_statuses[zpid] = status
 
     conn.executemany(_LISTING_UPSERT_SQL, listing_params)
     if history_params:

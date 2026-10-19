@@ -103,6 +103,22 @@ def resolve_db_path(explicit_path: str | None, environment_path: str | None, def
     return default_path
 
 
+def normalize_utc_timestamp(value: str, *, label: str) -> str:
+    """Parse an ISO-8601 timestamp and return the canonical ``...Z`` form.
+
+    Normalizing keeps string comparisons against stored timestamps (which are
+    fixed-width UTC) correct even when the caller passes an offset or
+    milliseconds. Invalid input is a usage error (exit 2).
+    """
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except ValueError:
+        error(f"Invalid {label} timestamp: {value}. Use ISO format like 2026-10-17T12:00:00Z", code=2)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def _resolve_db_path(db_path: str | None) -> Path:
     """Resolve database path from --db, PYZILL_DB env, or default."""
     environment_path = read_env("PYZILL_DB")
@@ -325,16 +341,7 @@ def db_import(
         return
 
     # Parse timestamp; store it in the canonical fixed-width UTC format.
-    if fetched_at:
-        try:
-            parsed = dt.datetime.fromisoformat(fetched_at)
-        except ValueError:
-            error(f"Invalid --fetched-at timestamp: {fetched_at}. Use ISO format like 2026-10-17T12:00:00Z", code=2)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=dt.UTC)
-        fetched_at = parsed.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    else:
-        fetched_at = utc_now()
+    fetched_at = normalize_utc_timestamp(fetched_at, label="--fetched-at") if fetched_at else utc_now()
 
     _upsert_and_report(
         imported,
@@ -401,6 +408,7 @@ def db_changes(
     output: OutputOpt = None,
 ) -> None:
     """Report listing changes since a timestamp."""
+    since = normalize_utc_timestamp(since, label="SINCE argument")
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
         events = get_changes(conn, since)
     write_output(events, output_format, output)

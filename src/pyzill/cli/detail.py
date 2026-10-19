@@ -31,6 +31,29 @@ def home_detail_target(value: str) -> tuple[str, int | str]:
     raise ValueError("Home detail input must be a zpid or an HTTPS Zillow URL")
 
 
+def apartment_detail_target(value: str) -> tuple[str, str]:
+    """Return the target kind and value for an apartment detail command.
+
+    A bare string is treated as an apartment ID (the common case); anything
+    that looks like a URL must be an HTTPS Zillow URL. Validation happens here
+    so a bad URL is a usage error (exit 2) rather than the deferred
+    "Unexpected error" the library would raise.
+    """
+    cleaned = value.strip()
+    if not cleaned:
+        raise ValueError("Apartment detail input must be an apartment ID or an HTTPS Zillow URL")
+    if "://" not in cleaned and "/" not in cleaned:
+        return "id", cleaned
+    try:
+        parsed = urlsplit(cleaned)
+        host = parsed.hostname or ""
+    except ValueError as exc:
+        raise ValueError("Apartment detail input must be an apartment ID or an HTTPS Zillow URL") from exc
+    if parsed.scheme == "https" and (host == "zillow.com" or host.endswith(".zillow.com")):
+        return "url", cleaned
+    raise ValueError("Apartment detail input must be an apartment ID or an HTTPS Zillow URL")
+
+
 def _path_segments(path: str) -> list[str | int]:
     """Split a dotted path into keys and list indices ('a.b[0].c' -> a, b, 0, c)."""
     segments: list[str | int] = []
@@ -130,6 +153,9 @@ def detail_apartment(
     path: PathOpt = None,
 ) -> None:
     """Fetch apartment details by URL or apartment ID."""
-    value = url_or_id.strip()
-    fetch = get_from_apartment_url if value.startswith("http") else get_from_apartment_id
-    run_detail(fetch, value, output_format, output, keys=keys, path=path)
+    try:
+        target_kind, target = apartment_detail_target(url_or_id)
+    except ValueError as exc:
+        error(str(exc), code=2)
+    fetch = get_from_apartment_id if target_kind == "id" else get_from_apartment_url
+    run_detail(fetch, target, output_format, output, keys=keys, path=path)

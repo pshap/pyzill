@@ -155,6 +155,51 @@ def test_normalize_listing_falls_back_to_hdp_home_info():
     assert out["status"] == "FOR_SALE"
 
 
+def test_normalize_listing_ignores_non_string_detail_url():
+    out = normalize.normalize_listing({"zpid": "1", "detailUrl": {"unexpected": "object"}})
+    assert out["detail_url"] is None
+
+
+def test_normalize_listing_treats_bool_numeric_fields_as_unknown():
+    raw = {"zpid": "1", "daysOnZillow": True, "yearBuilt": True, "priceChange": True}
+    out = normalize.normalize_listing(raw)
+    assert out["days_on_zillow"] is None
+    assert out["year_built"] is None
+    assert out["price_change"] is None
+
+
+def test_normalize_listing_falls_back_to_top_level_address_fields():
+    """When hdpData.homeInfo is absent, top-level address fields fill street/city/zip."""
+    raw = {
+        "zpid": "1",
+        "addressStreet": "27 Washington Ave",
+        "addressCity": "Schenectady",
+        "addressState": "NY",
+        "addressZipcode": "12305",
+    }
+    out = normalize.normalize_listing(raw)
+
+    assert out["street"] == "27 Washington Ave"
+    assert out["city"] == "Schenectady"
+    assert out["state"] == "NY"
+    assert out["zipcode"] == "12305"
+
+
+def test_normalize_listing_prefers_home_info_address_over_top_level():
+    raw = {
+        "zpid": "1",
+        "addressStreet": "Top Street",
+        "addressCity": "Top City",
+        "addressZipcode": "00000",
+        "hdpData": {"homeInfo": {"streetAddress": "Nested St", "city": "Nested City", "zipcode": "12305"}},
+    }
+    out = normalize.normalize_listing(raw)
+
+    assert out["street"] == "Nested St"
+    assert out["city"] == "Nested City"
+    assert out["zipcode"] == "12305"
+
+
 def test_normalize_listing_coerces_coordinate_strings():
     out = normalize.normalize_listing({"zpid": "1", "latLong": {"latitude": "42.5", "longitude": "-73.9"}})
 

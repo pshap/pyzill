@@ -249,7 +249,7 @@ def fetch_and_normalize(
         # we never silently fall back to a continental-US search.
         debug(f"Geocoding {options.query!r}")
         try:
-            geo = geocode(options.query)
+            geo = geocode(options.query, proxy_url=http_kwargs.get("proxy_url"))
         except ValueError as e:
             error(str(e), code=1)
         debug(f"Geocoded {options.query!r} -> {geo.display_name}")

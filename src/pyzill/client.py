@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import cache
 from typing import Any, Literal, TypeVar
+from urllib.parse import quote
 
 from curl_cffi import requests
 
@@ -155,7 +156,7 @@ class ZillowClient:
         if apartment_id_or_url.startswith("https://"):
             url = apartment_id_or_url
         else:
-            url = f"{ZILLOW_HOME}/apartments/{apartment_id_or_url}/"
+            url = f"{ZILLOW_HOME}/apartments/{quote(apartment_id_or_url.strip(), safe='')}/"
 
         def call(selected: RequestOptions) -> dict[str, Any]:
             return details._fetch(url, parse_body_departments, selected)

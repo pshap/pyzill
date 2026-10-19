@@ -353,46 +353,50 @@ def _iter_search(
 
 
 def iter_search(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
-    """Yield individual for-sale listings from ``mapResults``.
+    """Yield for-sale listings from a single search response.
 
     Use :func:`iter_sale`, :func:`iter_rent`, or :func:`iter_sold` when the
     listing type should be explicit. Apply :func:`normalize_listings` to the
     iterator when normalized output is needed.
 
     Note:
-        Zillow caps ``mapResults`` at **500 listings per query**.  The
-        ``pagination`` argument does NOT increase this cap — it only
-        affects the sidebar ``listResults``.  If you get exactly 500
-        results and need more, split the bounding box into smaller
-        quadrants and run one query per quadrant (the ``split_bbox`` helper
-        below can generate those quadrants for you).
+        Despite the name, this is **not** a paginating iterator: it issues one
+        request and iterates that response's ``mapResults`` (lazily with
+        respect to yielding, but the request happens up front). Zillow caps
+        ``mapResults`` at **500 listings per query**; the ``pagination``
+        argument does NOT raise this cap — it only affects the sidebar
+        ``listResults``. For depth beyond one response use :func:`tiled_search`
+        (bounded by ``max_requests``) or split the bbox with :func:`split_bbox`
+        and query each quadrant.
 
     Args:
         max_items: Stop after yielding this many listings (None = all).
-        **kwargs: Passed directly to the search function.
+        **kwargs: Passed directly to the search function, which requires a
+            ``bbox`` or ``allow_nationwide=True``.
 
     Yields:
         Mapping[str, Any]: one raw listing from mapResults.
 
     Example:
-        >>> for listing in pyzill.iter_search(search_value="Schenectady NY"):
+        >>> bbox = pyzill.geocode.geocode("Schenectady NY").bbox
+        >>> for listing in pyzill.iter_search(search_value="Schenectady NY", bbox=bbox):
         ...     print(listing["address"])
     """
     yield from _iter_search(for_sale, max_items=max_items, kwargs=kwargs)
 
 
 def iter_sale(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
-    """Yield individual for-sale listings from ``mapResults``."""
+    """Yield for-sale listings from a single search response (see :func:`iter_search`)."""
     yield from _iter_search(for_sale, max_items=max_items, kwargs=kwargs)
 
 
 def iter_rent(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
-    """Yield individual for-rent listings from ``mapResults``."""
+    """Yield for-rent listings from a single search response (see :func:`iter_search`)."""
     yield from _iter_search(for_rent, max_items=max_items, kwargs=kwargs)
 
 
 def iter_sold(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
-    """Yield sold listings from the first response's ``mapResults`` only."""
+    """Yield sold listings from a single search response (see :func:`iter_search`)."""
     yield from _iter_search(sold, max_items=max_items, kwargs=kwargs)
 
 
