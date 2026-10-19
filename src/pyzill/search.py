@@ -1,5 +1,6 @@
 import json
 import warnings
+from collections import deque
 from collections.abc import Callable, Iterator, Mapping
 from typing import Any, TypedDict, Unpack, cast
 
@@ -395,7 +396,7 @@ def iter_sold(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mappin
     yield from _iter_search(sold, max_items=max_items, kwargs=kwargs)
 
 
-def tiled_search(  # noqa: PLR0913
+def tiled_search(  # noqa: PLR0913, PLR0912 - a single bounded tiling loop with callbacks
     search_fn: Callable[..., dict[str, Any]],
     *,
     bbox: BBox,
@@ -446,21 +447,23 @@ def tiled_search(  # noqa: PLR0913
             identity = json.dumps(listing, sort_keys=True, default=str)
         return str(identity)
 
-    def _absorb_tile(tile: BBox, depth: int) -> None:
-        nonlocal requests_used, budget_exhausted
+    # Breadth-first so a partial run under the request budget covers the whole
+    # area uniformly instead of exhausting the budget inside the first subtree.
+    queue: deque[tuple[BBox, int]] = deque([(bbox, 0)])
+    while queue:
         if requests_used >= max_requests:
-            if not budget_exhausted:
-                budget_exhausted = True
-                if on_budget is not None:
-                    on_budget()
-                else:
-                    warnings.warn(
-                        f"request budget of {max_requests} exhausted; returning partial results "
-                        "(raise max_requests or lower max_depth for more)",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-            return
+            budget_exhausted = True
+            if on_budget is not None:
+                on_budget()
+            else:
+                warnings.warn(
+                    f"request budget of {max_requests} exhausted; returning partial results "
+                    "(raise max_requests or lower max_depth for more)",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            break
+        tile, depth = queue.popleft()
         response = search_fn(**kwargs, bbox=tile)
         requests_used += 1
         map_results = response.get("mapResults", []) or []
@@ -475,11 +478,10 @@ def tiled_search(  # noqa: PLR0913
         if len(map_results) >= _RESULT_CAP:
             if depth < max_depth:
                 for child in tile.split():
-                    _absorb_tile(child, depth + 1)
+                    queue.append((child, depth + 1))
             elif on_cap is not None:
                 on_cap()
 
-    _absorb_tile(bbox, 0)
     return {
         "mapResults": list(combined["mapResults"].values()),
         "listResults": list(combined["listResults"].values()),

@@ -65,6 +65,33 @@ def test_connect_creates_schema(tmp_path: Path):
     conn.close()
 
 
+def test_connect_survives_concurrent_first_open(tmp_path: Path):
+    """Concurrent first opens must not both run the migration."""
+    import threading
+
+    db_path = tmp_path / "concurrent.db"
+    barrier = threading.Barrier(4)
+    errors: list[Exception] = []
+
+    def open_once() -> None:
+        try:
+            barrier.wait(timeout=5)
+            connect(db_path).close()
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=open_once) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    conn = connect(db_path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    conn.close()
+
+
 def test_connect_idempotent(tmp_path: Path):
     """Test connect is idempotent (doesn't break on existing DB)."""
     db_path = tmp_path / "test.db"

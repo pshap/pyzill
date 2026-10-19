@@ -640,6 +640,13 @@ class TestProxyValidation:
         assert "Invalid proxy" in result.stderr
         assert "SECRETPW" not in result.stderr
 
+    def test_redacts_password_containing_at_sign(self):
+        from pyzill.cli.console import _redact
+
+        assert _redact("http://user:p@ssw0rd@host") == "http://***@host"
+        assert _redact("socks5://u:p@ss@host:1080") == "socks5://***@host:1080"
+        assert _redact("keep foo@bar.com visible") == "keep foo@bar.com visible"
+
     def test_stderr_line_is_not_width_wrapped(self, capsys, monkeypatch):
         from pyzill.cli.console import stderr_line
 

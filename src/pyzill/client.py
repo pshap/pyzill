@@ -45,7 +45,10 @@ class ZillowClient:
                 self._proxy_urls = [default_proxy]
         self._proxy_index = 0
         self._rotation_lock = threading.Lock()
-        self.session: Any = requests.Session()
+        # One session (cookie jar) per proxy URL: PerimeterX cookies issued on
+        # one IP must not be replayed through another.
+        self._sessions: dict[str | None, Any] = {}
+        self.session: Any = self._session_for(self._proxy_urls[0] if self._proxy_urls else None)
         self.limiter = _limiter_instance or RateLimiter(
             min_interval=get_min_interval() if rate_limit is None else rate_limit
         )
@@ -59,9 +62,18 @@ class ZillowClient:
             limiter=self.limiter,
         )
 
+    def _session_for(self, proxy_url: str | None) -> Any:
+        """Return the session dedicated to ``proxy_url``, creating it if needed."""
+        session = self._sessions.get(proxy_url)
+        if session is None:
+            session = requests.Session()
+            self._sessions[proxy_url] = session
+        return session
+
     def close(self) -> None:
-        """Close the persistent HTTP session."""
-        self.session.close()
+        """Close every per-proxy HTTP session."""
+        for session in self._sessions.values():
+            session.close()
 
     def __enter__(self) -> ZillowClient:
         return self
@@ -74,7 +86,8 @@ class ZillowClient:
         for name in ("proxy_url", "impersonate", "timeout", "max_retries", "max_retry_after"):
             if name in kwargs:
                 overrides[name] = kwargs[name]
-        return replace(self.options, **overrides)
+        options = replace(self.options, **overrides)
+        return replace(options, session=self._session_for(options.proxy_url))
 
     def _invoke(self, call: Callable[[RequestOptions], _Result], options: RequestOptions) -> _Result:
         try:
@@ -84,10 +97,9 @@ class ZillowClient:
                 raise
             with self._rotation_lock:
                 self._proxy_index = (self._proxy_index + 1) % len(self._proxy_urls)
-                self.session.close()
-                self.session = requests.Session()
                 proxy_url = self._proxy_urls[self._proxy_index]
-                session = self.session
+                session = self._session_for(proxy_url)
+                self.session = session
                 # Rotate only the transport, not any per-call overrides
                 # (timeout, impersonate, ...) that belonged to this one request.
                 self.options = replace(self.options, proxy_url=proxy_url, session=session)
@@ -119,7 +131,8 @@ class ZillowClient:
         return search.tiled_search(search_fn, **kwargs)
 
     def home(self, zpid_or_url: int | str, *, options: RequestOptions | None = None) -> dict[str, Any]:
-        request_options = replace(options or self.options, session=self.session, limiter=self.limiter)
+        base = options or self.options
+        request_options = replace(base, session=self._session_for(base.proxy_url), limiter=self.limiter)
         if isinstance(zpid_or_url, str) and zpid_or_url.startswith("https://"):
             match = re.search(r"(\d+)_zpid", zpid_or_url)
             requested_zpid = match.group(1) if match else None
@@ -137,7 +150,8 @@ class ZillowClient:
         return self._invoke(call, request_options)
 
     def apartment(self, apartment_id_or_url: str, *, options: RequestOptions | None = None) -> dict[str, Any]:
-        request_options = replace(options or self.options, session=self.session, limiter=self.limiter)
+        base = options or self.options
+        request_options = replace(base, session=self._session_for(base.proxy_url), limiter=self.limiter)
         if apartment_id_or_url.startswith("https://"):
             url = apartment_id_or_url
         else:

@@ -86,8 +86,8 @@ def context() -> Context:
 
 # user:password@ inside a URL (proxy credentials, etc.)
 _USERINFO_RE = re.compile(
-    r"(?<=://)[^/@\s]+@"  # userinfo immediately after a scheme separator
-    r"|(?<![\w./])[^/@\s:]+:[^/@\s]*@"  # scheme-less user:pass@host (colon required)
+    r"(?<=://)[^/\s]*@"  # userinfo after a scheme, up to the last @ before /
+    r"|(?<![\w./])[^/\s:@]+:[^/\s]*@"  # scheme-less user:pass@host (colon required)
 )
 _USAGE_EXIT_CODE = 2
 

@@ -255,6 +255,24 @@ def test_tiled_search_stops_at_request_budget_and_warns():
     assert len(result["mapResults"]) == 1500
 
 
+def test_tiled_search_visits_tiles_breadth_first_under_budget():
+    root = BBox(north=4, east=4, south=0, west=0)
+    children = set(root.split())
+    calls: list[BBox] = []
+
+    def always_capped(*, bbox: BBox, **kwargs):
+        calls.append(bbox)
+        return {"mapResults": [{"zpid": index} for index in range(500)]}
+
+    with pytest.warns(UserWarning, match="request budget of 5 exhausted"):
+        search.tiled_search(always_capped, bbox=root, max_depth=4, max_requests=5)
+
+    # Depth-first would expand the first quadrant's children before its siblings.
+    assert calls[0] == root
+    assert set(calls[1:]) == children
+    assert len(calls) == 5
+
+
 def test_tiled_search_on_budget_callback_overrides_warning():
     def always_capped(**kwargs):
         return {"mapResults": [{"zpid": index} for index in range(500)]}

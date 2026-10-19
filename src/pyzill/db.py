@@ -4,6 +4,7 @@ Uses stdlib sqlite3 for zero new dependencies. Database lives at ./pyzill.db
 by default (configurable via --db or PYZILL_DB).
 """
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -335,7 +336,7 @@ class SyncStats:
     skipped: int
 
 
-def connect(path: Path | str) -> sqlite3.Connection:
+def connect(path: Path | str) -> sqlite3.Connection:  # noqa: PLR0912 - version-gated migration path
     """Connect to the database, creating schema if needed.
 
     Args:
@@ -349,6 +350,12 @@ def connect(path: Path | str) -> sqlite3.Connection:
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 5000")
+    # Enable WAL. This takes a lock and can race with a concurrent first open;
+    # WAL is persistent in the file once set, so a "busy" result just means
+    # another connection is already switching it (or has).
+    if str(path) != ":memory:":
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("PRAGMA journal_mode = wal")
 
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
     if version > _SCHEMA_VERSION:
@@ -359,34 +366,41 @@ def connect(path: Path | str) -> sqlite3.Connection:
 
     if version < _SCHEMA_VERSION:
         try:
-            conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("BEGIN IMMEDIATE")
-            if version == 0:
-                conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
-                conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
-                for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
-                    conn.execute(statement)
-                version = _SCHEMA_VERSION
-            while version < _SCHEMA_VERSION:
-                migration = _MIGRATIONS.get(version)
-                if migration is None:
-                    raise sqlite3.DatabaseError(f"No migration available from schema version {version}")
-                migration(conn)
-                version += 1
-            existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
-            for col in _LISTING_TABLE_COLUMNS:
-                if col not in existing_cols:
-                    col_type = (
-                        "REAL"
-                        if col == "lot_area_value"
-                        else (
-                            "INTEGER"
-                            if col in ("days_on_zillow", "price_change", "year_built", "tax_assessed_value")
-                            else "TEXT"
+            # Re-read under the write lock: a concurrent first run may have
+            # migrated between our initial read and acquiring the lock.
+            version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+            if version > _SCHEMA_VERSION:
+                raise sqlite3.DatabaseError(
+                    f"Database schema version {version} is newer than supported version {_SCHEMA_VERSION}"
+                )
+            if version < _SCHEMA_VERSION:
+                if version == 0:
+                    conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
+                    conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
+                    for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
+                        conn.execute(statement)
+                    version = _SCHEMA_VERSION
+                while version < _SCHEMA_VERSION:
+                    migration = _MIGRATIONS.get(version)
+                    if migration is None:
+                        raise sqlite3.DatabaseError(f"No migration available from schema version {version}")
+                    migration(conn)
+                    version += 1
+                existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
+                for col in _LISTING_TABLE_COLUMNS:
+                    if col not in existing_cols:
+                        col_type = (
+                            "REAL"
+                            if col == "lot_area_value"
+                            else (
+                                "INTEGER"
+                                if col in ("days_on_zillow", "price_change", "year_built", "tax_assessed_value")
+                                else "TEXT"
+                            )
                         )
-                    )
-                    conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {col_type}")
-            conn.execute(f"PRAGMA user_version = {version}")
+                        conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {col_type}")
+                conn.execute(f"PRAGMA user_version = {version}")
             conn.commit()
 
         except Exception:

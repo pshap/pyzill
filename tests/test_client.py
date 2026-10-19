@@ -76,6 +76,25 @@ def test_per_call_timeout_does_not_leak_into_client_after_rotation(monkeypatch, 
     assert client.options.timeout == DEFAULT_TIMEOUT
 
 
+def test_client_uses_a_distinct_session_per_proxy_url(monkeypatch, search_success_body):
+    calls: list[tuple[object, object]] = []
+
+    def respond(session: object, **kwargs: Any) -> FakeResponse:
+        calls.append((session, kwargs["proxies"]["http"]))
+        return FakeResponse(status_code=200, json_data=search_success_body)
+
+    monkeypatch.setattr(cffi_requests.Session, "request", respond)
+    client = ZillowClient(rate_limit=0)
+    bbox = BBox(north=43, east=-73, south=42, west=-74)
+
+    client.search_sale(search_value="12305", bbox=bbox, proxy_url="http://a:1")
+    client.search_sale(search_value="12305", bbox=bbox, proxy_url="http://b:2")
+    client.search_sale(search_value="12305", bbox=bbox, proxy_url="http://a:1")
+
+    assert calls[0][0] is not calls[1][0]
+    assert calls[0][0] is calls[2][0]
+
+
 def test_client_home_selects_requested_property_from_cache(fake_http):
     import json
 
