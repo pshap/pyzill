@@ -1,4 +1,6 @@
 import time
+from datetime import UTC, datetime, timedelta
+from email.utils import format_datetime
 from typing import Any
 
 import pytest
@@ -8,6 +10,16 @@ from curl_cffi.requests.exceptions import RequestException
 from pyzill import http
 from pyzill.exceptions import ZillowBlockedError, ZillowNetworkError, ZillowNotFoundError, ZillowServerError
 from pyzill.ratelimit import _limiter
+
+
+class _FrozenDatetime:
+    """Stands in for the ``datetime`` class, fixing ``now()`` for parsing tests."""
+
+    def __init__(self, fixed: datetime) -> None:
+        self._fixed = fixed
+
+    def now(self, _tz: Any = None) -> datetime:
+        return self._fixed
 
 
 def test_build_headers_derives_chrome_version() -> None:
@@ -110,6 +122,36 @@ def test_request_honors_capped_retry_after_for_503(fake_http, monkeypatch) -> No
         http.request("GET", "https://www.zillow.com/", headers={}, max_retries=1, max_retry_after=30)
 
     assert delays == [0.0, 30.0]
+
+
+def test_retry_delay_parses_http_date_retry_after(monkeypatch) -> None:
+    fixed_now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(http, "datetime", _FrozenDatetime(fixed_now))
+    retry_at = format_datetime(fixed_now + timedelta(seconds=45))
+
+    assert http._retry_delay(0, retry_at) == pytest.approx(45.0, abs=1.0)
+
+
+def test_retry_delay_caps_http_date_retry_after(monkeypatch) -> None:
+    fixed_now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(http, "datetime", _FrozenDatetime(fixed_now))
+    retry_at = format_datetime(fixed_now + timedelta(seconds=600))
+
+    assert http._retry_delay(0, retry_at, max_retry_after=30) == 30.0
+
+
+def test_retry_delay_ignores_past_http_date(monkeypatch) -> None:
+    fixed_now = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    monkeypatch.setattr(http, "datetime", _FrozenDatetime(fixed_now))
+    retry_at = format_datetime(fixed_now - timedelta(seconds=30))
+
+    assert http._retry_delay(0, retry_at) == 0.0
+
+
+def test_retry_delay_falls_back_to_backoff_for_garbage(monkeypatch) -> None:
+    first = http._retry_delay(0, "not-a-delay")
+    later = http._retry_delay(3, "not-a-delay")
+    assert later >= first  # exponential backoff still applied
 
 
 def test_request_retries_request_exceptions(monkeypatch) -> None:

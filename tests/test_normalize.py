@@ -223,6 +223,27 @@ def test_normalize_listing_skips_non_dict():
     assert normalize.normalize_listing(["not a dict"]) is None
 
 
+def test_normalize_property_detail_reports_lot_size_in_square_feet():
+    detail = normalize.normalize_property_detail({"zpid": 1, "lotSize": 0.25})
+    assert detail["lot_size"] == pytest.approx(10_890.0)
+
+
+def test_normalize_property_detail_converts_acres_lot_area_unit():
+    detail = normalize.normalize_property_detail({"zpid": 1, "lotAreaValue": 0.5, "lotAreaUnit": "acres"})
+    assert detail["lot_size"] == pytest.approx(21_780.0)
+
+
+def test_normalize_property_detail_keeps_square_feet_lot_area_value():
+    detail = normalize.normalize_property_detail({"zpid": 1, "lotAreaValue": 8000, "lotAreaUnit": "sqft"})
+    assert detail["lot_size"] == 8000
+
+
+def test_normalize_property_detail_non_mapping_returns_none_fields():
+    detail = normalize.normalize_property_detail(None)  # type: ignore[arg-type]
+    assert detail["lot_size"] is None
+    assert detail["zpid"] is None
+
+
 def test_is_building_result_true_for_building_card_with_no_zpid():
     assert normalize.is_building_result(
         {"isBuilding": True, "buildingId": "47.61503--122.34274", "address": "2208 4th Ave"}

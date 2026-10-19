@@ -1,10 +1,12 @@
 """Tests for pyzill CLI."""
 
 import json
+import os
 import sys
 from typing import Any, ClassVar
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from pyzill.bbox import BBox
@@ -41,6 +43,13 @@ class _GeoStub:
 
 
 _GEO_STUB = _GeoStub()
+
+
+class _FakeConsoleContext:
+    """Minimal stand-in for ``pyzill.cli.console.Context`` with a capture console."""
+
+    def __init__(self, stdout_console) -> None:
+        self.stdout_console = stdout_console
 
 
 @pytest.fixture(autouse=True)
@@ -759,10 +768,31 @@ class TestBrokenPipe:
 
     def test_broken_pipe_no_traceback(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
-        # Simulate broken pipe by redirecting to a process that exits immediately
-        # This is hard to test in CliRunner, so we just ensure no crash
         result = runner.invoke(app, ["search", "sale", "12305"])
         assert result.exit_code == 0
+
+    def test_emit_converts_broken_pipe_to_clean_exit(self, monkeypatch):
+        """`pyzill ... | head` must exit 0, not dump a traceback."""
+
+        from pyzill.cli import console
+
+        class _BrokenStdout:
+            def flush(self) -> None:
+                raise BrokenPipeError
+
+            def fileno(self) -> int:
+                return 1
+
+        monkeypatch.setattr(typer, "echo", lambda *a, **k: None)
+        monkeypatch.setattr(sys, "stdout", _BrokenStdout())
+        monkeypatch.setattr(os, "open", lambda *a, **k: 0)
+        monkeypatch.setattr(os, "dup2", lambda *a, **k: None)
+        monkeypatch.setattr(os, "close", lambda *a, **k: None)
+
+        with pytest.raises(typer.Exit) as exc_info:
+            console.emit("payload", None)
+
+        assert exc_info.value.exit_code == 0
 
 
 class TestModuleInvocation:
@@ -1592,6 +1622,35 @@ class TestDatabaseCommands:
 
         assert result.exit_code == 2
         assert "only supports --format json" in result.stderr
+
+    def test_db_stats_human_output_on_tty(self, tmp_path, monkeypatch):
+        import io
+
+        from pyzill.cli import db as db_module
+
+        db_path = tmp_path / "stats_human.db"
+        runner.invoke(
+            app,
+            ["db", "import", "-", "--fetched-at", "2026-10-01T12:00:00Z", "--db", str(db_path)],
+            input='[{"zpid": 1, "price": 100000}, {"zpid": 2, "price": 200000}]',
+        )
+
+        class _TtyStdout(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        from rich.console import Console
+
+        buffer = _TtyStdout()
+        monkeypatch.setattr(sys, "stdout", buffer)
+        monkeypatch.setattr(
+            db_module, "context", lambda: _FakeConsoleContext(Console(file=buffer, force_terminal=False, no_color=True))
+        )
+
+        db_module.db_stats_cmd(db_path=str(db_path), output_format=None)
+
+        assert "Total listings: 2" in buffer.getvalue()
+        assert str(db_path) in buffer.getvalue()
 
     def test_db_env_var_path(self, tmp_path, monkeypatch):
         rows = [{"zpid": "123", "price": 250000, "address": "test"}]

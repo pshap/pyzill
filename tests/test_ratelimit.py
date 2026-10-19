@@ -28,6 +28,31 @@ def test_enforces_min_interval():
     assert elapsed >= 0.18
 
 
+def test_minimum_delay_is_measured_from_now(monkeypatch):
+    """A Retry-After delay must elapse from now, not from the previous request."""
+    limiter = RateLimiter(min_interval=0, jitter=0)
+    limiter.wait()  # first request establishes the previous slot
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+
+    limiter.wait(2.0)
+
+    assert slept == [2.0]
+
+
+def test_minimum_delay_does_not_double_count_interval(monkeypatch):
+    """When the interval already covers the delay, no extra sleep is needed."""
+    limiter = RateLimiter(min_interval=5, jitter=0)
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+    monkeypatch.setattr(time, "monotonic", lambda: 0.0)
+    limiter._last = 0.0  # pretend the previous request started at 0.0
+
+    limiter.wait(1.0)
+
+    assert slept == [5.0]
+
+
 def test_set_min_interval_zero_disables():
     limiter = RateLimiter(min_interval=5, jitter=0)
     limiter.set_min_interval(0)

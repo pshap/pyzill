@@ -482,9 +482,10 @@ except pyzill.ZillowBlockedError as exc:
 ### Iterating and working around the 500-listing cap
 
 `mapResults` caps at **500 listings per query**. `pagination` does *not*
-increase this cap — it only affects the sidebar `listResults`. To page through
-individual for-sale listings use `iter_search` (or use the explicit
-`iter_sale`, `iter_rent`, and `iter_sold` variants):
+increase this cap — it only affects the sidebar `listResults`. The
+`iter_search` helper (and the explicit `iter_sale`, `iter_rent`, and
+`iter_sold` variants) iterate the listings from a *single* response; they do
+not paginate. Use `tiled_search` (or `split_bbox`) to go deeper:
 
 ```python
 import pyzill

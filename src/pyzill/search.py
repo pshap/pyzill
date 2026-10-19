@@ -1,3 +1,11 @@
+"""Search-request building, tiling, and lazy iteration over raw results.
+
+``pyzill.client`` imports this module, so the public ``for_sale``/``for_rent``/
+``sold`` entry points import ``get_default_client`` lazily inside each function
+body. A module-level import would create an import cycle (client -> search ->
+client); keeping it local lets both import orders work.
+"""
+
 import json
 import warnings
 from collections import deque

@@ -23,21 +23,26 @@ class RateLimiter:
         self._last = float("-inf")
 
     def wait(self, minimum_delay: float = 0.0) -> None:
-        """Block until at least ``min_interval`` (+ jitter) since the last call.
+        """Block until the next request may start.
 
-        ``minimum_delay`` can combine a retry delay with the rate limit so a
-        retry does not sleep once for each constraint. A zero interval only
-        disables the rate-limit component.
+        Two constraints are combined:
+
+        * the minimum interval (+ jitter) measured from the previous request's
+          start, and
+        * ``minimum_delay`` seconds measured **from now** (used for a
+          ``Retry-After`` delay, which the server expresses relative to the
+          response that carried it, not to the previous request).
+
+        A zero interval only disables the rate-limit component.
         """
         if self.min_interval <= 0 and minimum_delay <= 0:
             return
         with self._lock:
             now = time.monotonic()
             interval = max(0.0, self.min_interval)
-            target = max(interval + random.uniform(0, self.jitter), minimum_delay)  # noqa: S311 (not crypto)
-            elapsed = now - self._last
-            if elapsed < target:
-                time.sleep(target - elapsed)
+            interval_target = max(0.0, interval + random.uniform(0, self.jitter))  # noqa: S311 (not crypto)
+            interval_wait = max(0.0, interval_target - (now - self._last))
+            time.sleep(max(interval_wait, minimum_delay, 0.0))
             self._last = time.monotonic()
 
     def set_min_interval(self, min_interval: float) -> None:

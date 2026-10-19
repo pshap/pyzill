@@ -446,6 +446,38 @@ def test_v2_database_migrates_to_v3_and_preserves_data(tmp_path: Path):
     conn.close()
 
 
+def test_connect_backfills_missing_columns_at_current_version(tmp_path: Path):
+    """A same-version database missing a newer column gains it with the right type."""
+    db_path = tmp_path / "partial.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(
+        """
+        CREATE TABLE listings (
+            zpid INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'sale', price INTEGER,
+            price_label TEXT, beds REAL, baths REAL, area INTEGER, address TEXT,
+            street TEXT, city TEXT, state TEXT, zipcode TEXT, latitude REAL,
+            longitude REAL, home_type TEXT, status TEXT, status_type TEXT,
+            detail_url TEXT, image_url TEXT, zestimate INTEGER, rent_zestimate INTEGER,
+            first_seen_utc TEXT NOT NULL, last_seen_utc TEXT NOT NULL,
+            PRIMARY KEY (zpid, kind)
+        );
+        INSERT INTO listings (zpid, kind, address, first_seen_utc, last_seen_utc)
+            VALUES (7, 'sale', '7 Main St', '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z');
+        PRAGMA user_version = 3;
+        """
+    )
+    legacy.close()
+
+    conn = connect(db_path)
+
+    columns = {row[1]: row[2] for row in conn.execute("PRAGMA table_info(listings)")}
+    assert columns["broker_name"] == "TEXT"
+    assert columns["lot_area_value"] == "REAL"
+    assert columns["year_built"] == "INTEGER"
+    assert conn.execute("SELECT address FROM listings WHERE zpid = 7").fetchone()[0] == "7 Main St"
+    conn.close()
+
+
 def test_upsert_existing_listing(tmp_path: Path):
     """Test upsert_listings updates existing listings."""
     db_path = tmp_path / "test.db"

@@ -56,16 +56,5 @@ PathOpt = Annotated[
 ]
 DbPathOpt = Annotated[
     str | None,
-    typer.Option("--db", help="Database path (default: ./pyzill.db or PYZILL_DB env)"),
+    typer.Option("--db", help="Database path (default: $XDG_DATA_HOME/pyzill/pyzill.db or PYZILL_DB env)"),
 ]
-MinSqft = Annotated[int | None, typer.Option("--min-sqft", help="Minimum square footage")]
-MaxSqft = Annotated[int | None, typer.Option("--max-sqft", help="Maximum square footage")]
-MinLotSize = Annotated[int | None, typer.Option("--min-lot-size", help="Minimum lot size (sqft)")]
-MaxLotSize = Annotated[int | None, typer.Option("--max-lot-size", help="Maximum lot size (sqft)")]
-MinYearBuilt = Annotated[int | None, typer.Option("--min-year", help="Minimum year built")]
-MaxYearBuilt = Annotated[int | None, typer.Option("--max-year", help="Maximum year built")]
-MaxHoa = Annotated[int | None, typer.Option("--max-hoa", help="Maximum monthly HOA fee")]
-DaysOnZillow = Annotated[int | None, typer.Option("--days-on-zillow", help="Maximum days on Zillow")]
-Keywords = Annotated[str | None, typer.Option("--keywords", help="Filter by keywords (e.g. pool, garage)")]
-HomeTypes = Annotated[list[str] | None, typer.Option("--home-type", help="Home type (e.g. houses, condos, townhomes)")]
-NormalizedOpt = Annotated[bool, typer.Option("--normalized", help="Return normalized PropertyDetail representation")]

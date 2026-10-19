@@ -76,7 +76,7 @@ class PropertyDetail(TypedDict):
     longitude: float | None
     home_type: str | None
     year_built: int | None
-    lot_size: str | None
+    lot_size: int | float | None
     hoa_fee: int | float | None
     description: str | None
     photos_count: int | None
@@ -200,6 +200,31 @@ def _integer_zpid(value: Any) -> int | None:
     if isinstance(number, float):
         return int(number) if number.is_integer() else None
     return number
+
+
+_ACRES_TO_SQFT = 43_560.0
+
+
+def _lot_size_in_sqft(property_data: Mapping[str, Any], reso_dict: Mapping[str, Any]) -> int | float | None:
+    """Return the lot size in square feet, converting Zillow's acre values.
+
+    Zillow reports ``lotSize`` in acres on home-detail payloads (with the unit
+    spelled out nearby), while ``lotAreaValue``/``lotAreaUnit`` from search
+    results are already in the stated unit. To avoid mixing units in one field,
+    everything here is normalized to square feet, matching the ``Listing``
+    convention.
+    """
+    for container, key in ((reso_dict, "lotSize"), (property_data, "lotSize")):
+        acres = _to_number(container.get(key))
+        if acres is not None:
+            return round(acres * _ACRES_TO_SQFT, 2)
+    area = _to_number(property_data.get("lotAreaValue"))
+    if area is None:
+        return None
+    unit = str(property_data.get("lotAreaUnit") or "").lower()
+    if unit.startswith("acre"):
+        return round(area * _ACRES_TO_SQFT, 2)
+    return area
 
 
 def is_building_result(listing: Any) -> bool:
@@ -383,8 +408,7 @@ def normalize_property_detail(property_data: Mapping[str, Any]) -> PropertyDetai
     year_built_number = _to_number(year_built_val)
     year_built = int(year_built_number) if year_built_number is not None and year_built_number > 0 else None
 
-    lot_size_val = property_data.get("lotSize") or reso_dict.get("lotSize") or property_data.get("lotAreaValue")
-    lot_size = str(lot_size_val) if lot_size_val is not None else None
+    lot_size = _lot_size_in_sqft(property_data, reso_dict)
 
     hoa_fee_val = property_data.get("monthlyHoaFee") or reso_dict.get("hoaFeeTotal")
     hoa_fee = _to_number(hoa_fee_val)

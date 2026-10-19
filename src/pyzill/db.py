@@ -1,7 +1,8 @@
 """SQLite database for tracking Zillow listings with price history.
 
-Uses stdlib sqlite3 for zero new dependencies. Database lives at ./pyzill.db
-by default (configurable via --db or PYZILL_DB).
+Uses stdlib sqlite3 for zero new dependencies. The database lives at
+$XDG_DATA_HOME/pyzill/pyzill.db (~/.local/share/pyzill/pyzill.db) by default,
+configurable via --db or PYZILL_DB.
 """
 
 import contextlib
@@ -335,7 +336,7 @@ class SyncStats:
     skipped: int
 
 
-def connect(path: Path | str) -> sqlite3.Connection:  # noqa: PLR0912 - version-gated migration path
+def connect(path: Path | str) -> sqlite3.Connection:
     """Connect to the database, creating schema if needed.
 
     Args:
@@ -363,51 +364,53 @@ def connect(path: Path | str) -> sqlite3.Connection:  # noqa: PLR0912 - version-
             f"Database schema version {version} is newer than supported version {_SCHEMA_VERSION}"
         )
 
-    if version < _SCHEMA_VERSION:
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            # Re-read under the write lock: a concurrent first run may have
-            # migrated between our initial read and acquiring the lock.
-            version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-            if version > _SCHEMA_VERSION:
-                raise sqlite3.DatabaseError(
-                    f"Database schema version {version} is newer than supported version {_SCHEMA_VERSION}"
-                )
-            if version < _SCHEMA_VERSION:
-                if version == 0:
-                    conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
-                    conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
-                    for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
-                        conn.execute(statement)
-                    version = _SCHEMA_VERSION
-                while version < _SCHEMA_VERSION:
-                    migration = _MIGRATIONS.get(version)
-                    if migration is None:
-                        raise sqlite3.DatabaseError(f"No migration available from schema version {version}")
-                    migration(conn)
-                    version += 1
-                existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
-                for col in _LISTING_TABLE_COLUMNS:
-                    if col not in existing_cols:
-                        col_type = (
-                            "REAL"
-                            if col == "lot_area_value"
-                            else (
-                                "INTEGER"
-                                if col in ("days_on_zillow", "price_change", "year_built", "tax_assessed_value")
-                                else "TEXT"
-                            )
-                        )
-                        conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {col_type}")
-                conn.execute(f"PRAGMA user_version = {version}")
-            conn.commit()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        # Re-read under the write lock: a concurrent first run may have
+        # migrated between our initial read and acquiring the lock.
+        version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        if version > _SCHEMA_VERSION:
+            raise sqlite3.DatabaseError(
+                f"Database schema version {version} is newer than supported version {_SCHEMA_VERSION}"
+            )
+        if version < _SCHEMA_VERSION:
+            if version == 0:
+                conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
+                conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
+                for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
+                    conn.execute(statement)
+                version = _SCHEMA_VERSION
+            while version < _SCHEMA_VERSION:
+                migration = _MIGRATIONS.get(version)
+                if migration is None:
+                    raise sqlite3.DatabaseError(f"No migration available from schema version {version}")
+                migration(conn)
+                version += 1
+            conn.execute(f"PRAGMA user_version = {version}")
+        # Backfill any columns a newer release added. Runs even when the
+        # version is already current so a database that predates an additive
+        # column (but not a version bump) is repaired on open.
+        _backfill_listing_columns(conn)
+        conn.commit()
 
-        except Exception:
-            conn.rollback()
-            conn.close()
-            raise
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
 
     return conn
+
+
+def _backfill_listing_columns(conn: sqlite3.Connection) -> None:
+    """Add any ``_LISTING_TABLE_COLUMNS`` column missing from ``listings``."""
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
+    for col in _LISTING_TABLE_COLUMNS:
+        if col in existing_cols:
+            continue
+        _integer_cols = ("days_on_zillow", "price_change", "year_built", "tax_assessed_value")
+        col_type = "REAL" if col == "lot_area_value" else ("INTEGER" if col in _integer_cols else "TEXT")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {col_type}")
 
 
 def connect_readonly(path: Path | str) -> sqlite3.Connection:

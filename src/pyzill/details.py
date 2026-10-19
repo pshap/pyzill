@@ -1,3 +1,10 @@
+"""Home/apartment detail fetching and URL/ID validation.
+
+``pyzill.client`` imports this module and this module calls back into the
+default client, so ``get_default_client`` is imported lazily inside each entry
+point to avoid an import cycle (client -> details -> client).
+"""
+
 import warnings
 from collections.abc import Callable
 from typing import Any

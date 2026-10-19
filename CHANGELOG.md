@@ -153,6 +153,25 @@ All notable changes to this project are documented here.
   repointed by the parent-table rename. Schema DDL is now shared between
   the fresh-create and migration paths (`_CREATE_LISTINGS_SQL` etc.) so
   they cannot drift.
+- A retry delay from `Retry-After` is now measured from the moment the
+  response arrived rather than from the previous request's start, so a server
+  that asks for a longer pause no longer gets a request sooner than requested.
+- `detail apartment` validates its input up front (matching `detail home`): a
+  non-Zillow URL is a usage error (exit 2) instead of an unexpected error, and
+  a plain apartment ID is percent-encoded when built into a URL.
+- `normalize_property_detail` reports `lot_size` in square feet (converting
+  Zillow's acre `lotSize`) as a number, instead of mixing acres and square feet
+  in a string field.
+- Opening a database at the current schema version now backfills any listing
+  column added by a newer release, so an older same-version store is repaired
+  on open without a version bump.
+- `db changes <since>` normalizes offset timestamps the same way as
+  `db import --fetched-at`, and rejects an unparseable `<since>` with exit 2.
+
+### Changed
+- `iter_search`/`iter_sale`/`iter_rent`/`iter_sold` are documented as
+  single-response iterators (not paginators); use `tiled_search` for depth.
+- Removed unused shared Typer option aliases and pinned `curl_cffi>=0.7`.
 
 ### Unverified (live Zillow validation required)
 - TODO: Decide whether `for_rent` should expand building cards into units.
