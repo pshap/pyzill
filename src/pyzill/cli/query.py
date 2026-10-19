@@ -26,9 +26,11 @@ from pyzill.cli.search import extract_listings
 from pyzill.normalize import Listing
 
 _QUERY_FIELDS = frozenset(Listing.__annotations__) | {"ppsf"}
-_DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc"}
+# "kind" is part of the listings primary key but not a normalized Listing field.
+_DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc", "kind"}
 _NUMERIC_FIELDS = frozenset(
     {
+        "zpid",
         "price",
         "beds",
         "baths",
@@ -50,6 +52,9 @@ _QUOTED_LITERAL_LENGTH = 2
 _STRING_OPS = frozenset({"=", "==", "!=", "~"})
 _WHERE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(>=|<=|!=|==|=|>|<|~)\s*(.+?)\s*$")
 _SORT_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?::\s*(asc|desc))?\s*$", re.IGNORECASE)
+# Optional k/m suffix, e.g. "500k" or "1.2m".
+_NUMBER_RE = re.compile(r"[+-]?\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?([kKmM])?")
+_NUMBER_SUFFIXES = {"k": 1_000, "m": 1_000_000}
 
 
 class QueryValidationError(ValueError):
@@ -64,17 +69,30 @@ class Condition:
 
 
 def coerce_value(text: str, field: str | None = None) -> Any:
-    """Convert a query literal to a finite-format number, null, or string."""
+    """Convert a query literal to a finite-format number, null, or string.
+
+    A bare literal compared against a numeric field must itself be numeric;
+    anything else raises :class:`QueryValidationError` rather than silently
+    comparing text against a REAL column (which would match everything or
+    nothing). ``k`` and ``m`` suffixes are accepted as thousands/millions.
+    """
     literal = text.strip()
     quoted = len(literal) >= _QUOTED_LITERAL_LENGTH and literal[0] in "'\"" and literal[-1] == literal[0]
     value = literal[1:-1] if quoted else literal
     if not quoted and value.lower() in ("null", "none"):
         return None
-    if quoted or (field is not None and field not in _NUMERIC_FIELDS):
+    if field is not None and field not in _NUMERIC_FIELDS:
         return value
-    if not re.fullmatch(r"[+-]?\$?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", value):
+    if quoted:
         return value
-    number = float(value.replace("$", "").replace(",", ""))
+    match = _NUMBER_RE.fullmatch(value)
+    if match is None:
+        if field is None:
+            return value
+        raise QueryValidationError(f"Field {field!r} is numeric; {text!r} is not a number")
+    suffix = (match.group(1) or "").lower()
+    number = float(value.replace("$", "").replace(",", "").removesuffix(match.group(1) or ""))
+    number *= _NUMBER_SUFFIXES.get(suffix, 1)
     return int(number) if number.is_integer() else number
 
 

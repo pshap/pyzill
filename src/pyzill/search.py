@@ -5,7 +5,7 @@ from typing import Any, TypedDict, Unpack, cast
 
 from pyzill import http
 from pyzill.bbox import CONTINENTAL_US, BBox
-from pyzill.exceptions import ZillowBlockedError, ZillowParseError
+from pyzill.exceptions import ZillowParseError
 from pyzill.normalize import is_building_result
 
 _SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
@@ -322,10 +322,6 @@ def _search_impl(*, options: http.RequestOptions | None = None, **kwargs: Unpack
         input_data,
         options=request_options,
     )
-    body_snippet = response.text or ""
-    lowered_body = body_snippet.lower()
-    if any(marker in lowered_body for marker in ("px-captcha", "perimeterx", "captcha-delivery", "_pxhd")):
-        raise ZillowBlockedError(response.status_code, _SEARCH_URL, body_snippet)
     try:
         data = response.json()  # type: ignore[no-untyped-call]
     except ValueError as exc:

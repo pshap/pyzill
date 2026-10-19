@@ -48,6 +48,34 @@ def test_client_retries_one_block_with_next_proxy_and_fresh_session(monkeypatch,
     assert attempts[1][1]["proxies"]["http"] == "http://proxy-b:2"
 
 
+def test_per_call_timeout_does_not_leak_into_client_after_rotation(monkeypatch, search_success_body):
+    from pyzill.http import DEFAULT_TIMEOUT
+
+    responses = [
+        FakeResponse(status_code=403, text="blocked"),
+        FakeResponse(
+            status_code=200,
+            json_data={"cat1": {"searchResults": search_success_body["cat1"]["searchResults"]}},
+        ),
+    ]
+    attempts: list[dict[str, Any]] = []
+
+    def respond(session: object, **kwargs: Any) -> FakeResponse:
+        attempts.append(kwargs)
+        return responses[len(attempts) - 1]
+
+    monkeypatch.setattr(cffi_requests.Session, "request", respond)
+    client = ZillowClient(proxy=["http://proxy-a:1", "http://proxy-b:2"], rate_limit=0, max_retries=0)
+
+    client.search_sale(search_value="12305", bbox=BBox(north=43, east=-73, south=42, west=-74), timeout=5)
+
+    # The one-off timeout applies to this request (and its rotation retry) but
+    # must not become the client-wide default.
+    assert attempts[0]["timeout"] == 5
+    assert attempts[1]["timeout"] == 5
+    assert client.options.timeout == DEFAULT_TIMEOUT
+
+
 def test_client_home_selects_requested_property_from_cache(fake_http):
     import json
 

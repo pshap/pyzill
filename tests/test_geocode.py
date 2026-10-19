@@ -49,6 +49,17 @@ HIT = [
 
 
 class TestGeocode:
+    def test_user_agent_falls_back_when_metadata_missing(self, monkeypatch):
+        from importlib.metadata import PackageNotFoundError
+
+        import pyzill.geocode as geocode_module
+
+        def _missing(_name: str) -> str:
+            raise PackageNotFoundError("pyzill")
+
+        monkeypatch.setattr(geocode_module, "version", _missing)
+        assert geocode_module._user_agent() == "pyzill/unknown (Zillow research CLI; personal use)"
+
     def test_successful_lookup(self, monkeypatch, cache_path):
         calls = _install_get(monkeypatch, HIT)
         result = geocode("Schenectady NY", cache_path=cache_path)

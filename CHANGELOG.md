@@ -87,6 +87,28 @@ All notable changes to this project are documented here.
   `pyzill.BBox`, or opt in with `allow_nationwide=True`.
 
 ### Fixed
+- `db sync`/`db import` now record `truncated` on the sync run in the same
+  transaction as the listings, so an interrupted or soft-blocked sync no longer
+  reports a clean, complete run. An empty result for a query/bbox/filter
+  combination that previously returned listings is flagged truncated.
+- `db changes` compares runs by the full query identity (kind, query, viewport,
+  filters) and skips truncated runs, so unrelated searches no longer produce
+  spurious delistings and an empty soft-block does not look like a clear-out.
+- Home-detail parsing raises `ZillowParseError` when the requested `zpid` is
+  absent from the payload instead of silently returning the first property.
+- `--where` numeric fields reject non-numeric literals (`zpid` is numeric, `kind`
+  is now queryable) while still accepting `k`/`m` suffixes.
+- A per-call `timeout`/option override no longer leaks into the shared client
+  after proxy rotation; rotation updates the client options atomically.
+- PerimeterX challenge detection is centralized in `http.request`, so a 200 HTML
+  challenge page now raises `ZillowBlockedError` for detail fetches too, while
+  genuine JSON bodies are never scanned for challenge markers.
+- An empty or whitespace-only `PYZILL_PROXY`/`PYZILL_DB` (and their legacy
+  `ZILLOW_*` fallbacks) is treated as unset instead of a validation error.
+- `--timeout 0` is reported through the normal JSON error channel, the
+  `NO_COLOR` spec is honored (non-empty only), diagnostics are no longer
+  wrapped mid-line, and credential redaction covers scheme-less `user:pass@host`
+  proxies. Geocoding no longer fails to import when package metadata is absent.
 - `--where` now keeps identifier and descriptive fields as strings, preserving
   leading-zero ZIP codes in JSON and database queries. Quoted literals remain
   strings; only numeric listing fields are coerced.

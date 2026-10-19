@@ -41,6 +41,10 @@ def parse_body_home(body: bytes, zpid: int | str | None = None) -> dict[str, Any
                 first_property = property_data
             if zpid is not None and str(property_data.get("zpid")) == str(zpid):
                 return dict(property_data)
+    if zpid is not None:
+        # The requested zpid is not in the cache; returning some other property
+        # would silently attribute the wrong home to the caller.
+        raise ZillowParseError(f"Zillow response did not contain requested property zpid {zpid}")
     if first_property is not None:
         return dict(first_property)
     raise _parse_error(body)

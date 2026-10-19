@@ -37,6 +37,11 @@ app.add_typer(schema_app)
 register_offline_commands(app)
 
 
+def _no_color_requested() -> bool:
+    """Honor the NO_COLOR spec: only a non-empty value disables color."""
+    return any(os.environ.get(name, "") != "" for name in ("NO_COLOR", "PYZILL_NO_COLOR"))
+
+
 @app.callback()
 def main(  # noqa: PLR0913
     ctx: typer.Context,
@@ -102,15 +107,12 @@ def main(  # noqa: PLR0913
 
     Search for-sale/for-rent/sold listings and fetch property details.
     """
-    if timeout <= 0:
-        error("--timeout must be greater than 0", code=2)
-
     # Typer already applies the PYZILL_PROXY / PYZILL_IMPERSONATE env vars (see
     # `envvar=` above), so there is no need to read them again by hand.
     cli_context = Context(
         quiet=quiet,
         verbose=verbose,
-        no_color=no_color or any(name in os.environ for name in ("NO_COLOR", "PYZILL_NO_COLOR")),
+        no_color=no_color or _no_color_requested(),
         proxy=proxy,
         impersonate=impersonate or DEFAULT_IMPERSONATE,
         timeout=timeout,
@@ -119,6 +121,11 @@ def main(  # noqa: PLR0913
     )
     ctx.obj = cli_context
     set_context(cli_context)
+
+    # Validate --timeout after the context is installed so a bad value honors
+    # --json-errors rather than falling back to a bare context.
+    if timeout <= 0:
+        error("--timeout must be greater than 0", code=2)
 
     # Validate the proxy (explicit, PYZILL_PROXY, or ZILLOW_PROXY) up front so
     # a bad URL is a clean usage error, not a traceback mid-command. The

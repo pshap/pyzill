@@ -63,6 +63,33 @@ def test_request_distinguishes_server_failure(fake_http, monkeypatch) -> None:
     assert not issubclass(ZillowServerError, ZillowBlockedError)
 
 
+def test_request_detects_200_html_challenge(fake_http) -> None:
+    fake_http.install("GET", text="<html>Please verify. PerimeterX px-captcha</html>")
+
+    with pytest.raises(ZillowBlockedError):
+        http.request("GET", "https://www.zillow.com/", headers={})
+
+
+def test_request_does_not_scan_json_content_type_for_markers(fake_http) -> None:
+    fake_http.install(
+        "PUT",
+        json_data={"note": "px-captcha"},
+        headers={"content-type": "application/json"},
+    )
+
+    response = http.request("PUT", "https://www.zillow.com/search", headers={})
+
+    assert response.json() == {"note": "px-captcha"}  # type: ignore[no-untyped-call]
+
+
+def test_request_does_not_flag_parseable_json_without_content_type(fake_http) -> None:
+    fake_http.install("PUT", json_data={"note": "px-captcha"})
+
+    response = http.request("PUT", "https://www.zillow.com/search", headers={})
+
+    assert response.json() == {"note": "px-captcha"}  # type: ignore[no-untyped-call]
+
+
 def test_request_honors_retry_after_for_429(fake_http, monkeypatch) -> None:
     fake_http.install("GET", status_code=429, text="Slow down", headers={"Retry-After": "2"})
     delays: list[float] = []

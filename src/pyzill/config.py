@@ -15,10 +15,19 @@ _LEGACY_ENV = {
 
 
 def read_env(name: str) -> str | None:
-    """Read a canonical setting first, then its documented legacy fallback."""
+    """Read a canonical setting first, then its documented legacy fallback.
+
+    A variable that is present but empty or whitespace-only is treated as
+    unset, so an accidental ``PYZILL_PROXY=`` in the environment (common in
+    CI) does not turn into a proxy validation error.
+    """
     canonical = _CANONICAL_NAME_BY_ALIAS.get(name, name)
     legacy = _LEGACY_ENV.get(canonical)
     for candidate in (canonical, legacy):
-        if candidate is not None and candidate in os.environ:
-            return os.environ[candidate]
-    return os.environ.get(name)
+        if candidate is None:
+            continue
+        value = os.environ.get(candidate)
+        if value is not None and value.strip():
+            return value
+    value = os.environ.get(name)
+    return value if value is not None and value.strip() else None

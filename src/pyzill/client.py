@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import cache
@@ -43,6 +44,7 @@ class ZillowClient:
             if default_proxy:
                 self._proxy_urls = [default_proxy]
         self._proxy_index = 0
+        self._rotation_lock = threading.Lock()
         self.session: Any = requests.Session()
         self.limiter = _limiter_instance or RateLimiter(
             min_interval=get_min_interval() if rate_limit is None else rate_limit
@@ -80,15 +82,16 @@ class ZillowClient:
         except ZillowBlockedError as exc:
             if exc.status_code != _HTTP_FORBIDDEN or len(self._proxy_urls) < _MIN_PROXY_ROTATION_COUNT:
                 raise
-            self._proxy_index = (self._proxy_index + 1) % len(self._proxy_urls)
-            self.session.close()
-            self.session = requests.Session()
-            retry_options = replace(
-                options,
-                proxy_url=self._proxy_urls[self._proxy_index],
-                session=self.session,
-            )
-            self.options = retry_options
+            with self._rotation_lock:
+                self._proxy_index = (self._proxy_index + 1) % len(self._proxy_urls)
+                self.session.close()
+                self.session = requests.Session()
+                proxy_url = self._proxy_urls[self._proxy_index]
+                session = self.session
+                # Rotate only the transport, not any per-call overrides
+                # (timeout, impersonate, ...) that belonged to this one request.
+                self.options = replace(self.options, proxy_url=proxy_url, session=session)
+            retry_options = replace(options, proxy_url=proxy_url, session=session)
             return call(retry_options)
 
     def search_sale(self, **kwargs: Any) -> dict[str, Any]:

@@ -32,7 +32,7 @@ def resolve_proxy(proxy_url: str | None = None) -> str | None:
     """Resolve and validate an explicit or environment-configured proxy URL."""
     if proxy_url is None:
         proxy_url = read_env("ZILLOW_PROXY")
-    if proxy_url is None:
+    if proxy_url is None or not proxy_url.strip():
         return None
     parsed = urlparse(proxy_url)
     if parsed.scheme not in ("http", "https", "socks5", "socks5h"):

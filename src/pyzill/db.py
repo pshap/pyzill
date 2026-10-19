@@ -19,6 +19,7 @@ __all__ = [
     "DBStats",
     "SyncStats",
     "begin_sync_run",
+    "comparable_run_had_results",
     "connect",
     "connect_readonly",
     "db_stats",
@@ -81,6 +82,33 @@ def finish_sync_run(
         "UPDATE sync_runs SET finished_utc = ?, result_count = ?, truncated = ? WHERE id = ?",
         (finished_utc or utc_now(), result_count, int(truncated), run_id),
     )
+
+
+def comparable_run_had_results(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    query: str = "",
+    bbox: Mapping[str, Any] | None = None,
+    filters: Mapping[str, Any] | None = None,
+) -> bool:
+    """Return True if a prior complete run with the same key returned any rows.
+
+    Used to flag an empty result for a search that previously matched as
+    suspect (a soft block or transient glitch), so it is not mistaken for a
+    complete run in which every listing genuinely disappeared.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sync_runs WHERE kind = ? AND query = ? AND bbox_json IS ? AND filters_json IS ? "
+        "AND finished_utc IS NOT NULL AND truncated = 0 AND result_count > 0 LIMIT 1",
+        (
+            kind,
+            query,
+            json.dumps(bbox, sort_keys=True) if bbox is not None else None,
+            json.dumps(filters, sort_keys=True) if filters is not None else None,
+        ),
+    ).fetchone()
+    return row is not None
 
 
 _SCHEMA_VERSION = 3
@@ -502,22 +530,30 @@ def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
     kind: Literal["sale", "rent", "sold"] = "sale",
     raw_rows: Sequence[Mapping[str, Any]] | None = None,
     run_id: int | None = None,
+    truncated: bool = False,
 ) -> SyncStats:
-    """Upsert listing rows into the database.
+    """Upsert listing rows into the database and finalize their sync run.
 
     Skips rows without a zpid (counted in stats). For each zpid:
-        - ``listings`` stores the latest sighting for each zpid and its kind.
+        - ``listings`` stores the latest sighting for each zpid and its kind
+          (the primary key is ``(zpid, kind)``, so a sighting never changes a
+          row's kind).
         - ``price_history`` stores priced sightings partitioned by kind.
         - Missing fields never erase known values; a missing price keeps the last
             price for the same kind.
 
-    Existing-row state and prior prices are read in two batched queries
-    before any writes; the write itself is one UPSERT per row.
+    Existing-row state, prior prices, and prior statuses are read in batched
+    queries before any writes; the write itself is one UPSERT per row. The run
+    is finalized and committed in that same transaction.
 
     Args:
         conn: Database connection.
         rows: List of normalized listing dicts (must have 'zpid' field).
         seen_utc: Timestamp for this batch (default: utc_now()).
+        run_id: Existing sync_run to attach sightings to (created if omitted).
+        truncated: Whether the source result was partial (capped search or
+            exhausted request budget); stored on the run so change detection
+            can skip comparing it.
 
     Returns:
         SyncStats with counts of added/updated/price_changes/skipped.
@@ -621,7 +657,13 @@ def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
             "ON CONFLICT DO NOTHING",
             status_entries,
         )
-    finish_sync_run(conn, run_id, result_count=len(sighting_params), finished_utc=seen_utc)
+    finish_sync_run(
+        conn,
+        run_id,
+        result_count=len(sighting_params),
+        truncated=truncated,
+        finished_utc=seen_utc,
+    )
     conn.commit()
     return stats
 
@@ -737,12 +779,15 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
         )
 
     run_rows = conn.execute(
-        "SELECT id, started_utc, finished_utc, kind, query, bbox_json FROM sync_runs "
+        "SELECT id, started_utc, finished_utc, kind, query, bbox_json, filters_json FROM sync_runs "
         "WHERE finished_utc IS NOT NULL AND truncated = 0 ORDER BY started_utc, id"
     ).fetchall()
-    comparable: dict[tuple[str, str, str | None], list[tuple[int, str]]] = {}
-    for run_id, started_utc, _, kind, query, bbox_json in run_rows:
-        comparable.setdefault((kind, query, bbox_json), []).append((run_id, started_utc))
+    comparable: dict[tuple[str, str, str | None, str | None], list[tuple[int, str]]] = {}
+    for run_id, started_utc, _, kind, query, bbox_json, filters_json in run_rows:
+        # A run is only comparable to another with the same kind, query,
+        # viewport, *and* filters: an unfiltered run after a --max-price run
+        # would otherwise report every excluded listing as delisted.
+        comparable.setdefault((kind, query, bbox_json, filters_json), []).append((run_id, started_utc))
     for run_list in comparable.values():
         prior_sets: list[set[tuple[int, str]]] = []
         for run_id, started_utc in run_list:

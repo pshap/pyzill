@@ -1,10 +1,11 @@
 import json
 from typing import Any
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from pyzill.cli.query import query_database, query_rows
+from pyzill.cli.query import QueryValidationError, query_database, query_rows
 from pyzill.db import connect, upsert_listings
 
 
@@ -83,14 +84,52 @@ def test_json_file_and_database_query_results_match(
         connection.close()
 
 
-def test_identifier_sort_uses_string_order_in_both_sources() -> None:
+def test_identifier_sort_uses_numeric_order_in_both_sources() -> None:
     rows = [{"zpid": 2}, {"zpid": 10}]
     connection = connect(":memory:")
     try:
         upsert_listings(connection, rows, seen_utc="2026-10-01T00:00:00Z")
         file_result, _ = query_rows(rows, sort="zpid:asc")
         database_result, _ = query_database(connection, sort="zpid:asc")
-        assert [row["zpid"] for row in file_result] == [10, 2]
-        assert [row["zpid"] for row in database_result] == [10, 2]
+        assert [row["zpid"] for row in file_result] == [2, 10]
+        assert [row["zpid"] for row in database_result] == [2, 10]
     finally:
         connection.close()
+
+
+def test_zpid_range_filter_is_numeric() -> None:
+    rows = [{"zpid": 99}, {"zpid": 101}]
+    connection = connect(":memory:")
+    try:
+        upsert_listings(connection, rows, seen_utc="2026-10-01T00:00:00Z")
+        database_result, _ = query_database(connection, where=["zpid>100"])
+        assert [row["zpid"] for row in database_result] == [101]
+    finally:
+        connection.close()
+
+
+def test_kind_is_a_queryable_database_field() -> None:
+    connection = connect(":memory:")
+    try:
+        upsert_listings(connection, [{"zpid": 1, "price": 300000}], kind="sale", seen_utc="2026-10-01T00:00:00Z")
+        upsert_listings(connection, [{"zpid": 2, "price": 2000}], kind="rent", seen_utc="2026-10-01T00:00:00Z")
+        rows, selected = query_database(connection, where=["kind==rent"])
+        assert [row["zpid"] for row in rows] == [2]
+        assert selected is None
+        projected, _ = query_database(connection, cols="zpid,kind")
+        assert {row["kind"] for row in projected} == {"sale", "rent"}
+    finally:
+        connection.close()
+
+
+def test_numeric_field_rejects_non_numeric_literal() -> None:
+    with pytest.raises(QueryValidationError):
+        query_rows([{"price": 100}], where=["price<abc"])
+
+
+def test_numeric_field_accepts_k_and_m_suffixes() -> None:
+    rows = [{"price": 400000}, {"price": 600000}]
+    result, _ = query_rows(rows, where=["price>=500k"])
+    assert [row["price"] for row in result] == [600000]
+    result, _ = query_rows([{"price": 1_200_000}], where=["price<=1.5m"])
+    assert [row["price"] for row in result] == [1_200_000]

@@ -59,6 +59,35 @@ def test_parse_body_home_selects_requested_zpid_from_cache():
     assert parse_body_home(body, zpid=2)["address"] == "Requested"
 
 
+def test_parse_body_home_does_not_return_a_different_property_for_missing_zpid():
+    cache = {"first": {"property": {"zpid": 111, "address": "First"}}}
+    payload = {
+        "props": {
+            "pageProps": {
+                "componentProps": {"gdpClientCache": json.dumps(cache)},
+            }
+        }
+    }
+    body = f'<script type="application/json" id="__NEXT_DATA__">{json.dumps(payload)}</script>'.encode()
+
+    with pytest.raises(ZillowParseError):
+        parse_body_home(body, zpid=999)
+
+
+def test_parse_body_home_falls_back_to_first_without_zpid():
+    cache = {"first": {"property": {"zpid": 111, "address": "First"}}}
+    payload = {
+        "props": {
+            "pageProps": {
+                "componentProps": {"gdpClientCache": json.dumps(cache)},
+            }
+        }
+    }
+    body = f'<script type="application/json" id="__NEXT_DATA__">{json.dumps(payload)}</script>'.encode()
+
+    assert parse_body_home(body)["zpid"] == 111
+
+
 def test_parse_body_departments_rejects_missing_gdp() -> None:
     body = (
         b'<script id="__NEXT_DATA__" type="application/json">'

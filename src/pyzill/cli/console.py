@@ -41,8 +41,13 @@ class Context:
 
     @cached_property
     def stderr_console(self) -> Console:
-        """Console for diagnostics and progress."""
-        return Console(stderr=True, no_color=self.no_color, force_terminal=False)
+        """Console for diagnostics and progress.
+
+        ``soft_wrap`` keeps a single diagnostic from being hard-wrapped at the
+        terminal width, so long URLs and error messages stay on one line and
+        remain copy-pasteable.
+        """
+        return Console(stderr=True, no_color=self.no_color, force_terminal=False, soft_wrap=True)
 
     @cached_property
     def stdout_console(self) -> Console:
@@ -80,7 +85,10 @@ def context() -> Context:
 
 
 # user:password@ inside a URL (proxy credentials, etc.)
-_USERINFO_RE = re.compile(r"(?<=://)[^/@\s]+@")
+_USERINFO_RE = re.compile(
+    r"(?<=://)[^/@\s]+@"  # userinfo immediately after a scheme separator
+    r"|(?<![\w./])[^/@\s:]+:[^/@\s]*@"  # scheme-less user:pass@host (colon required)
+)
 _USAGE_EXIT_CODE = 2
 
 

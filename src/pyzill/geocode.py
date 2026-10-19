@@ -15,7 +15,7 @@ import tempfile
 import time
 from contextlib import suppress
 from dataclasses import dataclass
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +27,19 @@ from pyzill.utils import resolve_proxy
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 
-# Nominatim rejects generic library User-Agents; identify the tool and purpose.
-_USER_AGENT = f"pyzill/{version('pyzill')} (Zillow research CLI; personal use)"
+
+def _user_agent() -> str:
+    """Identify the tool to Nominatim, tolerating missing package metadata.
+
+    ``version()`` raises ``PackageNotFoundError`` when pyzill is not installed
+    (run from source, a zipapp, or a PyInstaller bundle), which must not break
+    ``import pyzill.cli``.
+    """
+    try:
+        ver = version("pyzill")
+    except PackageNotFoundError:
+        ver = "unknown"
+    return f"pyzill/{ver} (Zillow research CLI; personal use)"
 
 _TIMEOUT = 15.0
 
@@ -146,7 +157,7 @@ def geocode(
         response = requests.get(
             NOMINATIM_URL,
             params={"q": place, "format": "jsonv2", "limit": 1, "countrycodes": "us"},
-            headers={"User-Agent": _USER_AGENT},
+            headers={"User-Agent": _user_agent()},
             proxies={"http": resolved_proxy, "https": resolved_proxy} if resolved_proxy else None,
             timeout=_TIMEOUT,
         )

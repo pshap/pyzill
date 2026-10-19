@@ -243,6 +243,112 @@ def test_get_changes_reports_price_status_and_comparable_delisting(tmp_path: Pat
     conn.close()
 
 
+def test_upsert_listings_persists_truncated_flag(tmp_path: Path):
+    db_path = tmp_path / "truncated.db"
+    conn = connect(db_path)
+    run_id = begin_sync_run(conn, kind="sale", query="Albany", started_utc="2026-10-01T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 300000}],
+        seen_utc="2026-10-01T00:00:00Z",
+        run_id=run_id,
+        truncated=True,
+    )
+    conn.close()
+
+    reopened = connect(db_path)
+    row = reopened.execute("SELECT result_count, finished_utc, truncated FROM sync_runs").fetchone()
+    reopened.close()
+    assert row == (1, "2026-10-01T00:00:00Z", 1)
+
+
+def test_get_changes_ignores_runs_with_different_filters(tmp_path: Path):
+    conn = connect(tmp_path / "filters.db")
+    bbox = {"north": 43, "south": 42}
+    filtered = begin_sync_run(
+        conn,
+        kind="sale",
+        query="Albany",
+        bbox=bbox,
+        filters={"max_price": 500000},
+        started_utc="2026-10-01T00:00:00Z",
+    )
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 300000}, {"zpid": 2, "price": 450000}],
+        seen_utc="2026-10-01T00:00:00Z",
+        run_id=filtered,
+    )
+    finish_sync_run(conn, filtered, result_count=2, finished_utc="2026-10-01T00:00:00Z")
+
+    unfiltered = begin_sync_run(conn, kind="sale", query="Albany", bbox=bbox, started_utc="2026-10-02T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 300000}],
+        seen_utc="2026-10-02T00:00:00Z",
+        run_id=unfiltered,
+    )
+    finish_sync_run(conn, unfiltered, result_count=1, finished_utc="2026-10-02T00:00:00Z")
+
+    events = {(change["event"], change["zpid"]) for change in get_changes(conn, "2026-10-02T00:00:00Z")}
+
+    assert ("delisted", 2) not in events
+    assert ("relisted", 1) not in events
+    conn.close()
+
+
+def test_get_changes_skips_truncated_runs(tmp_path: Path):
+    conn = connect(tmp_path / "skip_truncated.db")
+    query_args: dict[str, Any] = {"kind": "sale", "query": "Albany", "bbox": {"north": 43, "south": 42}}
+    first = begin_sync_run(conn, **query_args, started_utc="2026-10-01T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 300000}, {"zpid": 2, "price": 200000}],
+        seen_utc="2026-10-01T00:00:00Z",
+        run_id=first,
+    )
+    finish_sync_run(conn, first, result_count=2, finished_utc="2026-10-01T00:00:00Z")
+
+    truncated = begin_sync_run(conn, **query_args, started_utc="2026-10-02T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 300000}],
+        seen_utc="2026-10-02T00:00:00Z",
+        run_id=truncated,
+        truncated=True,
+    )
+
+    events = {(change["event"], change["zpid"]) for change in get_changes(conn, "2026-10-02T00:00:00Z")}
+
+    assert ("delisted", 2) not in events
+    conn.close()
+
+
+def test_comparable_run_had_results(tmp_path: Path):
+    from pyzill.db import comparable_run_had_results
+
+    conn = connect(tmp_path / "comparable.db")
+    run_id = begin_sync_run(
+        conn,
+        kind="sale",
+        query="Albany",
+        bbox={"north": 43, "south": 42},
+        filters={"max_price": 500000},
+        started_utc="2026-10-01T00:00:00Z",
+    )
+    assert not comparable_run_had_results(
+        conn, kind="sale", query="Albany", bbox={"north": 43, "south": 42}, filters={"max_price": 500000}
+    )
+
+    upsert_listings(conn, [{"zpid": 1, "price": 300000}], seen_utc="2026-10-01T00:00:00Z", run_id=run_id)
+
+    assert comparable_run_had_results(
+        conn, kind="sale", query="Albany", bbox={"north": 43, "south": 42}, filters={"max_price": 500000}
+    )
+    assert not comparable_run_had_results(conn, kind="sale", query="Albany", bbox={"north": 43, "south": 42})
+    conn.close()
+
+
 def test_v2_database_migrates_to_v3_and_preserves_data(tmp_path: Path):
     db_path = tmp_path / "v2.db"
     legacy = sqlite3.connect(db_path)

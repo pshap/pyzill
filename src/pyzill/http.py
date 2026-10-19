@@ -63,6 +63,32 @@ _HTTP_TOO_MANY_REQUESTS = 429
 
 _RETRY_DELAY = 1.0
 
+# PerimeterX challenge markers checked on a 2xx body that is not JSON.
+_BLOCK_MARKERS = ("px-captcha", "perimeterx", "captcha-delivery", "_pxhd")
+
+
+def _looks_blocked(response: Response) -> bool:
+    """Detect a bot challenge served with a 2xx status.
+
+    A real JSON API response is never a challenge page, so the body is only
+    inspected when the content type is not JSON and the body does not parse as
+    JSON. This keeps the scan off the hot path for multi-megabyte search
+    payloads while still catching HTML challenge pages.
+    """
+    content_type = ""
+    try:
+        content_type = (response.headers.get("content-type") or "").lower()
+    except AttributeError:
+        content_type = ""
+    if "json" in content_type:
+        return False
+    try:
+        response.json()  # type: ignore[no-untyped-call]
+    except Exception:
+        body = (response.text or "").lower()
+        return any(marker in body for marker in _BLOCK_MARKERS)
+    return False
+
 
 def _retry_delay(attempt: int, retry_after: str | None = None, max_retry_after: float = 60.0) -> float:
     if retry_after:
@@ -247,6 +273,8 @@ def request(  # noqa: PLR0913 - central request primitive
             raise ZillowNetworkError(url) from exc
 
         if _HTTP_OK_MIN <= response.status_code < _HTTP_OK_MAX:
+            if _looks_blocked(response):
+                raise ZillowBlockedError(response.status_code, url, (response.text or "")[:200])
             return response
 
         body_snippet = response.text or ""

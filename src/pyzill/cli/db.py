@@ -65,7 +65,7 @@ from pyzill.cli.output import OutputFormat, dumps
 from pyzill.cli.query import cli_query_database
 from pyzill.cli.search import extract_listings, fetch_and_normalize, search_filter_options, search_options
 from pyzill.config import read_env
-from pyzill.db import SyncStats, begin_sync_run, connect_readonly, finish_sync_run, get_changes
+from pyzill.db import SyncStats, begin_sync_run, comparable_run_had_results, connect_readonly, get_changes
 from pyzill.normalize import Listing
 
 
@@ -249,15 +249,27 @@ def db_sync(  # noqa: PLR0913
     started_utc = utc_now()
     filter_values = asdict(filters)
     filter_values.update(is_room=is_room, is_entire_place=is_entire_place)
+    bbox = metadata.get("bbox")
+    truncated = bool(response.get("truncated", False))
     with _db_session(db_path) as conn:
+        # A zero-row answer for a search that previously matched is more likely
+        # a soft block or transient glitch than a search whose listings all
+        # vanished; flag it truncated so change detection skips the run.
+        if not rows and comparable_run_had_results(
+            conn, kind=kind.value, query=query, bbox=bbox, filters=filter_values
+        ):
+            truncated = True
+            warn("Zillow returned no listings for a search that previously matched; recording this run as truncated")
         run_id = begin_sync_run(
             conn,
             kind=kind.value,
             query=query,
-            bbox=metadata.get("bbox"),
+            bbox=bbox,
             filters=filter_values,
             started_utc=started_utc,
         )
+        # upsert_listings finalizes the run inside its own transaction, so the
+        # truncated flag is persisted rather than rolled back with the session.
         stats = upsert_listings(
             conn,
             rows,
@@ -265,12 +277,7 @@ def db_sync(  # noqa: PLR0913
             seen_utc=started_utc,
             kind=kind.value,
             run_id=run_id,
-        )
-        finish_sync_run(
-            conn,
-            run_id,
-            result_count=len(rows),
-            truncated=bool(response.get("truncated", False)),
+            truncated=truncated,
         )
 
     if not rows and output_format is not OutputFormat.json:

@@ -386,6 +386,14 @@ class TestDetailCommands:
         result = runner.invoke(app, [option, value, "detail", "home", "123"])
         assert result.exit_code == 2
 
+    def test_timeout_zero_honors_json_errors(self):
+        # stdout is captured (not a TTY), so errors default to JSON.
+        result = runner.invoke(app, ["--timeout", "0", "detail", "home", "123"])
+        assert result.exit_code == 2
+        payload = json.loads(result.stderr)
+        assert payload["error"]["code"] == "usage"
+        assert "--timeout" in payload["error"]["message"]
+
     def test_detail_rejects_non_json_format(self, fake_http, home_detail_body):
         fake_http.install("GET", content=home_detail_body)
         result = runner.invoke(app, ["detail", "home", "348914888", "--format", "csv"])
@@ -631,6 +639,37 @@ class TestProxyValidation:
         assert result.exit_code == 2
         assert "Invalid proxy" in result.stderr
         assert "SECRETPW" not in result.stderr
+
+    def test_stderr_line_is_not_width_wrapped(self, capsys, monkeypatch):
+        from pyzill.cli.console import stderr_line
+
+        monkeypatch.setenv("COLUMNS", "30")
+        long_message = "y" * 200
+        stderr_line("red", "Error:", long_message)
+        err = capsys.readouterr().err
+        assert long_message in err
+        assert "\n" not in err.strip()
+
+    def test_scheme_less_proxy_env_is_redacted(self, monkeypatch):
+        monkeypatch.setenv("ZILLOW_PROXY", "user:SECRETPW@host:8080")
+        result = runner.invoke(app, ["search", "sale", "12305"])
+        assert result.exit_code == 2
+        assert "Invalid proxy" in result.stderr
+        assert "SECRETPW" not in result.stderr
+
+    def test_empty_pyzill_proxy_env_does_not_crash(self, fake_http, search_success_body, monkeypatch):
+        fake_http.install("PUT", json_data=search_success_body)
+        monkeypatch.setenv("PYZILL_PROXY", "")
+        result = runner.invoke(app, ["search", "sale", "12305"])
+        assert result.exit_code == 0
+
+    def test_empty_pyzill_db_env_uses_default(self, fake_http, search_success_body, monkeypatch, tmp_path):
+        fake_http.install("PUT", json_data=search_success_body)
+        monkeypatch.setenv("PYZILL_DB", "")
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+        result = runner.invoke(app, ["db", "sync", "sale", "12305"])
+        assert result.exit_code == 0
+        assert (tmp_path / "xdg" / "pyzill" / "pyzill.db").exists()
 
 
 class TestRateLimit:
@@ -1095,6 +1134,26 @@ class TestDatabaseCommands:
         assert conn.execute("SELECT result_count, truncated FROM sync_runs").fetchone() == (0, 0)
         conn.close()
 
+    def test_db_sync_empty_after_prior_results_is_truncated(self, fake_http, search_success_body, tmp_path):
+        db_path = tmp_path / "test.db"
+        fake_http.install("PUT", json_data=search_success_body)
+        first = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        assert first.exit_code == 0
+
+        # Same query/bbox/filters, now empty: a soft block, not a real clear-out.
+        fake_http.install("PUT", json_data={"cat1": {"searchResults": {"mapResults": []}}})
+        second = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        assert second.exit_code == 0
+        assert "truncated" in second.stderr
+
+        from pyzill.db import connect
+
+        conn = connect(db_path)
+        runs = conn.execute("SELECT result_count, truncated FROM sync_runs ORDER BY id").fetchall()
+        conn.close()
+        assert runs[0] == (2, 0)
+        assert runs[-1] == (0, 1)
+
     def test_db_sync_re_sync_updates_last_seen(self, fake_http, search_success_body, tmp_path):
         fake_http.install("PUT", json_data=search_success_body)
         db_path = tmp_path / "test.db"
@@ -1109,7 +1168,12 @@ class TestDatabaseCommands:
         assert result2.exit_code == 0
         assert "updated" in result2.stderr
 
-    def test_db_sync_price_change_detection(self, fake_http, tmp_path):
+    def test_db_sync_price_change_detection(self, fake_http, tmp_path, monkeypatch):
+        import pyzill.cli.db as cli_db
+
+        # Pin the sync clock so the later --fetched-at import is always newer.
+        monkeypatch.setattr(cli_db, "utc_now", lambda: "2026-10-19T10:00:00Z")
+
         # First sync with price 250000
         body1 = {"cat1": {"searchResults": {"mapResults": [{"zpid": "123", "price": 250000, "address": "test"}]}}}
         fake_http.install("PUT", json_data=body1)

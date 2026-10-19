@@ -62,6 +62,17 @@ def test_resolve_proxy_none(monkeypatch):
     assert utils.resolve_proxy() is None
 
 
+def test_resolve_proxy_empty_env_is_unset(monkeypatch):
+    monkeypatch.setenv("PYZILL_PROXY", "")
+    monkeypatch.setenv("ZILLOW_PROXY", "   ")
+    assert utils.resolve_proxy() is None
+
+
+def test_resolve_proxy_empty_explicit_is_unset():
+    assert utils.resolve_proxy("") is None
+    assert utils.resolve_proxy("   ") is None
+
+
 def test_resolve_proxy_invalid_scheme():
     with pytest.raises(ValueError, match="scheme"):
         utils.resolve_proxy("ftp://host:21")

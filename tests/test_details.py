@@ -3,7 +3,7 @@ import time
 import pytest
 
 from pyzill import details, http
-from pyzill.exceptions import ZillowNotFoundError, ZillowServerError
+from pyzill.exceptions import ZillowBlockedError, ZillowNotFoundError, ZillowServerError
 
 
 def test_get_from_home_id(fake_http, home_detail_body):
@@ -99,3 +99,10 @@ def test_detail_http_error_raises(fake_http):
 
     with pytest.raises(ZillowNotFoundError):
         details.get_from_home_url("https://www.zillow.com/homedetails/bad_zpid/")
+
+
+def test_detail_200_html_challenge_raises_blocked(fake_http):
+    fake_http.install("GET", text="<html>PerimeterX px-captcha</html>")
+
+    with pytest.raises(ZillowBlockedError):
+        details.get_from_home_url("https://www.zillow.com/homedetails/348914888_zpid/")
