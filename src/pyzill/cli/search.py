@@ -79,7 +79,7 @@ class SearchOptions:
     is_entire_place: bool = False
 
 
-def search_filter_options(  # noqa: PLR0913, PLR0917
+def search_filter_options(  # noqa: PLR0913
     north: North = None,
     south: South = None,
     east: East = None,
@@ -282,8 +282,7 @@ def fetch_and_normalize(
         nonlocal capped_at_depth
         capped_at_depth = True
         warn(
-            f"A tile still returned {_RESULT_CAP} listings at --max-depth {filters.max_depth}; "
-            "results may be truncated"
+            f"A tile still returned {_RESULT_CAP} listings at --max-depth {filters.max_depth}; results may be truncated"
         )
 
     with network_errors("Search failed"):
@@ -339,7 +338,7 @@ def run_search(
 
 
 @search_app.command("sale")
-def search_sale(  # noqa: PLR0913, PLR0917
+def search_sale(  # noqa: PLR0913
     query: Query,
     north: North = None,
     south: South = None,
@@ -381,7 +380,7 @@ def search_sale(  # noqa: PLR0913, PLR0917
 
 
 @search_app.command("rent")
-def search_rent(  # noqa: PLR0913, PLR0917
+def search_rent(  # noqa: PLR0913
     query: Query,
     north: North = None,
     south: South = None,
@@ -425,7 +424,7 @@ def search_rent(  # noqa: PLR0913, PLR0917
 
 
 @search_app.command("sold")
-def search_sold(  # noqa: PLR0913, PLR0917
+def search_sold(  # noqa: PLR0913
     query: Query,
     north: North = None,
     south: South = None,

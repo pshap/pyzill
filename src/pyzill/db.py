@@ -68,7 +68,6 @@ def begin_sync_run(  # noqa: PLR0913
     return int(cursor.lastrowid)
 
 
-
 def finish_sync_run(
     conn: sqlite3.Connection,
     run_id: int,
@@ -110,36 +109,59 @@ _LISTING_TABLE_COLUMNS = (
     "image_url",
     "zestimate",
     "rent_zestimate",
+    "days_on_zillow",
+    "price_change",
+    "price_change_date",
+    "price_reduction",
+    "lot_area_value",
+    "lot_area_unit",
+    "year_built",
+    "tax_assessed_value",
+    "listing_sub_type",
+    "unit",
+    "broker_name",
     "first_seen_utc",
     "last_seen_utc",
 )
 
 _CREATE_LISTINGS_SQL = """CREATE TABLE IF NOT EXISTS {name} (
     zpid INTEGER NOT NULL,
-  kind TEXT NOT NULL DEFAULT 'sale',
-  price INTEGER,
-  price_label TEXT,
-  beds REAL,
-  baths REAL,
-  area INTEGER,
-  address TEXT,
-  street TEXT,
-  city TEXT,
-  state TEXT,
-  zipcode TEXT,
-  latitude REAL,
-  longitude REAL,
-  home_type TEXT,
-  status TEXT,
-  status_type TEXT,
-  detail_url TEXT,
-  image_url TEXT,
-  zestimate INTEGER,
-  rent_zestimate INTEGER,
-  first_seen_utc TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'sale',
+    price INTEGER,
+    price_label TEXT,
+    beds REAL,
+    baths REAL,
+    area INTEGER,
+    address TEXT,
+    street TEXT,
+    city TEXT,
+    state TEXT,
+    zipcode TEXT,
+    latitude REAL,
+    longitude REAL,
+    home_type TEXT,
+    status TEXT,
+    status_type TEXT,
+    detail_url TEXT,
+    image_url TEXT,
+    zestimate INTEGER,
+    rent_zestimate INTEGER,
+    days_on_zillow INTEGER,
+    price_change INTEGER,
+    price_change_date TEXT,
+    price_reduction TEXT,
+    lot_area_value REAL,
+    lot_area_unit TEXT,
+    year_built INTEGER,
+    tax_assessed_value INTEGER,
+    listing_sub_type TEXT,
+    unit TEXT,
+    broker_name TEXT,
+    first_seen_utc TEXT NOT NULL,
     last_seen_utc TEXT NOT NULL,
     PRIMARY KEY (zpid, kind)
 );"""
+
 
 _CREATE_PRICE_HISTORY_SQL = """CREATE TABLE IF NOT EXISTS {name} (
     zpid INTEGER NOT NULL,
@@ -151,14 +173,14 @@ _CREATE_PRICE_HISTORY_SQL = """CREATE TABLE IF NOT EXISTS {name} (
 );"""
 
 _CREATE_INDEX_SQL = (
-        "CREATE INDEX IF NOT EXISTS ix_listings_kind_zipcode ON listings(kind, zipcode)",
-        "CREATE INDEX IF NOT EXISTS ix_listings_kind_city ON listings(kind, city)",
-        "CREATE INDEX IF NOT EXISTS ix_listings_kind_price ON listings(kind, price)",
-        "CREATE INDEX IF NOT EXISTS ix_listings_last_seen ON listings(last_seen_utc)",
+    "CREATE INDEX IF NOT EXISTS ix_listings_kind_zipcode ON listings(kind, zipcode)",
+    "CREATE INDEX IF NOT EXISTS ix_listings_kind_city ON listings(kind, city)",
+    "CREATE INDEX IF NOT EXISTS ix_listings_kind_price ON listings(kind, price)",
+    "CREATE INDEX IF NOT EXISTS ix_listings_last_seen ON listings(last_seen_utc)",
 )
 
 _CREATE_TRACKING_SQL = (
-        """CREATE TABLE IF NOT EXISTS sync_runs (
+    """CREATE TABLE IF NOT EXISTS sync_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 started_utc TEXT NOT NULL,
                 finished_utc TEXT,
@@ -169,7 +191,7 @@ _CREATE_TRACKING_SQL = (
                 result_count INTEGER,
                 truncated INTEGER NOT NULL DEFAULT 0
         )""",
-        """CREATE TABLE IF NOT EXISTS sightings (
+    """CREATE TABLE IF NOT EXISTS sightings (
                 run_id INTEGER NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
                 zpid INTEGER NOT NULL,
                 kind TEXT NOT NULL,
@@ -181,7 +203,7 @@ _CREATE_TRACKING_SQL = (
                 PRIMARY KEY (run_id, zpid, kind),
                 FOREIGN KEY (zpid, kind) REFERENCES listings(zpid, kind) ON DELETE CASCADE
         )""",
-        """CREATE TABLE IF NOT EXISTS status_history (
+    """CREATE TABLE IF NOT EXISTS status_history (
                 zpid INTEGER NOT NULL,
                 kind TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -189,8 +211,8 @@ _CREATE_TRACKING_SQL = (
                 PRIMARY KEY (zpid, kind, status, first_seen_utc),
                 FOREIGN KEY (zpid, kind) REFERENCES listings(zpid, kind) ON DELETE CASCADE
         )""",
-        "CREATE INDEX IF NOT EXISTS ix_sightings_zpid_kind_seen ON sightings(zpid, kind, seen_utc)",
-        "CREATE INDEX IF NOT EXISTS ix_sync_runs_kind_started ON sync_runs(kind, started_utc)",
+    "CREATE INDEX IF NOT EXISTS ix_sightings_zpid_kind_seen ON sightings(zpid, kind, seen_utc)",
+    "CREATE INDEX IF NOT EXISTS ix_sync_runs_kind_started ON sync_runs(kind, started_utc)",
 )
 
 
@@ -239,13 +261,16 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
 
 def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
     """Rebuild v2 listing tables around composite (zpid, kind) keys."""
+    old_columns = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
+    carried = [col for col in _LISTING_TABLE_COLUMNS if col in old_columns]
+
     conn.execute("CREATE TABLE listings_v2_staging AS SELECT * FROM listings")
     conn.execute("CREATE TABLE price_history_v2_staging AS SELECT * FROM price_history")
     conn.execute("DROP TABLE price_history")
     conn.execute("DROP TABLE listings")
 
     conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
-    columns_sql = ", ".join(_LISTING_TABLE_COLUMNS)
+    columns_sql = ", ".join(carried)
     conn.execute(
         f"INSERT INTO listings ({columns_sql}) SELECT {columns_sql} FROM listings_v2_staging"  # noqa: S608
     )
@@ -320,8 +345,22 @@ def connect(path: Path | str) -> sqlite3.Connection:
                     raise sqlite3.DatabaseError(f"No migration available from schema version {version}")
                 migration(conn)
                 version += 1
+            existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
+            for col in _LISTING_TABLE_COLUMNS:
+                if col not in existing_cols:
+                    col_type = (
+                        "REAL"
+                        if col == "lot_area_value"
+                        else (
+                            "INTEGER"
+                            if col in ("days_on_zillow", "price_change", "year_built", "tax_assessed_value")
+                            else "TEXT"
+                        )
+                    )
+                    conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {col_type}")
             conn.execute(f"PRAGMA user_version = {version}")
             conn.commit()
+
         except Exception:
             conn.rollback()
             conn.close()
@@ -359,7 +398,19 @@ _DATA_COLUMNS = (
     "image_url",
     "zestimate",
     "rent_zestimate",
+    "days_on_zillow",
+    "price_change",
+    "price_change_date",
+    "price_reduction",
+    "lot_area_value",
+    "lot_area_unit",
+    "year_built",
+    "tax_assessed_value",
+    "listing_sub_type",
+    "unit",
+    "broker_name",
 )
+
 
 _CHUNK = 500
 
@@ -452,7 +503,6 @@ def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
     raw_rows: Sequence[Mapping[str, Any]] | None = None,
     run_id: int | None = None,
 ) -> SyncStats:
-
     """Upsert listing rows into the database.
 
     Skips rows without a zpid (counted in stats). For each zpid:
@@ -513,12 +563,8 @@ def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
             stats.updated += 1
             old_price = existing[key]
             prior_price = prior_prices.get(key)
-            if (
-                price_int is not None
-                and (
-                    (prior_price is not None and prior_price != price_int)
-                    or (prior_price is None and old_price is None)
-                )
+            if price_int is not None and (
+                (prior_price is not None and prior_price != price_int) or (prior_price is None and old_price is None)
             ):
                 stats.price_changes += 1
         elif key in added_in_batch:
@@ -634,10 +680,7 @@ def get_price_history(conn: sqlite3.Connection, zpid: int) -> list[dict[str, Any
 def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
     """Summarize new listings, price/status transitions, and complete-run absences."""
     events: list[dict[str, Any]] = []
-    listings = {
-        (row["zpid"], row["kind"]): row
-        for row in load_listings(conn)
-    }
+    listings = {(row["zpid"], row["kind"]): row for row in load_listings(conn)}
 
     def observed_days(key: tuple[int, str]) -> int:
         first_seen = listings[key]["first_seen_utc"]
@@ -731,7 +774,6 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
                     for key in sorted((present - prev_set) & all_prior)
                 )
             prior_sets.append(present)
-
 
     return sorted(events, key=lambda event: (event.get("seen_utc", since), event["zpid"], event["event"]))
 

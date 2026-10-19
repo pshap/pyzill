@@ -115,9 +115,7 @@ class ZillowClient:
         search_fn = {"sale": self.search_sale, "rent": self.search_rent, "sold": self.search_sold}[kind]
         return search.tiled_search(search_fn, **kwargs)
 
-    def home(
-        self, zpid_or_url: int | str, *, options: RequestOptions | None = None
-    ) -> dict[str, Any]:
+    def home(self, zpid_or_url: int | str, *, options: RequestOptions | None = None) -> dict[str, Any]:
         request_options = replace(options or self.options, session=self.session, limiter=self.limiter)
         if isinstance(zpid_or_url, str) and zpid_or_url.startswith("https://"):
             match = re.search(r"(\d+)_zpid", zpid_or_url)
@@ -135,9 +133,7 @@ class ZillowClient:
 
         return self._invoke(call, request_options)
 
-    def apartment(
-        self, apartment_id_or_url: str, *, options: RequestOptions | None = None
-    ) -> dict[str, Any]:
+    def apartment(self, apartment_id_or_url: str, *, options: RequestOptions | None = None) -> dict[str, Any]:
         request_options = replace(options or self.options, session=self.session, limiter=self.limiter)
         if apartment_id_or_url.startswith("https://"):
             url = apartment_id_or_url

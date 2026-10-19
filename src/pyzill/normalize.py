@@ -8,6 +8,7 @@ into a flat dict of predictable, numeric-or-``None`` values.
 
 import re
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from typing import Any, TypedDict, overload
 
 from pyzill.http import ZILLOW_HOME
@@ -45,6 +46,43 @@ class Listing(TypedDict):
     image_url: str | None
     zestimate: int | None
     rent_zestimate: int | None
+    days_on_zillow: int | None
+    price_change: int | None
+    price_change_date: str | None
+    price_reduction: str | None
+    lot_area_value: float | None
+    lot_area_unit: str | None
+    year_built: int | None
+    tax_assessed_value: int | None
+    listing_sub_type: str | None
+    unit: str | None
+    broker_name: str | None
+
+
+class PropertyDetail(TypedDict):
+    """Normalized representation of a Zillow property detail page."""
+
+    zpid: int | None
+    price: int | None
+    beds: int | float | None
+    baths: int | float | None
+    area: int | float | None
+    address: str | None
+    street: str | None
+    city: str | None
+    state: str | None
+    zipcode: str | None
+    latitude: float | None
+    longitude: float | None
+    home_type: str | None
+    year_built: int | None
+    lot_size: str | None
+    hoa_fee: int | float | None
+    description: str | None
+    photos_count: int | None
+    price_history: list[dict[str, Any]] | None
+    tax_history: list[dict[str, Any]] | None
+    schools: list[dict[str, Any]] | None
 
 
 # Anything that is not a digit, minus sign or decimal point.
@@ -69,6 +107,26 @@ def _to_number(value: Any) -> int | float | None:
         except ValueError:
             return None
         return int(num) if num.is_integer() else num
+    return None
+
+
+def _format_epoch_ms(value: Any) -> str | None:
+    if isinstance(value, (int, float)) and value > 0:
+        try:
+            return datetime.fromtimestamp(value / 1000, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except (ValueError, OSError):
+            return None
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _extract_listing_sub_type(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping):
+        flags = [str(k).removeprefix("is_") for k, v in value.items() if v]
+        return ", ".join(flags) if flags else None
     return None
 
 
@@ -209,6 +267,31 @@ def normalize_listing(listing: Any) -> Listing | None:
     if detail_url and detail_url.startswith("/"):
         detail_url = _BASE_URL + detail_url
 
+    days_on_zillow_raw = (
+        info.get("daysOnZillow") if info.get("daysOnZillow") is not None else listing.get("daysOnZillow")
+    )
+    days_on_zillow = int(days_on_zillow_raw) if isinstance(days_on_zillow_raw, (int, float)) else None
+
+    price_change_raw = info.get("priceChange") if info.get("priceChange") is not None else listing.get("priceChange")
+    price_change = int(price_change_raw) if isinstance(price_change_raw, (int, float)) else None
+
+    date_price_changed_raw = info.get("datePriceChanged") or listing.get("datePriceChanged")
+    price_change_date = _format_epoch_ms(date_price_changed_raw)
+    price_reduction = info.get("priceReduction") or listing.get("priceReduction")
+
+    lot_area_val = _number_with_zero_fallback(
+        info.get("lotAreaValue"), listing.get("lotAreaValue"), preserve_zero=False
+    )
+    lot_area_unit = info.get("lotAreaUnit") or listing.get("lotAreaUnit")
+
+    year_built_raw = info.get("yearBuilt") if info.get("yearBuilt") is not None else listing.get("yearBuilt")
+    year_built = int(year_built_raw) if isinstance(year_built_raw, (int, float)) and year_built_raw > 0 else None
+
+    tax_assessed = parse_price(info.get("taxAssessedValue") or listing.get("taxAssessedValue"))
+    listing_sub_type = _extract_listing_sub_type(info.get("listing_sub_type") or listing.get("listing_sub_type"))
+    unit = info.get("unit") or listing.get("unit")
+    broker_name = listing.get("brokerName") or info.get("brokerName")
+
     return {
         "zpid": _integer_zpid(listing.get("zpid")),
         "price": price,
@@ -230,6 +313,110 @@ def normalize_listing(listing: Any) -> Listing | None:
         "image_url": listing.get("imgSrc"),
         "zestimate": parse_price(info.get("zestimate")),
         "rent_zestimate": parse_price(info.get("rentZestimate")),
+        "days_on_zillow": days_on_zillow,
+        "price_change": price_change,
+        "price_change_date": price_change_date,
+        "price_reduction": str(price_reduction) if price_reduction is not None else None,
+        "lot_area_value": float(lot_area_val) if lot_area_val is not None else None,
+        "lot_area_unit": str(lot_area_unit) if lot_area_unit is not None else None,
+        "year_built": year_built,
+        "tax_assessed_value": tax_assessed,
+        "listing_sub_type": listing_sub_type,
+        "unit": str(unit) if unit is not None else None,
+        "broker_name": str(broker_name) if broker_name is not None else None,
+    }
+
+
+def normalize_property_detail(property_data: Mapping[str, Any]) -> PropertyDetail:
+    """Flatten a raw Zillow home detail page dictionary into a normalized PropertyDetail."""
+    if not isinstance(property_data, Mapping):
+        return {
+            "zpid": None,
+            "price": None,
+            "beds": None,
+            "baths": None,
+            "area": None,
+            "address": None,
+            "street": None,
+            "city": None,
+            "state": None,
+            "zipcode": None,
+            "latitude": None,
+            "longitude": None,
+            "home_type": None,
+            "year_built": None,
+            "lot_size": None,
+            "hoa_fee": None,
+            "description": None,
+            "photos_count": None,
+            "price_history": None,
+            "tax_history": None,
+            "schools": None,
+        }
+
+    addr = property_data.get("address")
+    addr_dict: Mapping[str, Any] = addr if isinstance(addr, Mapping) else {}
+    street = addr_dict.get("streetAddress") or property_data.get("streetAddress")
+    city = addr_dict.get("city") or property_data.get("city")
+    state = addr_dict.get("state") or property_data.get("state")
+    zipcode = addr_dict.get("zipcode") or property_data.get("zipcode")
+    full_address: str | None = None
+    if isinstance(addr, str) and addr:
+        full_address = addr
+    elif street or city or state or zipcode:
+        parts = [p for p in (street, city, f"{state} {zipcode}".strip() if (state or zipcode) else None) if p]
+        full_address = ", ".join(parts) if parts else None
+
+    reso = property_data.get("resoFacts")
+    reso_dict: Mapping[str, Any] = reso if isinstance(reso, Mapping) else {}
+
+    year_built_val = (
+        reso_dict.get("yearBuilt") if reso_dict.get("yearBuilt") is not None else property_data.get("yearBuilt")
+    )
+    year_built = int(year_built_val) if isinstance(year_built_val, (int, float)) and year_built_val > 0 else None
+
+    lot_size_val = property_data.get("lotSize") or reso_dict.get("lotSize") or property_data.get("lotAreaValue")
+    lot_size = str(lot_size_val) if lot_size_val is not None else None
+
+    hoa_fee_val = property_data.get("monthlyHoaFee") or reso_dict.get("hoaFeeTotal")
+    hoa_fee = _to_number(hoa_fee_val)
+
+    photo_count_val = property_data.get("photoCount")
+    if isinstance(photo_count_val, (int, float)):
+        photos_count = int(photo_count_val)
+    elif isinstance(property_data.get("originalPhotos"), list):
+        photos_count = len(property_data["originalPhotos"])
+    elif isinstance(property_data.get("responsivePhotos"), list):
+        photos_count = len(property_data["responsivePhotos"])
+    else:
+        photos_count = None
+
+    price_hist = property_data.get("priceHistory")
+    tax_hist = property_data.get("taxHistory")
+    schools = property_data.get("schools") or reso_dict.get("schools")
+
+    return {
+        "zpid": _integer_zpid(property_data.get("zpid")),
+        "price": parse_price(property_data.get("price")),
+        "beds": _to_number(property_data.get("bedrooms")),
+        "baths": _to_number(property_data.get("bathrooms")),
+        "area": _to_number(property_data.get("livingAreaValue") or property_data.get("livingArea")),
+        "address": full_address,
+        "street": str(street) if street is not None else None,
+        "city": str(city) if city is not None else None,
+        "state": str(state) if state is not None else None,
+        "zipcode": str(zipcode) if zipcode is not None else None,
+        "latitude": _to_number(property_data.get("latitude")),
+        "longitude": _to_number(property_data.get("longitude")),
+        "home_type": property_data.get("homeType"),
+        "year_built": year_built,
+        "lot_size": lot_size,
+        "hoa_fee": hoa_fee,
+        "description": property_data.get("description"),
+        "photos_count": photos_count,
+        "price_history": list(price_hist) if isinstance(price_hist, list) else None,
+        "tax_history": list(tax_hist) if isinstance(tax_hist, list) else None,
+        "schools": list(schools) if isinstance(schools, list) else None,
     }
 
 

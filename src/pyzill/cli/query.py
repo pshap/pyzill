@@ -28,8 +28,24 @@ from pyzill.normalize import Listing
 _QUERY_FIELDS = frozenset(Listing.__annotations__) | {"ppsf"}
 _DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc"}
 _NUMERIC_FIELDS = frozenset(
-    {"price", "beds", "baths", "area", "ppsf", "zestimate", "rent_zestimate", "latitude", "longitude"}
+    {
+        "price",
+        "beds",
+        "baths",
+        "area",
+        "ppsf",
+        "zestimate",
+        "rent_zestimate",
+        "latitude",
+        "longitude",
+        "days_on_zillow",
+        "price_change",
+        "lot_area_value",
+        "year_built",
+        "tax_assessed_value",
+    }
 )
+
 _QUOTED_LITERAL_LENGTH = 2
 _STRING_OPS = frozenset({"=", "==", "!=", "~"})
 _WHERE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(>=|<=|!=|==|=|>|<|~)\s*(.+?)\s*$")
@@ -188,11 +204,7 @@ def _run_query(  # noqa: PLR0913
     for record in cursor.fetchall():
         row = dict(zip(names, record, strict=True))
         payload = json.loads(row.pop("__payload")) if "__payload" in row else row
-        rows.append(
-            {column: _field_value(payload, column) for column in selected}
-            if selected
-            else payload
-        )
+        rows.append({column: _field_value(payload, column) for column in selected} if selected else payload)
     return rows, selected
 
 
@@ -276,7 +288,7 @@ cli_query_rows = _as_cli_error(query_rows)
 cli_query_database = _as_cli_error(query_database)
 
 
-def query(  # noqa: PLR0913, PLR0917
+def query(  # noqa: PLR0913
     input_or_dash: Annotated[str, typer.Argument(help="Saved search JSON file, or '-' for stdin")],
     where: WhereOpt = None,
     where_json: WhereJSONOpt = None,

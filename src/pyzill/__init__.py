@@ -28,9 +28,11 @@ from pyzill.exceptions import (
 )
 from pyzill.normalize import (
     Listing,
+    PropertyDetail,
     is_building_result,
     normalize_listing,
     normalize_listings,
+    normalize_property_detail,
     parse_price,
 )
 from pyzill.ratelimit import get_min_interval, set_min_interval
@@ -55,6 +57,7 @@ __all__ = [
     "BBox",
     "DBStats",
     "Listing",
+    "PropertyDetail",
     "SyncStats",
     "ZillowBlockedError",
     "ZillowClient",
@@ -84,6 +87,7 @@ __all__ = [
     "load_listings",
     "normalize_listing",
     "normalize_listings",
+    "normalize_property_detail",
     "parse_price",
     "parse_proxy",
     "resolve_proxy",

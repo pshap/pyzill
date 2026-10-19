@@ -86,6 +86,8 @@ _SEARCH_FNS: dict[ListingKind, Callable[..., dict[str, Any]]] = {
 # Keys a row may have and still count as already-normalized for `db import`:
 # the normalized listing fields, plus the database's own timestamp columns.
 _NORMALIZED_KEYS = frozenset(Listing.__annotations__) | {"first_seen_utc", "last_seen_utc"}
+
+
 class _WarningState:
     legacy_db_shown: bool = False
 
@@ -116,7 +118,6 @@ def _resolve_db_path(db_path: str | None) -> Path:
             _warning_state.legacy_db_shown = True
         return path
     return resolve_db_path(db_path, environment_path, default_db_path())
-
 
 
 def _connect_db(db_path: str | None, *, must_exist: bool = False, readonly: bool = False) -> sqlite3.Connection:
@@ -158,7 +159,6 @@ def _upsert_and_report(  # noqa: PLR0913
     _report_sync_stats(stats, verb, output_format)
 
 
-
 def _report_sync_stats(stats: SyncStats, verb: str, output_format: OutputFormat | None) -> None:
     total = stats.added + stats.updated
     if output_format is OutputFormat.json:
@@ -191,7 +191,7 @@ def _looks_normalized(row: Any) -> bool:
 
 
 @db_app.command("sync")
-def db_sync(  # noqa: PLR0913, PLR0917
+def db_sync(  # noqa: PLR0913
     kind: Annotated[ListingKind, typer.Argument(help="Search kind: sale, rent, or sold")],
     query: Query,
     north: North = None,
@@ -241,11 +241,7 @@ def db_sync(  # noqa: PLR0913, PLR0917
         raw=True,
         metadata=metadata,
     )
-    raw_rows = [
-        row
-        for row in extract_listings(response)
-        if isinstance(row, dict) and not is_building_result(row)
-    ]
+    raw_rows = [row for row in extract_listings(response) if isinstance(row, dict) and not is_building_result(row)]
     normalized_rows = [normalize_listing(row) for row in raw_rows]
     pairs = [(normalized, raw) for normalized, raw in zip(normalized_rows, raw_rows, strict=True) if normalized]
     rows = [normalized for normalized, _ in pairs]
@@ -314,7 +310,6 @@ def db_import(
             imported.append(normalized)
             raw_imported.append(row)
 
-
     if not imported:
         if output_format is OutputFormat.json:
             _report_sync_stats(SyncStats(added=0, updated=0, price_changes=0, skipped=0), "Imported", output_format)
@@ -346,7 +341,7 @@ def db_import(
 
 
 @db_app.command("query")
-def db_query(  # noqa: PLR0913, PLR0917
+def db_query(  # noqa: PLR0913
     where: WhereOpt = None,
     where_json: WhereJSONOpt = None,
     sort: SortOpt = None,

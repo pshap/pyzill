@@ -38,7 +38,7 @@ register_offline_commands(app)
 
 
 @app.callback()
-def main(  # noqa: PLR0913, PLR0917
+def main(  # noqa: PLR0913
     ctx: typer.Context,
     quiet: Annotated[
         bool,

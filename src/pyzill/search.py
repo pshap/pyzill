@@ -50,9 +50,7 @@ def for_sale(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     return get_default_client().search_sale(**kwargs)
 
 
-def _for_sale_impl(
-    *, options: http.RequestOptions | None = None, **kwargs: Unpack[SearchParams]
-) -> dict[str, Any]:
+def _for_sale_impl(*, options: http.RequestOptions | None = None, **kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     """Get listings that are for sale.
 
     Accepts the same keyword arguments as :func:`search`, except
@@ -126,9 +124,7 @@ def sold(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     return get_default_client().search_sold(**kwargs)
 
 
-def _sold_impl(
-    *, options: http.RequestOptions | None = None, **kwargs: Unpack[SearchParams]
-) -> dict[str, Any]:
+def _sold_impl(*, options: http.RequestOptions | None = None, **kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     """Get listings that were sold.
 
     Accepts the same keyword arguments as :func:`for_sale`, except
@@ -247,9 +243,7 @@ def search(**kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     return get_default_client().search(**kwargs)
 
 
-def _search_impl(
-    *, options: http.RequestOptions | None = None, **kwargs: Unpack[SearchParams]
-) -> dict[str, Any]:
+def _search_impl(*, options: http.RequestOptions | None = None, **kwargs: Unpack[SearchParams]) -> dict[str, Any]:
     """Run a raw Zillow search with a custom filter_state.
 
     Most callers should use :func:`for_sale`, :func:`for_rent`, or
