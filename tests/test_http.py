@@ -82,6 +82,20 @@ def test_request_detects_200_html_challenge(fake_http) -> None:
         http.request("GET", "https://www.zillow.com/", headers={})
 
 
+def test_request_allows_html_that_only_embeds_perimeterx_script(fake_http) -> None:
+    """A normal Zillow page embeds a scripts.perimeterx tag; that is not a block."""
+    fake_http.install(
+        "GET",
+        text='<html><script id="scripts.perimeterx">var _pxAppId=1;</script>'
+        '<script id="__NEXT_DATA__">{"props":{}}</script></html>',
+        headers={"content-type": "text/html"},
+    )
+
+    response = http.request("GET", "https://www.zillow.com/homedetails/x/1_zpid/", headers={})
+
+    assert response.status_code == 200
+
+
 def test_request_does_not_scan_json_content_type_for_markers(fake_http) -> None:
     fake_http.install(
         "PUT",

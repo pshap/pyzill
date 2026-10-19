@@ -64,7 +64,10 @@ _HTTP_TOO_MANY_REQUESTS = 429
 _RETRY_DELAY = 1.0
 
 # PerimeterX challenge markers checked on a 2xx body that is not JSON.
-_BLOCK_MARKERS = ("px-captcha", "perimeterx", "captcha-delivery", "_pxhd")
+# "perimeterx" is intentionally excluded: normal Zillow pages embed a
+# `scripts.perimeterx` tag for bot mitigation, so the bare word appears on
+# legitimate detail HTML. The markers below are challenge-specific.
+_BLOCK_MARKERS = ("px-captcha", "captcha-delivery", "_pxhd", "px-appid")
 
 
 def _looks_blocked(response: Response) -> bool:
