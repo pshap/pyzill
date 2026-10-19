@@ -101,6 +101,19 @@ def test_detail_http_error_raises(fake_http):
         details.get_from_home_url("https://www.zillow.com/homedetails/bad_zpid/")
 
 
+def test_detail_pages_with_ordinary_perimeterx_settings_are_not_blocked(
+    fake_http, home_detail_body, department_detail_body
+):
+    for body, kind in ((home_detail_body, "home"), (department_detail_body, "apartment")):
+        html = body.replace(b"<html>", b'<html><script>var _pxhd = "cookie";</script><div px-appid="app"></div>')
+        fake_http.install("GET", text=html.decode(), content=html, headers={"content-type": "text/html"})
+
+        if kind == "home":
+            assert details.get_from_home_id(348914888)["zpid"] == 348914888
+        else:
+            assert details.get_from_apartment_id("CgKZT4")["id"] == "CgKZT4"
+
+
 def test_detail_200_html_challenge_raises_blocked(fake_http):
     fake_http.install("GET", text="<html>PerimeterX px-captcha</html>")
 

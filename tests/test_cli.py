@@ -522,7 +522,8 @@ class TestOutputFormats:
         result = runner.invoke(app, ["search", "sale", "12305", "--format", "table"])
         assert result.exit_code == 0
 
-    def test_table_uses_concise_columns(self, fake_http, search_success_body):
+    def test_table_uses_concise_columns(self, fake_http, search_success_body, monkeypatch):
+        monkeypatch.setenv("COLUMNS", "200")
         fake_http.install("PUT", json_data=search_success_body)
         result = runner.invoke(app, ["search", "sale", "12305", "--format", "table"])
         assert result.exit_code == 0
@@ -676,6 +677,19 @@ class TestProxyValidation:
         assert _redact("http://user:p@ssw0rd@host") == "http://***@host"
         assert _redact("socks5://u:p@ss@host:1080") == "socks5://***@host:1080"
         assert _redact("keep foo@bar.com visible") == "keep foo@bar.com visible"
+
+    def test_no_color_empty_value_does_not_disable_color(self, fake_http, search_success_body, monkeypatch):
+        # The NO_COLOR spec: only a non-empty value disables color.
+        fake_http.install("PUT", json_data=search_success_body)
+        monkeypatch.setenv("NO_COLOR", "")
+        result = runner.invoke(app, ["search", "sale", "12305"])
+        assert result.exit_code == 0
+
+    def test_no_color_non_empty_value_disables_color(self, fake_http, search_success_body, monkeypatch):
+        fake_http.install("PUT", json_data=search_success_body)
+        monkeypatch.setenv("NO_COLOR", "1")
+        result = runner.invoke(app, ["search", "sale", "12305"])
+        assert result.exit_code == 0
 
     def test_stderr_line_is_not_width_wrapped(self, capsys, monkeypatch):
         from pyzill.cli.console import stderr_line
@@ -1212,6 +1226,30 @@ class TestDatabaseCommands:
         assert runs[0] == (2, 0)
         assert runs[-1] == (0, 1)
 
+    def test_db_sync_confirm_empty_reports_delistings(self, fake_http, search_success_body, tmp_path):
+        from pyzill.db import connect, get_changes
+
+        db_path = tmp_path / "confirmed_empty.db"
+        fake_http.install("PUT", json_data=search_success_body)
+        assert runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)]).exit_code == 0
+
+        fake_http.install("PUT", json_data={"cat1": {"searchResults": {"mapResults": []}}})
+        args = ["db", "sync", "sale", "12305", "--db", str(db_path)]
+        assert runner.invoke(app, args).exit_code == 0
+        confirmed = runner.invoke(app, [*args, "--confirm-empty"])
+
+        assert confirmed.exit_code == 0
+        assert "truncated" not in confirmed.stderr
+        conn = connect(db_path)
+        assert conn.execute("SELECT result_count, truncated FROM sync_runs ORDER BY id").fetchall() == [
+            (2, 0),
+            (0, 1),
+            (0, 0),
+        ]
+        changes = get_changes(conn, "2000-01-01T00:00:00Z")
+        assert {event["zpid"] for event in changes if event["event"] == "delisted"} == {348914888, 348914889}
+        conn.close()
+
     def test_db_sync_re_sync_updates_last_seen(self, fake_http, search_success_body, tmp_path):
         fake_http.install("PUT", json_data=search_success_body)
         db_path = tmp_path / "test.db"
@@ -1577,6 +1615,23 @@ class TestDatabaseCommands:
         result = runner.invoke(app, ["db", "changes", "not-a-date", "--db", str(db_path)])
         assert result.exit_code == 2
 
+    def test_db_changes_normalizes_since_with_milliseconds(self, tmp_path):
+        # A sub-second suffix must compare the same as its canonical UTC form;
+        # otherwise a "2026-10-01T12:00:00.500Z" SINCE would sort after the
+        # fixed-width stored timestamps and silently drop the listing.
+        rows = [{"zpid": 1, "price": 250000}]
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps(rows))
+        db_path = tmp_path / "changes.db"
+        runner.invoke(
+            app, ["db", "import", str(input_file), "--fetched-at", "2026-10-01T12:00:00Z", "--db", str(db_path)]
+        )
+
+        result = runner.invoke(app, ["db", "changes", "2026-10-01T12:00:00.500Z", "--db", str(db_path)])
+        assert result.exit_code == 0
+        events = json.loads(result.stdout)
+        assert any(event["event"] == "new" and event["zpid"] == 1 for event in events)
+
     def test_db_stats_missing_database(self, tmp_path):
         db_path = tmp_path / "nonexistent.db"
         result = runner.invoke(app, ["db", "stats", "--db", str(db_path)])
@@ -1644,7 +1699,9 @@ class TestDatabaseCommands:
         buffer = _TtyStdout()
         monkeypatch.setattr(sys, "stdout", buffer)
         monkeypatch.setattr(
-            db_module, "context", lambda: _FakeConsoleContext(Console(file=buffer, force_terminal=False, no_color=True))
+            db_module,
+            "context",
+            lambda: _FakeConsoleContext(Console(file=buffer, force_terminal=False, no_color=True, width=200)),
         )
 
         db_module.db_stats_cmd(db_path=str(db_path), output_format=None)
@@ -1692,4 +1749,3 @@ class TestDatabaseCommands:
         result = runner.invoke(app, ["db", "import", str(input_file)])
         assert result.exit_code == 0
         assert "default database is now" in result.stderr
-

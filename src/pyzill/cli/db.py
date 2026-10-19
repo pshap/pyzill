@@ -226,6 +226,9 @@ def db_sync(  # noqa: PLR0913
     max_requests: MaxRequests = 50,
     is_room: IsRoom = False,
     is_entire_place: IsEntirePlace = False,
+    confirm_empty: Annotated[
+        bool, typer.Option("--confirm-empty", help="Treat an empty response as a complete search")
+    ] = False,
     db_path: DbPathOpt = None,
     output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
 ) -> None:
@@ -271,11 +274,16 @@ def db_sync(  # noqa: PLR0913
         # A zero-row answer for a search that previously matched is more likely
         # a soft block or transient glitch than a search whose listings all
         # vanished; flag it truncated so change detection skips the run.
-        if not rows and comparable_run_had_results(
-            conn, kind=kind.value, query=query, bbox=bbox, filters=filter_values
+        if (
+            not rows
+            and not confirm_empty
+            and comparable_run_had_results(conn, kind=kind.value, query=query, bbox=bbox, filters=filter_values)
         ):
             truncated = True
-            warn("Zillow returned no listings for a search that previously matched; recording this run as truncated")
+            warn(
+                "Zillow returned no listings for a search that previously matched; "
+                "recording this run as truncated (use --confirm-empty to accept a verified empty result)"
+            )
         run_id = begin_sync_run(
             conn,
             kind=kind.value,

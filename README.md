@@ -699,6 +699,7 @@ data = pyzill.get_from_apartment_url("https://www.zillow.com/apartments/kissimme
 | `normalize_listing(listing)` / `normalize_listings(listings)` | Flatten raw listings to numeric-or-`None` fields |
 | `Listing` | `TypedDict` describing the normalized listing shape |
 | `parse_price(value)` | Parse a Zillow price string/number into an int |
+| `normalize_property_detail(property_data)` | Flatten a Zillow home-detail page into a `PropertyDetail` (lot size in square feet with its unit, HOA fee with its unit) |
 | `ZillowBlockedError` | Raised for block/rate-limit responses (also remains a base for server errors) |
 | `ZillowNotFoundError` / `ZillowServerError` | HTTP 404 / final 5xx response |
 | `ZillowParseError` | Successful page response with unexpected or missing data |

@@ -1,5 +1,4 @@
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -18,7 +17,6 @@ def main(output_path: str) -> None:
         is_entire_place=False,
         is_room=True,
         min_beds=1,
-        proxy_url=os.environ.get("PYZILL_PROXY"),
     )
     Path(output_path).write_text(json.dumps(results))
 

@@ -683,7 +683,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "curl-cffi" },
+    { name = "curl-cffi", specifier = ">=0.16.3" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7" },

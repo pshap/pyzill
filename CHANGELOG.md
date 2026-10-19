@@ -171,7 +171,11 @@ All notable changes to this project are documented here.
 ### Changed
 - `iter_search`/`iter_sale`/`iter_rent`/`iter_sold` are documented as
   single-response iterators (not paginators); use `tiled_search` for depth.
-- Removed unused shared Typer option aliases and pinned `curl_cffi>=0.7`.
+- Removed unused shared Typer option aliases and pinned `curl_cffi>=0.16.3`.
+- `normalize_property_detail` now reports `lot_size_unit` and `hoa_fee_unit`
+  alongside the values, so an acre-derived lot size and an annual HOA total are
+  not mistaken for square feet or a monthly fee. `lot_size` is still reported
+  in square feet.
 
 ### Unverified (live Zillow validation required)
 - TODO: Decide whether `for_rent` should expand building cards into units.

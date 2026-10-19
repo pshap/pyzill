@@ -67,7 +67,7 @@ _RETRY_DELAY = 1.0
 # "perimeterx" is intentionally excluded: normal Zillow pages embed a
 # `scripts.perimeterx` tag for bot mitigation, so the bare word appears on
 # legitimate detail HTML. The markers below are challenge-specific.
-_BLOCK_MARKERS = ("px-captcha", "captcha-delivery", "_pxhd", "px-appid")
+_BLOCK_MARKERS = ("px-captcha", "captcha-delivery")
 
 
 def _looks_blocked(response: Response) -> bool:
