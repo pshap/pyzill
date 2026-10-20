@@ -8,8 +8,8 @@ transitions inside one transaction.
 import json
 import sqlite3
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, NamedTuple
 
 from pyzill._kinds import KINDS, Kind
 from pyzill.db.runs import begin_sync_run, finish_sync_run, utc_now
@@ -35,6 +35,37 @@ class SyncStats:
     updated: int
     price_changes: int
     skipped: int
+
+
+class _PreparedRow(NamedTuple):
+    """One input row after zpid coercion and price parsing."""
+
+    zpid: int
+    row: Mapping[str, Any]
+    price: int | None
+    raw_row: Mapping[str, Any]
+
+
+@dataclass
+class _BatchState:
+    """Per-batch identity and the state read before any write."""
+
+    kind: str
+    run_id: int
+    seen_utc: str
+    existing: Mapping[tuple[int, str], Any]
+    prior_prices: Mapping[tuple[int, str], int | None]
+    prior_statuses: dict[int, str]
+
+
+@dataclass
+class _WriteBatch:
+    """The parameter rows for the four statements the write path issues."""
+
+    listing: list[tuple[Any, ...]] = field(default_factory=list)
+    history: list[tuple[int, str, int, str]] = field(default_factory=list)
+    sighting: list[tuple[Any, ...]] = field(default_factory=list)
+    status: list[tuple[int, str, str, str]] = field(default_factory=list)
 
 
 _DATA_COLUMNS = (
@@ -167,7 +198,123 @@ def _latest_statuses(conn: sqlite3.Connection, zpids: list[int], kind: str, seen
     return {zpid: status for zpid, (_, status) in latest.items()}
 
 
-def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
+def _prepare_rows(
+    rows: Sequence[Mapping[str, Any]],
+    raw_rows: Sequence[Mapping[str, Any]] | None,
+    stats: SyncStats,
+) -> list[_PreparedRow]:
+    """Coerce zpids, parse prices, and count rows that cannot be stored.
+
+    Rows without a usable zpid are skipped and counted in ``stats.skipped``.
+    """
+    # parse_price tolerates raw "$459,000" strings from unnormalized rows
+    # and maps 0/"$0" (Zillow's unknown sentinel) to None.
+    prepared: list[_PreparedRow] = []
+    for index, row in enumerate(rows):
+        zpid = row.get("zpid")
+        if zpid is None:
+            stats.skipped += 1
+            continue
+        try:
+            zpid = int(zpid)
+        except (ValueError, TypeError):
+            stats.skipped += 1
+            continue
+        raw_row = raw_rows[index] if raw_rows is not None and index < len(raw_rows) else row
+        prepared.append(_PreparedRow(zpid, row, parse_price(row.get("price")), raw_row))
+    return prepared
+
+
+def _classify_changes(prepared: Sequence[_PreparedRow], state: _BatchState, stats: SyncStats) -> None:
+    """Count added, updated, and price-changed listings in the batch.
+
+    A zpid seen twice in one batch counts as one addition and one update.
+    """
+    added_in_batch: set[tuple[int, str]] = set()
+    for entry in prepared:
+        key = (entry.zpid, state.kind)
+        if key in state.existing:
+            stats.updated += 1
+            old_price = state.existing[key]
+            prior_price = state.prior_prices.get(key)
+            if entry.price is not None and (
+                (prior_price is not None and prior_price != entry.price) or (prior_price is None and old_price is None)
+            ):
+                stats.price_changes += 1
+        elif key in added_in_batch:
+            stats.updated += 1
+        else:
+            stats.added += 1
+            added_in_batch.add(key)
+
+
+def _build_params(prepared: Sequence[_PreparedRow], state: _BatchState) -> _WriteBatch:
+    """Build the parameter rows for every statement the write path issues."""
+    batch = _WriteBatch()
+    for entry in prepared:
+        row = entry.row
+        price = entry.price
+        key = (entry.zpid, state.kind)
+
+        batch.listing.append(
+            (
+                entry.zpid,
+                state.kind,
+                price,
+                *(row.get(column) for column in _DATA_COLUMNS),
+                state.seen_utc,
+                state.seen_utc,
+            )
+        )
+        if price is not None and state.prior_prices.get(key) != price:
+            batch.history.append((entry.zpid, state.kind, price, state.seen_utc))
+        status = row.get("status")
+        status_type = row.get("status_type")
+        batch.sighting.append(
+            (
+                state.run_id,
+                entry.zpid,
+                state.kind,
+                price,
+                status,
+                status_type,
+                state.seen_utc,
+                json.dumps(entry.raw_row, ensure_ascii=False, allow_nan=False),
+            )
+        )
+        if isinstance(status, str) and status and state.prior_statuses.get(entry.zpid) != status:
+            batch.status.append((entry.zpid, state.kind, status, state.seen_utc))
+            # Later rows for the same zpid in this batch must compare against
+            # the status we just staged, not the stale pre-batch one.
+            state.prior_statuses[entry.zpid] = status
+    return batch
+
+
+def _write_batch(conn: sqlite3.Connection, batch: _WriteBatch) -> None:
+    """Issue the four batched writes that store one sync run's sightings."""
+    conn.executemany(_LISTING_UPSERT_SQL, batch.listing)
+    if batch.history:
+        conn.executemany(
+            "INSERT INTO price_history (zpid, kind, price, seen_utc) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(zpid, kind, seen_utc) DO UPDATE SET price = excluded.price",
+            batch.history,
+        )
+    if batch.sighting:
+        conn.executemany(
+            "INSERT OR REPLACE INTO sightings "
+            "(run_id, zpid, kind, price, status, status_type, seen_utc, raw_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            batch.sighting,
+        )
+    if batch.status:
+        conn.executemany(
+            "INSERT INTO status_history (zpid, kind, status, first_seen_utc) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT DO NOTHING",
+            batch.status,
+        )
+
+
+def upsert_listings(  # noqa: PLR0913
     conn: sqlite3.Connection,
     rows: Sequence[Mapping[str, Any]],
     *,
@@ -209,100 +356,28 @@ def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
         raise ValueError("kind must be one of: sale, rent, sold")
 
     stats = SyncStats(added=0, updated=0, price_changes=0, skipped=0)
-
-    # parse_price tolerates raw "$459,000" strings from unnormalized rows
-    # and maps 0/"$0" (Zillow's unknown sentinel) to None.
-    prepared: list[tuple[int, Mapping[str, Any], int | None, Mapping[str, Any]]] = []
-
-    for index, row in enumerate(rows):
-        zpid = row.get("zpid")
-        if zpid is None:
-            stats.skipped += 1
-            continue
-        try:
-            zpid = int(zpid)
-        except (ValueError, TypeError):
-            stats.skipped += 1
-            continue
-        raw_row = raw_rows[index] if raw_rows is not None and index < len(raw_rows) else row
-        prepared.append((zpid, row, parse_price(row.get("price")), raw_row))
-
-    zpids = list(dict.fromkeys(zpid for zpid, _, _, _ in prepared))
+    prepared = _prepare_rows(rows, raw_rows, stats)
+    zpids = list(dict.fromkeys(entry.zpid for entry in prepared))
     existing, prior_prices = _prefetch(conn, zpids, kind, seen_utc)
     prior_statuses = _latest_statuses(conn, zpids, kind, seen_utc)
     if run_id is None:
         run_id = begin_sync_run(conn, kind=kind, started_utc=seen_utc)
 
-    listing_params: list[tuple[Any, ...]] = []
-    history_params: list[tuple[int, str, int, str]] = []
-    sighting_params: list[tuple[Any, ...]] = []
-    status_entries: list[tuple[int, str, str, str]] = []
-    added_in_batch: set[tuple[int, str]] = set()
-    for zpid, row, price_int, raw_row in prepared:
-        key = (zpid, kind)
-        if key in existing:
-            stats.updated += 1
-            old_price = existing[key]
-            prior_price = prior_prices.get(key)
-            if price_int is not None and (
-                (prior_price is not None and prior_price != price_int) or (prior_price is None and old_price is None)
-            ):
-                stats.price_changes += 1
-        elif key in added_in_batch:
-            stats.updated += 1
-        else:
-            stats.added += 1
-            added_in_batch.add(key)
-
-        listing_params.append(
-            (zpid, kind, price_int, *(row.get(column) for column in _DATA_COLUMNS), seen_utc, seen_utc)
-        )
-        if price_int is not None and prior_prices.get(key) != price_int:
-            history_params.append((zpid, kind, price_int, seen_utc))
-        status = row.get("status")
-        status_type = row.get("status_type")
-        sighting_params.append(
-            (
-                run_id,
-                zpid,
-                kind,
-                price_int,
-                status,
-                status_type,
-                seen_utc,
-                json.dumps(raw_row, ensure_ascii=False, allow_nan=False),
-            )
-        )
-        if isinstance(status, str) and status and prior_statuses.get(zpid) != status:
-            status_entries.append((zpid, kind, status, seen_utc))
-            # Later rows for the same zpid in this batch must compare against
-            # the status we just staged, not the stale pre-batch one.
-            prior_statuses[zpid] = status
-
-    conn.executemany(_LISTING_UPSERT_SQL, listing_params)
-    if history_params:
-        conn.executemany(
-            "INSERT INTO price_history (zpid, kind, price, seen_utc) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(zpid, kind, seen_utc) DO UPDATE SET price = excluded.price",
-            history_params,
-        )
-    if sighting_params:
-        conn.executemany(
-            "INSERT OR REPLACE INTO sightings "
-            "(run_id, zpid, kind, price, status, status_type, seen_utc, raw_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            sighting_params,
-        )
-    if status_entries:
-        conn.executemany(
-            "INSERT INTO status_history (zpid, kind, status, first_seen_utc) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT DO NOTHING",
-            status_entries,
-        )
+    state = _BatchState(
+        kind=kind,
+        run_id=run_id,
+        seen_utc=seen_utc,
+        existing=existing,
+        prior_prices=prior_prices,
+        prior_statuses=prior_statuses,
+    )
+    _classify_changes(prepared, state, stats)
+    batch = _build_params(prepared, state)
+    _write_batch(conn, batch)
     finish_sync_run(
         conn,
         run_id,
-        result_count=len(sighting_params),
+        result_count=len(batch.sighting),
         truncated=truncated,
         finished_utc=seen_utc,
     )
