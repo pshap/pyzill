@@ -119,6 +119,48 @@ class TestSearchCommands:
         result = runner.invoke(app, ["search", "sold", "12305"])
         assert result.exit_code == 0
 
+    def test_search_zip_only_returns_listings_in_requested_zip(self, fake_http):
+        fake_http.install(
+            "PUT",
+            json_data={
+                "cat1": {
+                    "searchResults": {
+                        "mapResults": [
+                            {"zpid": 1, "addressZipcode": "12305"},
+                            {"zpid": 2, "addressZipcode": "12309"},
+                            {"zpid": 3},
+                        ]
+                    }
+                }
+            },
+        )
+
+        result = runner.invoke(app, ["search", "sale", "12305"])
+
+        assert result.exit_code == 0
+        assert [row["zpid"] for row in json.loads(result.stdout)] == [1]
+
+    def test_search_zip_selects_results_containing_requested_zip(self, fake_http):
+        fake_http.install(
+            "PUT",
+            json_data={
+                "cat1": {
+                    "searchResults": {
+                        "mapResults": [{"zpid": 1, "addressZipcode": "12305"}],
+                        "listResults": [
+                            {"zpid": 2, "addressZipcode": "12309"},
+                            {"zpid": 3, "addressZipcode": "12309"},
+                        ],
+                    }
+                }
+            },
+        )
+
+        result = runner.invoke(app, ["search", "sale", "12305"])
+
+        assert result.exit_code == 0
+        assert [row["zpid"] for row in json.loads(result.stdout)] == [1]
+
     def test_search_requires_query(self):
         result = runner.invoke(app, ["search", "sale"])
         assert result.exit_code == 2
@@ -827,6 +869,49 @@ class TestModuleInvocation:
         assert result.returncode == 0
         assert "pyzill" in result.stdout
 
+    def test_parser_errors_are_json_when_requested(self):
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-m", "pyzill", "--json-errors", "search", "sale", "12305", "--max-requests", "0"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 2
+        assert json.loads(result.stderr)["error"] == {
+            "code": "usage",
+            "message": "Invalid value for '--max-requests': 0 is not in the range x>=1.",
+            "retryable": False,
+        }
+
+    def test_parser_errors_default_to_json_when_piped(self):
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-m", "pyzill", "search", "sale", "12305", "--max-requests", "0"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 2
+        assert json.loads(result.stderr)["error"]["code"] == "usage"
+
+    def test_parser_errors_can_be_human_readable(self):
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-m", "pyzill", "--no-json-errors", "search", "sale", "12305", "--max-requests", "0"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 2
+        assert result.stderr.startswith("Error: Invalid value for '--max-requests'")
+
 
 class TestGeocodeIntegration:
     """Searches without an explicit bbox geocode the query text."""
@@ -1149,6 +1234,60 @@ class TestDetailExploration:
 class TestDatabaseCommands:
     """Test db sub-app commands."""
 
+    def test_db_sync_zip_only_stores_listings_in_requested_zip(self, fake_http, tmp_path):
+        fake_http.install(
+            "PUT",
+            json_data={
+                "cat1": {
+                    "searchResults": {
+                        "mapResults": [
+                            {"zpid": 1, "addressZipcode": "12305", "price": 100000},
+                            {"zpid": 2, "addressZipcode": "12309", "price": 200000},
+                            {"zpid": 3, "price": 300000},
+                        ]
+                    }
+                }
+            },
+        )
+        db_path = tmp_path / "zip.db"
+
+        result = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+
+        assert result.exit_code == 0
+        from pyzill.db import connect
+
+        conn = connect(db_path)
+        assert conn.execute("SELECT zpid FROM listings ORDER BY zpid").fetchall() == [(1,)]
+        assert conn.execute("SELECT result_count FROM sync_runs").fetchone() == (1,)
+        conn.close()
+
+    def test_db_sync_zip_selects_results_containing_requested_zip(self, fake_http, tmp_path):
+        fake_http.install(
+            "PUT",
+            json_data={
+                "cat1": {
+                    "searchResults": {
+                        "mapResults": [{"zpid": 1, "addressZipcode": "12305"}],
+                        "listResults": [
+                            {"zpid": 2, "addressZipcode": "12309"},
+                            {"zpid": 3, "addressZipcode": "12309"},
+                        ],
+                    }
+                }
+            },
+        )
+        db_path = tmp_path / "zip.db"
+
+        result = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+
+        assert result.exit_code == 0
+        from pyzill.db import connect
+
+        conn = connect(db_path)
+        assert conn.execute("SELECT zpid FROM listings ORDER BY zpid").fetchall() == [(1,)]
+        assert conn.execute("SELECT result_count FROM sync_runs").fetchone() == (1,)
+        conn.close()
+
     def test_db_sync_creates_database(self, fake_http, search_success_body, tmp_path):
         fake_http.install("PUT", json_data=search_success_body)
         db_path = tmp_path / "test.db"
@@ -1271,7 +1410,9 @@ class TestDatabaseCommands:
         monkeypatch.setattr(cli_db, "utc_now", lambda: "2026-10-19T10:00:00Z")
 
         # First sync with price 250000
-        body1 = {"cat1": {"searchResults": {"mapResults": [{"zpid": "123", "price": 250000, "address": "test"}]}}}
+        body1 = {
+            "cat1": {"searchResults": {"mapResults": [{"zpid": "123", "price": 250000, "addressZipcode": "12305"}]}}
+        }
         fake_http.install("PUT", json_data=body1)
         db_path = tmp_path / "test.db"
 

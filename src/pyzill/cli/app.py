@@ -8,6 +8,7 @@ import sys
 from typing import Annotated
 
 import typer
+from typer._click.exceptions import ClickException, UsageError
 
 from pyzill import resolve_proxy, set_min_interval
 from pyzill.cli.console import (
@@ -142,7 +143,20 @@ def main(  # noqa: PLR0913
 
 def main_entry() -> None:
     """Entry point for the CLI."""
-    app()
+    try:
+        exit_code = app(standalone_mode=False)
+    except ClickException as exc:
+        root = exc.ctx if isinstance(exc, UsageError) else None
+        while root is not None and root.parent is not None:
+            root = root.parent
+        json_errors = root.params.get("json_errors") if root is not None else None
+        set_context(Context(json_errors=json_errors if json_errors is not None else not sys.stdout.isatty()))
+        try:
+            error(exc.format_message(), code=exc.exit_code)
+        except typer.Exit as usage_exit:
+            raise SystemExit(usage_exit.exit_code) from None
+    if isinstance(exit_code, int):
+        raise SystemExit(exit_code)
 
 
 if __name__ == "__main__":

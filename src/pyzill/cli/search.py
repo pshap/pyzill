@@ -51,6 +51,7 @@ from pyzill.geocode import geocode
 from pyzill.search import _RESULT_CAP, tiled_search
 
 search_app = typer.Typer(name="search", help="Search Zillow listings")
+_ZIPCODE_LENGTH = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +160,7 @@ def _cli_check_range(name: str, low: int | None, high: int | None) -> None:
         error(str(exc), code=2)
 
 
-def _usable_row_count(rows: list[Any]) -> int:
+def _usable_row_count(rows: list[Any], *, zipcode: str | None = None) -> int:
     """Count rows that normalize to a real listing with an integer zpid.
 
     ``isBuilding`` cards are the common case, but Zillow sometimes stamps a
@@ -172,12 +173,16 @@ def _usable_row_count(rows: list[Any]) -> int:
         if not isinstance(row, dict) or is_building_result(row):
             continue
         normalized = normalize_listing(row)
-        if normalized is not None and isinstance(normalized["zpid"], int):
+        if (
+            normalized is not None
+            and isinstance(normalized["zpid"], int)
+            and (zipcode is None or normalized["zipcode"] == zipcode)
+        ):
             count += 1
     return count
 
 
-def extract_listings(data: Any, *, wrap_single: bool = False) -> list[Any]:
+def extract_listings(data: Any, *, wrap_single: bool = False, zipcode: str | None = None) -> list[Any]:
     """Pull the listing list out of a Zillow response (or a bare list).
 
     Digs through nested response containers (``cat1`` / ``cat2`` /
@@ -196,15 +201,20 @@ def extract_listings(data: Any, *, wrap_single: bool = False) -> list[Any]:
     if isinstance(data, dict):
         candidates = [data[key] or [] for key in ("mapResults", "listResults") if key in data]
         if candidates:
-            return max(candidates, key=_usable_row_count)
+            return max(candidates, key=lambda rows: _usable_row_count(rows, zipcode=zipcode))
         for key in ("cat1", "cat2", "searchResults"):
             if key in data:
                 # It's a response envelope: honor its (possibly empty) contents
                 # rather than treating the envelope itself as a listing.
-                return extract_listings(data[key])
+                return extract_listings(data[key], zipcode=zipcode)
         return [data] if wrap_single else []
     error("Input must be a JSON object or array", code=2)
     return []  # unreachable; error() exits
+
+
+def query_zipcode(query: str) -> str | None:
+    zipcode = query.strip()
+    return zipcode if len(zipcode) == _ZIPCODE_LENGTH and zipcode.isascii() and zipcode.isdecimal() else None
 
 
 def search_options(
@@ -314,7 +324,11 @@ def fetch_and_normalize(
         or len(result.get("mapResults", []) or []) >= _RESULT_CAP
         or len(result.get("listResults", []) or []) >= _RESULT_CAP
     )
-    return result if raw else normalize_listings(extract_listings(result))
+    if raw:
+        return result
+    zipcode = query_zipcode(options.query)
+    listings = normalize_listings(extract_listings(result, zipcode=zipcode))
+    return [listing for listing in listings if listing["zipcode"] == zipcode] if zipcode else listings
 
 
 def run_search(

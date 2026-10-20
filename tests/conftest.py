@@ -113,8 +113,8 @@ def search_success_body():
         "cat1": {
             "searchResults": {
                 "mapResults": [
-                    {"zpid": 348914888, "address": "27 Washington Ave"},
-                    {"zpid": 348914889, "address": "29 Washington Ave"},
+                    {"zpid": 348914888, "address": "27 Washington Ave", "addressZipcode": "12305"},
+                    {"zpid": 348914889, "address": "29 Washington Ave", "addressZipcode": "12305"},
                 ],
                 "listResults": [{"zpid": 348914888}],
             }

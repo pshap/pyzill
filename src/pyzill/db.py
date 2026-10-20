@@ -532,9 +532,7 @@ def _prefetch(
     return existing, prior_prices
 
 
-def _latest_statuses(
-    conn: sqlite3.Connection, zpids: list[int], kind: str, seen_utc: str
-) -> dict[int, str]:
+def _latest_statuses(conn: sqlite3.Connection, zpids: list[int], kind: str, seen_utc: str) -> dict[int, str]:
     """Return zpid -> latest status recorded at or before ``seen_utc``.
 
     Replaces a per-row SELECT so a batch issues one query per chunk instead of

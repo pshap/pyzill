@@ -63,7 +63,13 @@ from pyzill.cli.options import (
 )
 from pyzill.cli.output import OutputFormat, dumps
 from pyzill.cli.query import cli_query_database
-from pyzill.cli.search import extract_listings, fetch_and_normalize, search_filter_options, search_options
+from pyzill.cli.search import (
+    extract_listings,
+    fetch_and_normalize,
+    query_zipcode,
+    search_filter_options,
+    search_options,
+)
 from pyzill.config import read_env
 from pyzill.db import SyncStats, begin_sync_run, comparable_run_had_results, connect_readonly, get_changes
 from pyzill.normalize import Listing
@@ -260,9 +266,18 @@ def db_sync(  # noqa: PLR0913
         raw=True,
         metadata=metadata,
     )
-    raw_rows = [row for row in extract_listings(response) if isinstance(row, dict) and not is_building_result(row)]
+    zipcode = query_zipcode(query)
+    raw_rows = [
+        row
+        for row in extract_listings(response, zipcode=zipcode)
+        if isinstance(row, dict) and not is_building_result(row)
+    ]
     normalized_rows = [normalize_listing(row) for row in raw_rows]
-    pairs = [(normalized, raw) for normalized, raw in zip(normalized_rows, raw_rows, strict=True) if normalized]
+    pairs = [
+        (normalized, raw)
+        for normalized, raw in zip(normalized_rows, raw_rows, strict=True)
+        if normalized and (zipcode is None or normalized["zipcode"] == zipcode)
+    ]
     rows = [normalized for normalized, _ in pairs]
     raw_rows = [raw for _, raw in pairs]
     started_utc = utc_now()

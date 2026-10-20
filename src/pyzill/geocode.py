@@ -41,6 +41,7 @@ def _user_agent() -> str:
         ver = "unknown"
     return f"pyzill/{ver} (Zillow research CLI; personal use)"
 
+
 _TIMEOUT = 15.0
 
 # Address-level hits come back with a viewport of a few meters, which is too
