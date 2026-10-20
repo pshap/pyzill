@@ -7,12 +7,13 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import cache
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 from urllib.parse import quote
 
 from curl_cffi import requests
 
 from pyzill import details, search
+from pyzill._kinds import Kind
 from pyzill.exceptions import ZillowBlockedError
 from pyzill.http import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, ZILLOW_HOME, RequestOptions
 from pyzill.parse import parse_body_departments, parse_body_home
@@ -125,7 +126,7 @@ class ZillowClient:
 
     def tiled_search(
         self,
-        kind: Literal["sale", "rent", "sold"],
+        kind: Kind,
         **kwargs: Any,
     ) -> dict[str, Any]:
         search_fn = {"sale": self.search_sale, "rent": self.search_rent, "sold": self.search_sold}[kind]

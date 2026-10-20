@@ -13,8 +13,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
+from pyzill._kinds import KINDS, Kind
 from pyzill.normalize import parse_price
 
 __all__ = [
@@ -393,7 +394,7 @@ def connect(path: Path | str) -> sqlite3.Connection:
         _backfill_listing_columns(conn)
         conn.commit()
 
-    except Exception:
+    except BaseException:
         conn.rollback()
         conn.close()
         raise
@@ -558,7 +559,7 @@ def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
     rows: Sequence[Mapping[str, Any]],
     *,
     seen_utc: str | None = None,
-    kind: Literal["sale", "rent", "sold"] = "sale",
+    kind: Kind = "sale",
     raw_rows: Sequence[Mapping[str, Any]] | None = None,
     run_id: int | None = None,
     truncated: bool = False,
@@ -591,7 +592,7 @@ def upsert_listings(  # noqa: PLR0912, PLR0913, PLR0915
     """
     if seen_utc is None:
         seen_utc = utc_now()
-    if kind not in ("sale", "rent", "sold"):
+    if kind not in KINDS:
         raise ValueError("kind must be one of: sale, rent, sold")
 
     stats = SyncStats(added=0, updated=0, price_changes=0, skipped=0)

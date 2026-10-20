@@ -21,7 +21,7 @@ pyzill = "pyzill.cli:main_entry"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
-dev = ["pytest>=7", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11", "hypothesis>=6"]
+dev = ["pytest>=7", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11", "hypothesis>=6", "vulture>=2.14"]
 
 [project.urls]
 Homepage='https://github.com/pshap/pyzill'
@@ -70,3 +70,28 @@ disallow_untyped_defs = false
 disallow_incomplete_defs = false
 disallow_any_generics = false
 warn_return_any = false
+
+[tool.vulture]
+paths = ["src"]
+min_confidence = 80
+# Typer registers command functions through decorators, so they have no
+# in-tree caller; the public client/search surface is used by callers only.
+ignore_names = [
+    "app",
+    "main",
+    "main_entry",
+    "db_sync",
+    "db_import",
+    "db_query",
+    "db_history",
+    "db_changes",
+    "db_stats",
+    "detail_home",
+    "detail_apartment",
+    "search_sale",
+    "search_rent",
+    "search_sold",
+    "for_sale",
+    "for_rent",
+    "sold",
+]

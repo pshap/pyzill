@@ -70,6 +70,16 @@ _RETRY_DELAY = 1.0
 _BLOCK_MARKERS = ("px-captcha", "captcha-delivery")
 
 
+def json_body(response: Response) -> Any:
+    """Parse a response body as JSON, the single place ``type: ignore`` lives."""
+    return response.json()  # type: ignore[no-untyped-call]
+
+
+def raise_for_status(response: Response) -> None:
+    """Raise an HTTPError for unsuccessful responses (used by geocode)."""
+    response.raise_for_status()  # type: ignore[no-untyped-call]
+
+
 def _looks_blocked(response: Response) -> bool:
     """Detect a bot challenge served with a 2xx status.
 
@@ -86,8 +96,8 @@ def _looks_blocked(response: Response) -> bool:
     if "json" in content_type:
         return False
     try:
-        response.json()  # type: ignore[no-untyped-call]
-    except Exception:
+        json_body(response)
+    except ValueError:
         body = (response.text or "").lower()
         return any(marker in body for marker in _BLOCK_MARKERS)
     return False
@@ -111,8 +121,15 @@ def _retry_delay(attempt: int, retry_after: str | None = None, max_retry_after: 
     return delay + random.uniform(0.0, min(1.0, delay * 0.25))  # noqa: S311 (retry jitter, not crypto)
 
 
-_ACCEPT = "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"  # noqa: E501
-_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36"  # noqa: E501
+_ACCEPT = (
+    "text/html,application/xhtml+xml,application/xml;q=0.9,"
+    "image/avif,image/webp,image/apng,*/*;q=0.8,"
+    "application/signed-exchange;v=b3;q=0.7"
+)
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36"
+)
 
 
 def build_headers(impersonate: str = DEFAULT_IMPERSONATE) -> dict[str, str]:

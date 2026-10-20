@@ -332,7 +332,7 @@ def _search_impl(*, options: http.RequestOptions | None = None, **kwargs: Unpack
         options=request_options,
     )
     try:
-        data = response.json()  # type: ignore[no-untyped-call]
+        data = http.json_body(response)
     except ValueError as exc:
         raise ZillowParseError("Zillow search response was not valid JSON") from exc
     if not isinstance(data, dict):
@@ -408,7 +408,39 @@ def iter_sold(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mappin
     yield from _iter_search(sold, max_items=max_items, kwargs=kwargs)
 
 
-def tiled_search(  # noqa: PLR0913, PLR0912 - a single bounded tiling loop with callbacks
+def _listing_identity(listing: Mapping[str, Any]) -> str:
+    """A stable dedup key for a raw listing.
+
+    Prefers the canonical identifiers (``zpid`` then ``detailUrl``); falls
+    back to a JSON serialization of the whole row. ``repr(sorted(...))``
+    is avoided because mixed-type values (e.g. a building card whose
+    ``zpid`` is a lat-lng string) make ``sorted`` raise ``TypeError``.
+    """
+    identity = listing.get("zpid") or listing.get("detailUrl")
+    if identity is None:
+        identity = json.dumps(listing, sort_keys=True, default=str)
+    return str(identity)
+
+
+def _budget_exhausted(max_requests: int, on_budget: Callable[[], None] | None) -> None:
+    """Stop tiling when the request budget runs out: callback or warning.
+
+    The warning's ``stacklevel`` points at the caller of ``tiled_search``
+    (caller -> tiled_search -> _budget_exhausted -> warnings.warn), so the
+    reported line is the one that invoked the tiling, not this helper.
+    """
+    if on_budget is not None:
+        on_budget()
+        return
+    warnings.warn(
+        f"request budget of {max_requests} exhausted; returning partial results "
+        "(raise max_requests or lower max_depth for more)",
+        UserWarning,
+        stacklevel=3,
+    )
+
+
+def tiled_search(  # noqa: PLR0913 - a single bounded tiling loop with callbacks
     search_fn: Callable[..., dict[str, Any]],
     *,
     bbox: BBox,
@@ -446,34 +478,13 @@ def tiled_search(  # noqa: PLR0913, PLR0912 - a single bounded tiling loop with 
     requests_used = 0
     budget_exhausted = False
 
-    def _listing_identity(listing: Mapping[str, Any]) -> str:
-        """A stable dedup key for a raw listing.
-
-        Prefers the canonical identifiers (``zpid`` then ``detailUrl``); falls
-        back to a JSON serialization of the whole row. ``repr(sorted(...))``
-        is avoided because mixed-type values (e.g. a building card whose
-        ``zpid`` is a lat-lng string) make ``sorted`` raise ``TypeError``.
-        """
-        identity = listing.get("zpid") or listing.get("detailUrl")
-        if identity is None:
-            identity = json.dumps(listing, sort_keys=True, default=str)
-        return str(identity)
-
     # Breadth-first so a partial run under the request budget covers the whole
     # area uniformly instead of exhausting the budget inside the first subtree.
     queue: deque[tuple[BBox, int]] = deque([(bbox, 0)])
     while queue:
         if requests_used >= max_requests:
             budget_exhausted = True
-            if on_budget is not None:
-                on_budget()
-            else:
-                warnings.warn(
-                    f"request budget of {max_requests} exhausted; returning partial results "
-                    "(raise max_requests or lower max_depth for more)",
-                    UserWarning,
-                    stacklevel=2,
-                )
+            _budget_exhausted(max_requests, on_budget)
             break
         tile, depth = queue.popleft()
         response = search_fn(**kwargs, bbox=tile)

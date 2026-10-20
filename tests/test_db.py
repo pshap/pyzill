@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -1004,6 +1005,41 @@ def test_db_stats_memory_database_has_no_file_size():
     assert db_stats(conn).db_size_bytes == 0
 
     conn.close()
+
+
+def test_connect_closes_connection_on_keyboard_interrupt(tmp_path: Path, monkeypatch):
+    """A BaseException during migration must not leak the connection.
+
+    ``except Exception`` would let ``KeyboardInterrupt``/``SystemExit`` escape
+    with the write connection still open, leaving a lock that blocks every
+    later ``connect()``. A leaked lock surfaces here as a retryable
+    ``sqlite3.OperationalError: database is locked``.
+    """
+    db_path = tmp_path / "ki.db"
+    legacy = sqlite3.connect(str(db_path))
+    legacy.execute("PRAGMA user_version = 2")
+    legacy.commit()
+    legacy.close()
+
+    class _FakeBaseException(BaseException):
+        """Stands in for KeyboardInterrupt/SystemExit: BaseException, not Exception."""
+
+    calls = [0]
+
+    def boom(conn):
+        calls[0] += 1
+        if calls[0] == 1:
+            raise _FakeBaseException
+
+    monkeypatch.setattr("pyzill.db._MIGRATIONS", {2: boom})
+
+    with pytest.raises(_FakeBaseException):
+        connect(db_path)
+
+    # A subsequent connect must succeed: no leaked write lock.
+    reopened = connect(db_path)
+    assert reopened.execute("PRAGMA user_version").fetchone()[0] == 3
+    reopened.close()
 
 
 _ZPID = 424242

@@ -7,7 +7,7 @@ point to avoid an import cycle (client -> details -> client).
 
 import warnings
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from pyzill import http
@@ -37,6 +37,31 @@ def _options(
     return options or http.RequestOptions(proxy_url, impersonate, timeout, max_retries)
 
 
+def _client_call(  # noqa: PLR0913, PLR0917 - shared detail-dispatch helper
+    method: str,
+    target: Any,
+    options: http.RequestOptions | None,
+    proxy_url: str | None,
+    impersonate: str,
+    timeout: float,
+    max_retries: int,
+) -> dict[str, Any]:
+    """Lazy-import the default client and dispatch one detail fetch.
+
+    The four public ``get_from_*`` wrappers share this body; each keeps its
+    own signature so Typer/CLI and docstrings stay intact. The import is
+    local to break the ``client -> details -> client`` cycle.
+    """
+    from pyzill.client import get_default_client
+
+    return cast(
+        dict[str, Any],
+        getattr(get_default_client(), method)(
+            target, options=_options(options, proxy_url, impersonate, timeout, max_retries)
+        ),
+    )
+
+
 def get_from_home_id(  # noqa: PLR0913
     property_id: int,
     proxy_url: str | None = None,
@@ -46,12 +71,7 @@ def get_from_home_id(  # noqa: PLR0913
     *,
     options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
-    from pyzill.client import get_default_client
-
-    return get_default_client().home(
-        property_id,
-        options=_options(options, proxy_url, impersonate, timeout, max_retries),
-    )
+    return _client_call("home", property_id, options, proxy_url, impersonate, timeout, max_retries)
 
 
 def get_from_apartment_id(  # noqa: PLR0913
@@ -63,12 +83,7 @@ def get_from_apartment_id(  # noqa: PLR0913
     *,
     options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
-    from pyzill.client import get_default_client
-
-    return get_default_client().apartment(
-        apartment_id,
-        options=_options(options, proxy_url, impersonate, timeout, max_retries),
-    )
+    return _client_call("apartment", apartment_id, options, proxy_url, impersonate, timeout, max_retries)
 
 
 def get_from_apartment_url(  # noqa: PLR0913
@@ -80,12 +95,7 @@ def get_from_apartment_url(  # noqa: PLR0913
     *,
     options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
-    from pyzill.client import get_default_client
-
-    return get_default_client().apartment(
-        apartment_url,
-        options=_options(options, proxy_url, impersonate, timeout, max_retries),
-    )
+    return _client_call("apartment", apartment_url, options, proxy_url, impersonate, timeout, max_retries)
 
 
 def get_from_home_url(  # noqa: PLR0913
@@ -97,12 +107,7 @@ def get_from_home_url(  # noqa: PLR0913
     *,
     options: http.RequestOptions | None = None,
 ) -> dict[str, Any]:
-    from pyzill.client import get_default_client
-
-    return get_default_client().home(
-        home_url,
-        options=_options(options, proxy_url, impersonate, timeout, max_retries),
-    )
+    return _client_call("home", home_url, options, proxy_url, impersonate, timeout, max_retries)
 
 
 def _deprecated_alias(alias_name: str, target: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:

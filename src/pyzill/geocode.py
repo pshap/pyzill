@@ -21,6 +21,7 @@ from typing import Any
 
 from curl_cffi import requests
 
+from pyzill import http
 from pyzill.bbox import BBox
 from pyzill.ratelimit import RateLimiter
 from pyzill.utils import resolve_proxy
@@ -162,8 +163,8 @@ def geocode(
             proxies={"http": resolved_proxy, "https": resolved_proxy} if resolved_proxy else None,
             timeout=_TIMEOUT,
         )
-        response.raise_for_status()  # type: ignore[no-untyped-call]
-        hits = response.json()  # type: ignore[no-untyped-call]
+        http.raise_for_status(response)
+        hits = http.json_body(response)
     except Exception as e:
         raise ValueError(
             f"Geocoding {place!r} failed: {e}. Pass --north/--south/--east/--west to search without geocoding."
