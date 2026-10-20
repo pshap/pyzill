@@ -100,6 +100,26 @@ All notable changes to this project are documented here.
   `pyzill.BBox`, or opt in with `allow_nationwide=True`.
 
 ### Fixed
+- Several `ZillowClient` instances in one process now share one request budget
+  for Zillow. Each client used to own an independent limiter, so running two
+  clients doubled the request rate against the site. A client created without
+  an explicit `rate_limit` now uses the shared limiter; an explicit interval
+  is layered on top of it (the client may be stricter, never looser, and the
+  two limits are compared rather than added, so they never stack up), and an
+  explicit `rate_limit=0` remains an opt-out that disables throttling for
+  that client only.
+- A caller-supplied `proxy_url` now pins the transport for that call: the
+  client no longer rotates onto a different proxy when it gets a 403, because
+  the caller asked for that specific one. `proxy_url=None` counts as "not
+  specified" and no longer silently drops the client's configured proxy pool.
+- Duplicate entries in a client's proxy list are collapsed, so a pool of two
+  identical proxies no longer counts as a rotation pair and burns the retry
+  without changing the transport.
+- Invalid proxy URLs no longer leak their credentials into error messages.
+  The password is masked (`http://***@host:8080`) so it cannot reach a log,
+  a traceback, or a CI transcript.
+- The `http.request` failure path now raises a `ZillowError` in every case;
+  the unreachable fallback was a bare `RuntimeError`.
 - The CLI was unimportable: `cli/search.py` imported `_RESULT_CAP` from
   `pyzill.search`, but the tiling refactor moved that constant to
   `pyzill.tiling`. Every `pyzill` command failed with `ImportError` and three

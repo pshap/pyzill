@@ -90,3 +90,28 @@ def test_resolve_proxy_socks5_allowed():
 def test_resolve_proxy_rejects_invalid_port():
     with pytest.raises(ValueError, match="port"):
         utils.resolve_proxy("http://host.example:70000")
+
+
+@pytest.mark.parametrize(
+    "proxy_url",
+    [
+        "ftp://user:s3cr3t@host:21",
+        "http://user:s3cr3t@host:70000",
+        "http://user:s3cr3t@",
+        "user:s3cr3t@host",
+    ],
+)
+def test_resolve_proxy_errors_do_not_leak_credentials(proxy_url):
+    """A proxy password must never reach a log, traceback, or CI transcript."""
+    with pytest.raises(ValueError, match="proxy URL") as exc_info:
+        utils.resolve_proxy(proxy_url)
+
+    message = str(exc_info.value)
+    assert "s3cr3t" not in message
+    assert "***" in message
+
+
+def test_redact_proxy_url_leaves_credential_free_urls_alone():
+    assert utils.redact_proxy_url("http://proxy.example:8080") == "http://proxy.example:8080"
+    assert utils.redact_proxy_url("socks5://user:pass@host:1080") == "socks5://***@host:1080"
+    assert utils.redact_proxy_url("user:pass@host") == "***@host"

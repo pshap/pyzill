@@ -2,6 +2,7 @@ import re
 from typing import Any
 
 from pyzill.proxy import parse_proxy as parse_proxy
+from pyzill.proxy import redact_proxy_url as redact_proxy_url
 from pyzill.proxy import resolve_proxy as resolve_proxy
 
 

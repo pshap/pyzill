@@ -14,7 +14,13 @@ from curl_cffi.requests import ProxySpec, Response
 from curl_cffi.requests.exceptions import RequestException
 
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
-from pyzill.exceptions import ZillowBlockedError, ZillowNetworkError, ZillowNotFoundError, ZillowServerError
+from pyzill.exceptions import (
+    ZillowBlockedError,
+    ZillowError,
+    ZillowNetworkError,
+    ZillowNotFoundError,
+    ZillowServerError,
+)
 from pyzill.ratelimit import RateLimiter
 from pyzill.utils import resolve_proxy
 
@@ -470,7 +476,10 @@ def request(  # noqa: PLR0913 - central request primitive
         max_retry_after=max_retry_after,
     )
     proxies = build_proxies(options.proxy_url)
-    last_exception: Exception = RuntimeError("pyzill.http.request sent no requests")
+    # The retry loop always returns or raises; this typed fallback only
+    # covers the "loop body never ran" case, and keeps the raised type a
+    # ZillowError rather than a bare RuntimeError.
+    last_exception: ZillowError = ZillowNetworkError(url)
     retry_delay = 0.0
 
     for attempt in range(options.max_retries + 1):

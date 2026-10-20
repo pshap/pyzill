@@ -1,5 +1,6 @@
 from typing import Any
 
+import pytest
 from curl_cffi import requests as cffi_requests
 
 from pyzill import BBox
@@ -111,3 +112,89 @@ def test_client_home_selects_requested_property_from_cache(fake_http):
     client = ZillowClient(rate_limit=0)
 
     assert client.home(2)["address"] == "Requested"
+
+
+def test_client_does_not_rotate_away_from_a_pinned_proxy(monkeypatch, search_success_body):
+    """A caller-supplied proxy_url pins the transport; a 403 must not rotate."""
+    from pyzill.exceptions import ZillowBlockedError
+
+    attempts: list[str] = []
+
+    def respond(session: object, **kwargs: Any) -> FakeResponse:
+        attempts.append(kwargs["proxies"]["http"])
+        return FakeResponse(status_code=403, text="blocked")
+
+    monkeypatch.setattr(cffi_requests.Session, "request", respond)
+    client = ZillowClient(proxy=["http://proxy-a:1", "http://proxy-b:2"], rate_limit=0, max_retries=0)
+
+    with pytest.raises(ZillowBlockedError):
+        client.search_sale(
+            search_value="12305",
+            bbox=BBox(north=43, east=-73, south=42, west=-74),
+            proxy_url="http://pinned:9",
+        )
+
+    assert attempts == ["http://pinned:9"]
+
+
+def test_client_keeps_its_pool_when_proxy_url_is_none(monkeypatch, search_success_body):
+    """proxy_url=None means "not specified"; it must not drop the pool proxy."""
+    attempts: list[str] = []
+
+    def respond(session: object, **kwargs: Any) -> FakeResponse:
+        attempts.append(kwargs["proxies"]["http"])
+        return FakeResponse(status_code=200, json_data=search_success_body)
+
+    monkeypatch.setattr(cffi_requests.Session, "request", respond)
+    client = ZillowClient(proxy=["http://proxy-a:1"], rate_limit=0)
+    bbox = BBox(north=43, east=-73, south=42, west=-74)
+
+    client.search_sale(search_value="12305", bbox=bbox, proxy_url=None)
+
+    assert attempts == ["http://proxy-a:1"]
+
+
+def test_duplicate_proxies_do_not_count_as_a_rotation_pair(monkeypatch, search_success_body):
+    """Rotating onto the same proxy would burn the retry without changing transport."""
+    from pyzill.exceptions import ZillowBlockedError
+
+    attempts: list[str] = []
+
+    def respond(session: object, **kwargs: Any) -> FakeResponse:
+        attempts.append(kwargs["proxies"]["http"])
+        return FakeResponse(status_code=403, text="blocked")
+
+    monkeypatch.setattr(cffi_requests.Session, "request", respond)
+    client = ZillowClient(proxy=["http://proxy-a:1", "http://proxy-a:1"], rate_limit=0, max_retries=0)
+
+    with pytest.raises(ZillowBlockedError):
+        client.search_sale(search_value="12305", bbox=BBox(north=43, east=-73, south=42, west=-74))
+
+    assert attempts == ["http://proxy-a:1"]
+
+
+def test_clients_share_the_process_wide_rate_limit_budget():
+    """Several clients in one process must not multiply the request rate."""
+    from pyzill.ratelimit import _limiter
+
+    assert ZillowClient().limiter is _limiter
+    assert ZillowClient().limiter is ZillowClient().limiter
+
+
+def test_explicit_rate_limit_is_never_looser_than_the_shared_budget():
+    from pyzill.ratelimit import _limiter, _SharedBudgetLimiter
+
+    client = ZillowClient(rate_limit=2.5)
+
+    assert isinstance(client.limiter, _SharedBudgetLimiter)
+    assert client.limiter.min_interval == 2.5
+    assert client.limiter._shared is _limiter
+
+
+def test_explicit_zero_rate_limit_opts_out_of_throttling():
+    from pyzill.ratelimit import _SharedBudgetLimiter
+
+    client = ZillowClient(rate_limit=0)
+
+    assert not isinstance(client.limiter, _SharedBudgetLimiter)
+    assert client.limiter.min_interval == 0

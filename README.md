@@ -18,8 +18,8 @@ It supports two capabilities:
 - Browser TLS impersonation via [`curl_cffi`](https://github.com/yifeikong/curl_cffi)
 - Configurable proxy (explicit or via environment variable)
 - Built-in request throttling to avoid 403s
-- A reusable `ZillowClient` with a persistent session, per-client rate limiter,
-  and optional proxy rotation after a block
+- A reusable `ZillowClient` with a persistent session, a shared process-wide
+  rate limiter, and optional proxy rotation after a block
 - Clear `ZillowBlockedError` when Zillow blocks a request
 
 ## Current status (as of 2025-10)
@@ -396,10 +396,12 @@ with pyzill.ZillowClient(proxy=["http://proxy-a:8080", "http://proxy-b:8080"]) a
 ```
 
 Module-level functions remain available and use a lazy default client. Search
-and detail requests from a client share its limiter and session; on a 403 with
-multiple proxies, the client retries once with a fresh session and the next
-proxy. Retry-After is capped at 60 seconds by default and can be configured on
-the client.
+and detail requests from a client share its session and the process-wide rate
+limit; on a 403 with multiple proxies, the client retries once with a fresh
+session and the next proxy, and stays on that proxy afterwards. A `proxy_url`
+passed for a single call pins that call to that transport, so it is never
+rotated away. Retry-After is capped at 60 seconds by default and can be
+configured on the client.
 
 > **Coordinates define the results.** Zillow searches the `mapBounds`
 > viewport you pass. `search_value` labels the search but does **not**
@@ -640,6 +642,15 @@ print(pyzill.get_min_interval())
 
 For high-volume use, still use a rotating residential proxy — per-process
 throttling cannot hide that all requests come from one IP.
+
+The interval is a **process-wide** budget: every `ZillowClient` in a process
+shares it, so running several clients cannot multiply the request rate
+against Zillow. A client may ask for a stricter interval, never a looser one:
+
+```python
+client = pyzill.ZillowClient(rate_limit=3.0)  # at least 3s, and at least the shared budget
+client = pyzill.ZillowClient(rate_limit=0)     # explicit opt-out: no throttling
+```
 
 ## For homes (details)
 

@@ -1,9 +1,24 @@
 import ipaddress
+import re
 from urllib.parse import quote, urlparse
 
 from pyzill.config import read_env
 
 _MAX_PORT = 65535
+
+# Credentials embedded in a proxy URL: "scheme://user:pass@" or a scheme-less
+# "user:pass@host". Matched so error messages can mask them.
+_CREDENTIALS_RE = re.compile(r"://[^/@\s]*@|(?<![\w.:])[^/\s:@]+:[^/\s]*@")
+
+
+def redact_proxy_url(proxy_url: str) -> str:
+    """Return a copy of a proxy URL with any embedded credentials masked.
+
+    Error messages quote the offending URL so the user can see what is
+    wrong; masking keeps the password out of logs, tracebacks, and CI
+    transcripts.
+    """
+    return _CREDENTIALS_RE.sub(lambda match: "://***@" if match.group(0).startswith("://") else "***@", proxy_url)
 
 
 def parse_proxy(ip_or_domain: str, port: str, username: str, password: str, scheme: str = "http") -> str:
@@ -34,17 +49,18 @@ def resolve_proxy(proxy_url: str | None = None) -> str | None:
         proxy_url = read_env("ZILLOW_PROXY")
     if proxy_url is None or not proxy_url.strip():
         return None
+    safe_url = redact_proxy_url(proxy_url)
     parsed = urlparse(proxy_url)
     if parsed.scheme not in ("http", "https", "socks5", "socks5h"):
         raise ValueError(
-            f"Invalid proxy URL scheme {parsed.scheme!r} in {proxy_url!r}; expected http, https, socks5, or socks5h"
+            f"Invalid proxy URL scheme {parsed.scheme!r} in {safe_url!r}; expected http, https, socks5, or socks5h"
         )
     if not parsed.hostname:
-        raise ValueError(f"Invalid proxy URL {proxy_url!r}: missing hostname")
+        raise ValueError(f"Invalid proxy URL {safe_url!r}: missing hostname")
     try:
         port = parsed.port
     except ValueError as exc:
-        raise ValueError(f"Invalid proxy URL {proxy_url!r}: invalid port") from exc
+        raise ValueError(f"Invalid proxy URL {safe_url!r}: invalid port") from exc
     if port is not None and not 1 <= port <= _MAX_PORT:
-        raise ValueError(f"Invalid proxy URL {proxy_url!r}: port must be between 1 and 65535")
+        raise ValueError(f"Invalid proxy URL {safe_url!r}: port must be between 1 and 65535")
     return proxy_url

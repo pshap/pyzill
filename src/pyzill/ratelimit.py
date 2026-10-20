@@ -49,6 +49,46 @@ class RateLimiter:
         self.min_interval = max(0.0, min_interval)
 
 
+class _SharedBudgetLimiter(RateLimiter):
+    """Throttle against the process-wide request budget and a client interval.
+
+    Every pyzill client in a process shares one request budget for Zillow, so
+    running several clients cannot multiply the request rate against the site.
+    The shared limiter owns the timeline; this client may additionally ask for
+    a larger gap between its own consecutive requests.
+
+    Both limits are satisfied by a *single* sleep: they are compared, never
+    added, so the stricter of the two wins instead of the two waits stacking
+    up.  The jitter is drawn once for both, which keeps the effective gap
+    inside the shared limiter's jitter band.
+    """
+
+    def __init__(self, shared: RateLimiter, min_interval: float = 0.0) -> None:
+        super().__init__(min_interval=min_interval, jitter=shared.jitter)
+        self._shared = shared
+
+    def wait(self, minimum_delay: float = 0.0) -> None:
+        if self.min_interval <= 0 and minimum_delay <= 0 and self._shared.min_interval <= 0:
+            return
+        # The shared limiter's lock serializes every client in the process, so
+        # two clients cannot start requests at the same instant.
+        with self._shared._lock:
+            now = time.monotonic()
+            jitter = random.uniform(0, self._shared.jitter)  # noqa: S311 (not crypto)
+            shared_target = max(0.0, self._shared.min_interval) + jitter
+            local_target = max(0.0, self.min_interval) + jitter
+            wait_for = max(
+                0.0,
+                shared_target - (now - self._shared._last),
+                local_target - (now - self._last),
+                minimum_delay,
+            )
+            time.sleep(wait_for)
+            stamp = time.monotonic()
+            self._shared._last = stamp
+            self._last = stamp
+
+
 def _read_min_interval() -> float:
     raw = read_env("PYZILL_RATE_LIMIT")
     if raw is None:
