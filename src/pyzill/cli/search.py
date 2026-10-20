@@ -1,6 +1,7 @@
 """Search commands plus the shared search options/validation they and db sync use."""
 
-from collections.abc import Callable
+import inspect
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -232,6 +233,27 @@ def search_options(
     )
 
 
+_FILTER_OPTION_NAMES = tuple(inspect.signature(search_filter_options).parameters)
+
+
+def search_options_from_args(args: Mapping[str, Any]) -> SearchOptions:
+    """Build search options from a command's own arguments.
+
+    ``args`` is the calling command's ``locals()``. The filter values are the
+    parameters of :func:`search_filter_options`, so a command declares them
+    once and a new filter only has to be added to the command signatures.
+    ``is_room``/``is_entire_place`` are rental-only switches that the sale
+    and sold commands do not have.
+    """
+    filters = search_filter_options(**{name: args[name] for name in _FILTER_OPTION_NAMES})
+    return search_options(
+        args["query"],
+        filters,
+        args.get("is_room", False),
+        args.get("is_entire_place", False),
+    )
+
+
 def fetch_and_normalize(
     search_fn: Callable[..., dict[str, Any]],
     options: SearchOptions,
@@ -351,6 +373,22 @@ def run_search(
     write_output(data, output_format, output)
 
 
+def _search_command(search_fn: Callable[..., dict[str, Any]], args: Mapping[str, Any]) -> None:
+    """Run one of the sale/rent/sold commands.
+
+    ``args`` is the calling command's ``locals()``, so the shared options are
+    collected without repeating them at every call site.
+    """
+    options = search_options_from_args(args)
+    run_search(
+        search_fn,
+        options=options,
+        raw=args["raw"],
+        output_format=args["output_format"],
+        output=args["output"],
+    )
+
+
 @search_app.command("sale")
 def search_sale(  # noqa: PLR0913
     query: Query,
@@ -373,24 +411,7 @@ def search_sale(  # noqa: PLR0913
     output: OutputOpt = None,
 ) -> None:
     """Search for-sale listings."""
-    filters = search_filter_options(
-        north=north,
-        south=south,
-        east=east,
-        west=west,
-        zoom=zoom,
-        min_beds=min_beds,
-        max_beds=max_beds,
-        min_bathrooms=min_bathrooms,
-        max_bathrooms=max_bathrooms,
-        min_price=min_price,
-        max_price=max_price,
-        tile=tile,
-        max_depth=max_depth,
-        max_requests=max_requests,
-    )
-    options = search_options(query, filters)
-    run_search(for_sale, options=options, raw=raw, output_format=output_format, output=output)
+    _search_command(for_sale, locals())
 
 
 @search_app.command("rent")
@@ -417,24 +438,7 @@ def search_rent(  # noqa: PLR0913
     output: OutputOpt = None,
 ) -> None:
     """Search for-rent listings."""
-    filters = search_filter_options(
-        north=north,
-        south=south,
-        east=east,
-        west=west,
-        zoom=zoom,
-        min_beds=min_beds,
-        max_beds=max_beds,
-        min_bathrooms=min_bathrooms,
-        max_bathrooms=max_bathrooms,
-        min_price=min_price,
-        max_price=max_price,
-        tile=tile,
-        max_depth=max_depth,
-        max_requests=max_requests,
-    )
-    options = search_options(query, filters, is_room, is_entire_place)
-    run_search(for_rent, options=options, raw=raw, output_format=output_format, output=output)
+    _search_command(for_rent, locals())
 
 
 @search_app.command("sold")
@@ -459,21 +463,4 @@ def search_sold(  # noqa: PLR0913
     output: OutputOpt = None,
 ) -> None:
     """Search sold listings."""
-    filters = search_filter_options(
-        north=north,
-        south=south,
-        east=east,
-        west=west,
-        zoom=zoom,
-        min_beds=min_beds,
-        max_beds=max_beds,
-        min_bathrooms=min_bathrooms,
-        max_bathrooms=max_bathrooms,
-        min_price=min_price,
-        max_price=max_price,
-        tile=tile,
-        max_depth=max_depth,
-        max_requests=max_requests,
-    )
-    options = search_options(query, filters)
-    run_search(sold, options=options, raw=raw, output_format=output_format, output=output)
+    _search_command(sold, locals())

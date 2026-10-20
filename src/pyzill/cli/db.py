@@ -67,8 +67,7 @@ from pyzill.cli.search import (
     extract_listings,
     fetch_and_normalize,
     query_zipcode,
-    search_filter_options,
-    search_options,
+    search_options_from_args,
 )
 from pyzill.config import read_env
 from pyzill.db import SyncStats, begin_sync_run, comparable_run_had_results, connect_readonly, get_changes
@@ -242,23 +241,7 @@ def db_sync(  # noqa: PLR0913
     if (is_room or is_entire_place) and kind is not ListingKind.rent:
         error("--room and --entire-place only work with 'rent' kind", code=2)
 
-    filters = search_filter_options(
-        north=north,
-        south=south,
-        east=east,
-        west=west,
-        zoom=zoom,
-        min_beds=min_beds,
-        max_beds=max_beds,
-        min_bathrooms=min_bathrooms,
-        max_bathrooms=max_bathrooms,
-        min_price=min_price,
-        max_price=max_price,
-        tile=tile,
-        max_depth=max_depth,
-        max_requests=max_requests,
-    )
-    options = search_options(query, filters, is_room, is_entire_place)
+    options = search_options_from_args(locals())
     metadata: dict[str, Any] = {}
     response = fetch_and_normalize(
         _SEARCH_FNS[kind],
@@ -281,7 +264,7 @@ def db_sync(  # noqa: PLR0913
     rows = [normalized for normalized, _ in pairs]
     raw_rows = [raw for _, raw in pairs]
     started_utc = utc_now()
-    filter_values = asdict(filters)
+    filter_values = asdict(options.filters)
     filter_values.update(is_room=is_room, is_entire_place=is_entire_place)
     bbox = metadata.get("bbox")
     truncated = bool(response.get("truncated", False))

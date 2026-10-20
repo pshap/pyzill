@@ -342,6 +342,33 @@ class TestSearchCommands:
         result = runner.invoke(app, ["search", "rent", "12305", "--entire-place"])
         assert result.exit_code == 0
 
+    def test_search_passes_filters_and_rent_switches_to_the_request(self, fake_http, search_success_body):
+        """The declared filters and rental switches must reach the request."""
+        fake_http.install("PUT", json_data=search_success_body)
+
+        result = runner.invoke(
+            app,
+            ["search", "rent", "12305", "--min-price", "100000", "--max-beds", "4", "--room"],
+        )
+
+        assert result.exit_code == 0
+        filter_state = fake_http.calls[0]["json"]["searchQueryState"]["filterState"]
+        assert filter_state["price"]["min"] == 100000
+        assert filter_state["beds"]["max"] == 4
+        assert filter_state["isRoomForRent"]["value"] is True
+        assert filter_state["isEntirePlaceForRent"]["value"] is False
+
+    def test_search_sale_leaves_rent_switches_off(self, fake_http, search_success_body):
+        """The sale command has no rental switches, so they stay off."""
+        fake_http.install("PUT", json_data=search_success_body)
+
+        result = runner.invoke(app, ["search", "sale", "12305"])
+
+        assert result.exit_code == 0
+        filter_state = fake_http.calls[0]["json"]["searchQueryState"]["filterState"]
+        assert "isRoomForRent" not in filter_state
+        assert "isEntirePlaceForRent" not in filter_state
+
     def test_raw_format_rejects_csv(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
         result = runner.invoke(app, ["search", "sale", "12305", "--raw", "--format", "csv"])
