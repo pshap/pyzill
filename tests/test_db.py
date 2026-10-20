@@ -200,6 +200,25 @@ def test_upsert_records_raw_payload_and_sync_run(tmp_path: Path):
     conn.close()
 
 
+def test_upsert_records_non_finite_raw_values_as_null(tmp_path: Path):
+    """json.loads accepts NaN; storing it must not abort the write transaction."""
+    conn = connect(tmp_path / "nan.db")
+    raw = {"zpid": "123", "price": float("nan"), "nested": [float("inf"), {"x": float("-inf")}]}
+
+    upsert_listings(
+        conn,
+        [{"zpid": 123, "price": None, "status": None}],
+        raw_rows=[raw],
+        seen_utc="2026-10-01T00:00:00Z",
+    )
+
+    raw_json = conn.execute("SELECT raw_json FROM sightings WHERE zpid = 123").fetchone()[0]
+    stored = json.loads(raw_json)
+    assert stored["price"] is None
+    assert stored["nested"] == [None, {"x": None}]
+    conn.close()
+
+
 def test_status_history_records_only_transitions(tmp_path: Path):
     conn = connect(tmp_path / "status.db")
     for timestamp, status in [

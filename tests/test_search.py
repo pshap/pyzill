@@ -166,6 +166,36 @@ def test_search_does_not_mutate_filter_state(fake_http, search_success_body):
     assert filter_state == {"isAllHomes": {"value": True}}
 
 
+def test_search_range_filters_reach_the_query_state(fake_http, search_success_body):
+    """The beds/baths/price filters must be part of the filterState sent."""
+    fake_http.install("PUT", json_data=search_success_body)
+
+    search.search(
+        filter_state={"isAllHomes": {"value": True}},
+        min_beds=2,
+        max_beds=4,
+        min_price=100_000,
+        allow_nationwide=True,
+    )
+
+    filter_state = fake_http.calls[-1]["json"]["searchQueryState"]["filterState"]
+    assert filter_state["beds"] == {"min": 2, "max": 4}
+    assert filter_state["price"] == {"min": 100_000}
+
+
+def test_query_state_filter_state_is_not_aliased_to_the_caller_dict(fake_http, search_success_body):
+    """The payload must not depend on the filter dict being the same object."""
+    fake_http.install("PUT", json_data=search_success_body)
+    filter_state = {"isAllHomes": {"value": True}}
+
+    search.search(filter_state=filter_state, min_beds=3, allow_nationwide=True)
+
+    sent = fake_http.calls[-1]["json"]["searchQueryState"]["filterState"]
+    assert sent is not filter_state
+    assert sent["beds"] == {"min": 3}
+    assert filter_state == {"isAllHomes": {"value": True}}
+
+
 def test_search_rejects_unknown_runtime_keywords():
     with pytest.raises(TypeError, match="bogus") as exc_info:
         search.for_sale(search_value="x", min_bed=2, bogus=1)  # type: ignore[call-arg]

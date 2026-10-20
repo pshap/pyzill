@@ -482,13 +482,16 @@ def request(  # noqa: PLR0913 - central request primitive
     last_exception: ZillowError = ZillowNetworkError(url)
     retry_delay = 0.0
 
-    for attempt in range(options.max_retries + 1):
-        if session is None or limiter is None:
-            from pyzill.client import get_default_client
+    if session is None or limiter is None:
+        # Imported here, not at module scope: pyzill.client imports this
+        # module, so a top-level import would be a cycle.
+        from pyzill.client import get_default_client
 
-            default_client = get_default_client()
-            session = session or default_client.session
-            limiter = limiter or default_client.limiter
+        default_client = get_default_client()
+        session = session if session is not None else default_client.session
+        limiter = limiter if limiter is not None else default_client.limiter
+
+    for attempt in range(options.max_retries + 1):
         limiter.wait(retry_delay)
         try:
             response = cast(

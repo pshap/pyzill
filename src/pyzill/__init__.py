@@ -26,6 +26,11 @@ from pyzill.exceptions import (
     ZillowParseError,
     ZillowServerError,
 )
+
+# Importing the submodule also binds ``pyzill.geocode`` to the module, so
+# ``pyzill.geocode.geocode(...)`` resolves. Only ``GeoResult`` is re-exported
+# by name: binding the function as ``pyzill.geocode`` would shadow the module.
+from pyzill.geocode import GeoResult
 from pyzill.normalize import (
     Listing,
     PropertyDetail,
@@ -56,6 +61,7 @@ __all__ = [
     "CONTINENTAL_US",
     "BBox",
     "DBStats",
+    "GeoResult",
     "Listing",
     "PropertyDetail",
     "SyncStats",

@@ -224,6 +224,12 @@ def _build_search_query_state(**kwargs: Unpack[_QueryStateParams]) -> dict[str, 
     filter_state = kwargs["filter_state"]
     filters = kwargs["filters"]
     filter_state = {} if filter_state is None else filter_state.copy()
+    # The range filters are merged into the filter state *before* it is put
+    # into the query state, so the payload never depends on the two dicts
+    # happening to be the same object.
+    for key, value in filters.items():
+        if value is not None:
+            filter_state[key] = value
     query_state: dict[str, Any] = {
         "isMapVisible": True,
         "isListVisible": True,
@@ -235,9 +241,6 @@ def _build_search_query_state(**kwargs: Unpack[_QueryStateParams]) -> dict[str, 
         query_state["mapZoom"] = zoom_value
     if search_value:
         query_state["usersSearchTerm"] = search_value
-    for key, value in filters.items():
-        if value is not None:
-            filter_state[key] = value
     return query_state
 
 

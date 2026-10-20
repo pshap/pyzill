@@ -137,7 +137,9 @@ pyzill search sale "Schenectady NY" --max-price 400000 --min-beds 3
 ```
 
 - Results are cached on disk (`~/.cache/pyzill/geocode.json`, override with
-  `XDG_CACHE_HOME`) so repeated searches for the same place are instant.
+  `XDG_CACHE_HOME`) so repeated searches for the same place are instant. The
+  cache is updated under a lock, so concurrent processes don't lose each
+  other's entries.
 - Pass an explicit bbox to skip geocoding entirely.
 - `--proxy` applies to Zillow requests; Nominatim geocoding is direct by default.
 - If geocoding fails, the CLI exits with code 1 and tells you to pass an

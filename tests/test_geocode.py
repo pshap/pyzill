@@ -230,3 +230,54 @@ def test_expired_cache_entry_is_refetched(monkeypatch, cache_path):
 
     assert len(calls) == 1
     assert result.display_name.startswith("Schenectady")
+
+
+def test_cache_updates_are_serialized_across_writers(tmp_path):
+    """Concurrent writers must not lose each other's cache entries."""
+    import threading
+
+    from pyzill.geocode import _store_cache
+
+    cache_path = tmp_path / "geocode.json"
+    writers = 8
+    per_writer = 20
+
+    def writer(index: int) -> None:
+        for item in range(per_writer):
+            _store_cache(cache_path, f"key-{index}-{item}", {"north": 1.0})
+
+    threads = [threading.Thread(target=writer, args=(index,)) for index in range(writers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    cache = json.loads(cache_path.read_text())
+    assert len(cache) == writers * per_writer
+
+
+def test_cache_lock_is_best_effort_when_it_cannot_be_created(tmp_path, monkeypatch):
+    """A cache dir that refuses the lock file must not break geocoding."""
+    import os
+
+    class _RefusesOpen:
+        def __getattr__(self, name: str) -> object:
+            return getattr(os, name)
+
+        def open(self, *_args: object, **_kwargs: object) -> None:
+            raise OSError("read-only")
+
+    monkeypatch.setattr("pyzill.geocode.os", _RefusesOpen())
+    _install_get(monkeypatch, HIT)
+
+    result = geocode("Schenectady NY", cache_path=tmp_path / "geocode.json")
+
+    assert result.bbox.north == 42.8438
+
+
+def test_geocode_is_reachable_as_a_module_attribute():
+    """`pyzill.geocode.geocode(...)` must resolve, as the docs promise."""
+    import pyzill
+
+    assert callable(pyzill.geocode.geocode)
+    assert pyzill.GeoResult is pyzill.geocode.GeoResult

@@ -100,6 +100,27 @@ All notable changes to this project are documented here.
   `pyzill.BBox`, or opt in with `allow_nationwide=True`.
 
 ### Fixed
+- The geocode cache is now written under an exclusive lock, so concurrent
+  processes no longer lose each other's entries. The cache is a
+  read-modify-write of one JSON file; without the lock, eight concurrent
+  writers kept 21 of 160 entries instead of all 160. Locking is best-effort:
+  it is skipped where `fcntl` is unavailable or the lock file cannot be
+  created, and the cache update then proceeds unserialized.
+- The search payload's `filterState` no longer depends on the filter dict
+  and the query state being the same object: the beds/baths/price range
+  filters are merged into the filter state before it is put into the query
+  state.
+- `pyzill.geocode` is now bound to the module, so the documented
+  `pyzill.geocode.geocode(...)` call resolves (previously it raised
+  `AttributeError` unless something else had imported the submodule).
+  `pyzill.GeoResult` is exported as well.
+- Importing a raw listing containing `NaN` or `Infinity` no longer aborts a
+  `db import` with `ValueError: Out of range float values are not JSON
+  compliant`. `json.loads` accepts those values, so the write path now stores
+  them as `null`.
+- The default client for the search request is resolved once per request
+  instead of once per retry attempt; the lazy import stays local to the
+  function to avoid the `client -> http -> client` import cycle.
 - Several `ZillowClient` instances in one process now share one request budget
   for Zillow. Each client used to own an independent limiter, so running two
   clients doubled the request rate against the site. A client created without

@@ -14,7 +14,8 @@ import math
 import os
 import tempfile
 import time
-from contextlib import suppress
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -26,6 +27,11 @@ from pyzill import http
 from pyzill.bbox import BBox
 from pyzill.ratelimit import RateLimiter
 from pyzill.utils import resolve_proxy
+
+try:  # pragma: no cover - Windows has no fcntl
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore[assignment]
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 
@@ -89,24 +95,54 @@ def _load_cache(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+@contextmanager
+def _cache_lock(path: Path) -> Iterator[None]:
+    """Hold an exclusive lock on the geocode cache for one update.
+
+    The cache is a read-modify-write of a whole JSON file, so two processes
+    geocoding at the same time would otherwise lose one another's entries.
+    The lock lives in a sibling file because the cache itself is replaced
+    atomically (swapping the inode would drop a lock held on it).
+
+    Locking is best-effort: on a platform without ``fcntl``, or when the lock
+    file cannot be created, the update still proceeds.
+    """
+    lock_path = path.with_name(f"{path.name}.lock")
+    try:
+        handle = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        yield
+        return
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(handle)
+
+
 def _store_cache(path: Path, key: str, entry: dict[str, Any]) -> None:
-    cache = _load_cache(path)
-    cache[key] = {**entry, "cached_at": time.time()}
-    temporary_path: Path | None = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
-        ) as temporary:
-            temporary.write(json.dumps(cache, indent=2))
-            temporary_path = Path(temporary.name)
-        temporary_path.replace(path)
+        with _cache_lock(path):
+            cache = _load_cache(path)
+            cache[key] = {**entry, "cached_at": time.time()}
+            temporary_path: Path | None = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=path.parent, prefix=f".{path.name}.", delete=False
+                ) as temporary:
+                    temporary.write(json.dumps(cache, indent=2))
+                    temporary_path = Path(temporary.name)
+                temporary_path.replace(path)
+            except OSError:
+                pass  # A read-only cache dir is not fatal; the answer still gets returned.
+            finally:
+                if temporary_path is not None:
+                    with suppress(OSError):
+                        temporary_path.unlink(missing_ok=True)
     except OSError:
-        pass  # A read-only cache dir is not fatal; the answer still gets returned.
-    finally:
-        if temporary_path is not None:
-            with suppress(OSError):
-                temporary_path.unlink(missing_ok=True)
+        pass
 
 
 def geocode(

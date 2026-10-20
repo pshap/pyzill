@@ -6,6 +6,7 @@ transitions inside one transaction.
 """
 
 import json
+import math
 import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -199,6 +200,23 @@ def _latest_statuses(conn: sqlite3.Connection, zpids: list[int], kind: str, seen
     return {zpid: status for zpid, (_, status) in latest.items()}
 
 
+def _json_safe(value: Any) -> Any:
+    """Return a JSON-safe copy of a raw listing.
+
+    ``json.loads`` accepts ``NaN``/``Infinity``, but strict JSON does not, so
+    a saved response containing them would abort the whole write transaction
+    with ``ValueError: Out of range float values are not JSON compliant``.
+    Non-finite numbers become ``null``, which is what they mean anyway.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _prepare_rows(
     rows: Sequence[Mapping[str, Any]],
     raw_rows: Sequence[Mapping[str, Any]] | None,
@@ -280,7 +298,7 @@ def _build_params(prepared: Sequence[_PreparedRow], state: _BatchState) -> _Writ
                 status,
                 status_type,
                 state.seen_utc,
-                json.dumps(entry.raw_row, ensure_ascii=False, allow_nan=False),
+                json.dumps(_json_safe(entry.raw_row), ensure_ascii=False, allow_nan=False),
             )
         )
         if isinstance(status, str) and status and state.prior_statuses.get(entry.zpid) != status:
