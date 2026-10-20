@@ -1031,7 +1031,7 @@ def test_connect_closes_connection_on_keyboard_interrupt(tmp_path: Path, monkeyp
         if calls[0] == 1:
             raise _FakeBaseException
 
-    monkeypatch.setattr("pyzill.db._MIGRATIONS", {2: boom})
+    monkeypatch.setattr("pyzill.db.schema._MIGRATIONS", {2: boom})
 
     with pytest.raises(_FakeBaseException):
         connect(db_path)
