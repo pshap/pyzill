@@ -144,9 +144,10 @@ def _prefetch(
 ) -> tuple[dict[tuple[int, str], Any], dict[tuple[int, str], int | None]]:
     """Read pre-batch listing state and prior prices for the batch zpids.
 
-    Returns zpid -> (price, kind) for listings that already exist, and
-    zpid -> previous price for this kind (an entry with the batch timestamp
-    wins over the latest strictly-earlier one; missing when none exists).
+    Returns existing: (zpid, kind) -> current price for listings that already
+    exist, and prior_prices: (zpid, kind) -> previous price for this kind (an
+    entry with the batch timestamp wins over the latest strictly-earlier one;
+    missing when none exists).
     """
     existing: dict[tuple[int, str], Any] = {}
     prior_prices: dict[tuple[int, str], int | None] = {}
@@ -309,7 +310,7 @@ def _write_batch(conn: sqlite3.Connection, batch: _WriteBatch) -> None:
     if batch.status:
         conn.executemany(
             "INSERT INTO status_history (zpid, kind, status, first_seen_utc) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT DO NOTHING",
+            "ON CONFLICT(zpid, kind, status, first_seen_utc) DO NOTHING",
             batch.status,
         )
 
