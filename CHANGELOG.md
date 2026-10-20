@@ -59,6 +59,19 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- The database module was split into a package: `pyzill/db/runs.py` (sync-run
+  bookkeeping), `pyzill/db/schema.py` (DDL, migrations, and column backfills),
+  `pyzill/db/connection.py` (opening the database), `pyzill/db/upsert.py` (the
+  listing write path), `pyzill/db/queries.py` (listing rows, price history, and
+  change events), and `pyzill/db/stats.py` (summary figures). `pyzill.db`
+  re-exports the same names, so the import paths, the database schema, and the
+  CLI are unchanged.
+- The listing write path was split into `_prepare_rows`, `_classify_changes`,
+  `_build_params`, and `_write_batch`; the returned statistics and the stored
+  rows are unchanged.
+- The `search sale`, `search rent`, and `search sold` commands now collect
+  their options through one helper instead of repeating the filter call three
+  times. The command signatures, flags, and `--help` output are unchanged.
 - `pyzill.cli` no longer re-exports the private `_coerce_value` helper; it
   was only ever used by tests, which now import `coerce_value` from
   `pyzill.cli.query` directly. The package exports `app` and `main_entry`.
@@ -87,6 +100,9 @@ All notable changes to this project are documented here.
   `pyzill.BBox`, or opt in with `allow_nationwide=True`.
 
 ### Fixed
+- `db.connect` now closes the connection when a `KeyboardInterrupt` or
+  `SystemExit` interrupts a schema migration. The write lock used to be left
+  held, so the next open failed with `database is locked`.
 - `db sync`/`db import` now record `truncated` on the sync run in the same
   transaction as the listings, so an interrupted or soft-blocked sync no longer
   reports a clean, complete run. An empty result for a query/bbox/filter
