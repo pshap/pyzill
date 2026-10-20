@@ -28,6 +28,77 @@ def test_build_headers_derives_chrome_version() -> None:
     assert '"Chromium";v="145"' in headers["Sec-Ch-Ua"]
 
 
+def test_build_headers_user_agent_matches_chrome_profile() -> None:
+    headers = http.build_headers("chrome145")
+
+    assert headers["User-Agent"] == (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+    )
+
+
+@pytest.mark.parametrize(
+    ("impersonate", "expected"),
+    [
+        ("safari155", "Version/15.5 Safari/605.1.15"),
+        ("safari180", "Version/18.0 Safari/605.1.15"),
+        ("safari15_3", "Version/15.3 Safari/605.1.15"),
+        ("safari172_ios", "Version/17.2 Mobile/15E148 Safari/604.1"),
+        ("firefox133", "Firefox/133.0"),
+        ("edge101", "Edg/101.0.0.0"),
+    ],
+)
+def test_build_headers_user_agent_matches_non_chrome_profile(impersonate, expected) -> None:
+    """A Safari/Firefox/Edge fingerprint must not carry a Chrome User-Agent."""
+    headers = http.build_headers(impersonate)
+
+    assert expected in headers["User-Agent"]
+    assert "Chrome/" not in headers["User-Agent"] or impersonate.startswith(("edge", "chrome"))
+
+
+@pytest.mark.parametrize("impersonate", ["safari155", "firefox133", "safari_ios"])
+def test_build_headers_omits_chromium_client_hints_for_non_chromium(impersonate) -> None:
+    headers = http.build_headers(impersonate)
+
+    assert "Sec-Ch-Ua" not in headers
+    assert "Sec-Ch-Ua-Platform" not in headers
+
+
+def test_build_headers_omits_fetch_metadata_for_firefox() -> None:
+    """Firefox sends neither Sec-Ch-Ua hints nor Sec-Fetch metadata."""
+    headers = http.build_headers("firefox133")
+
+    assert "Sec-Fetch-Dest" not in headers
+    assert "Sec-Fetch-User" not in headers
+
+
+def test_put_json_uses_xhr_headers_not_navigation_headers(fake_http) -> None:
+    """The search endpoint is a scripted XHR, not a document navigation."""
+    fake_http.install("PUT")
+    http.put_json("https://www.zillow.com/search", {"search": True}, options=http.RequestOptions())
+    headers = fake_http.calls[-1]["headers"]
+
+    assert headers["Sec-Fetch-Dest"] == "empty"
+    assert headers["Sec-Fetch-Mode"] == "cors"
+    assert headers["Sec-Fetch-Site"] == "same-site"
+    assert headers["Accept"] == "application/json, text/plain, */*"
+    assert "Sec-Fetch-User" not in headers
+    assert "Upgrade-Insecure-Requests" not in headers
+    assert headers["Content-Type"] == "application/json"
+
+
+def test_get_page_keeps_navigation_headers(fake_http) -> None:
+    fake_http.install("GET")
+    http.get_page("https://www.zillow.com/", options=http.RequestOptions())
+    headers = fake_http.calls[-1]["headers"]
+
+    assert headers["Sec-Fetch-Dest"] == "document"
+    assert headers["Sec-Fetch-Mode"] == "navigate"
+    assert headers["Sec-Fetch-User"] == "?1"
+    assert headers["Upgrade-Insecure-Requests"] == "1"
+    assert headers["Accept"].startswith("text/html")
+
+
 @pytest.mark.parametrize(
     "options_factory",
     [lambda: http.RequestOptions(max_retries=-1), lambda: http.RequestOptions(timeout=0)],

@@ -10,6 +10,7 @@ us well under that.
 """
 
 import json
+import math
 import os
 import tempfile
 import time
@@ -48,6 +49,8 @@ _TIMEOUT = 15.0
 # Address-level hits come back with a viewport of a few meters, which is too
 # small for a Zillow map search; expand anything smaller than a neighbourhood.
 _MIN_HALF_EXTENT = 0.01  # degrees, roughly 1 km
+# Nominatim's boundingbox is [south, north, west, east].
+_BBOX_LENGTH = 4
 _CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
 _nominatim_limiter = RateLimiter(min_interval=1.0, jitter=0)
 
@@ -123,7 +126,8 @@ def geocode(
         GeoResult: display name plus a validated BBox.
 
     Raises:
-        ValueError: no result, or the network request failed.
+        ValueError: no result, the response was malformed, or the network
+            request failed.
     """
     place = place.strip()
     if not place:
@@ -170,20 +174,57 @@ def geocode(
             f"Geocoding {place!r} failed: {e}. Pass --north/--south/--east/--west to search without geocoding."
         ) from e
 
+    if not isinstance(hits, list):
+        raise ValueError(
+            f"Geocoding {place!r} returned an unexpected response shape. "
+            "Pass --north/--south/--east/--west to search without geocoding."
+        )
     if not hits:
         raise ValueError(
             f"No geocoding result for {place!r}. Try a more specific name, or pass --north/--south/--east/--west."
         )
 
     hit = hits[0]
+    if not isinstance(hit, dict):
+        raise ValueError(
+            f"Geocoding {place!r} returned an unexpected result. "
+            "Pass --north/--south/--east/--west to search without geocoding."
+        )
     # Nominatim's boundingbox is [south, north, west, east], all strings.
-    south, north, west, east = (float(x) for x in hit["boundingbox"])
+    raw_bbox = hit.get("boundingbox")
+    if not isinstance(raw_bbox, (list, tuple)) or len(raw_bbox) != _BBOX_LENGTH:
+        raise ValueError(
+            f"Geocoding {place!r} returned no usable bounding box. "
+            "Pass --north/--south/--east/--west to search without geocoding."
+        )
+    try:
+        south, north, west, east = (float(x) for x in raw_bbox)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Geocoding {place!r} returned a malformed bounding box. "
+            "Pass --north/--south/--east/--west to search without geocoding."
+        ) from exc
+    if not all(math.isfinite(value) for value in (north, south, east, west)):
+        # NaN/inf bounds survive the BBox comparison (every comparison with
+        # NaN is False) and would silently produce a nonsense search viewport.
+        raise ValueError(
+            f"Geocoding {place!r} returned a non-finite bounding box. "
+            "Pass --north/--south/--east/--west to search without geocoding."
+        )
     synthetic_bbox = north - south < 2 * _MIN_HALF_EXTENT or east - west < 2 * _MIN_HALF_EXTENT
     north, south, east, west = _expand_viewport(north, south, east, west)
 
+    try:
+        bbox = BBox(north=north, south=south, east=east, west=west)
+    except ValueError as exc:
+        raise ValueError(
+            f"Geocoding {place!r} returned an unusable viewport ({exc}). "
+            "Pass --north/--south/--east/--west to search without geocoding."
+        ) from exc
+
     result = GeoResult(
         display_name=str(hit.get("display_name", place)),
-        bbox=BBox(north=north, south=south, east=east, west=west),
+        bbox=bbox,
         synthetic_bbox=synthetic_bbox,
     )
     _store_cache(

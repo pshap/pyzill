@@ -88,6 +88,35 @@ class TestGeocode:
         with pytest.raises(ValueError, match="No geocoding result"):
             geocode("zzzznowhere", cache_path=cache_path)
 
+    def test_non_list_response_raises_value_error(self, monkeypatch, cache_path):
+        """A dict-shaped error body must not escape as a raw KeyError."""
+        _install_get(monkeypatch, {"error": "Unable to geocode"})
+        with pytest.raises(ValueError, match="unexpected response shape"):
+            geocode("Schenectady NY", cache_path=cache_path)
+
+    def test_hit_without_bounding_box_raises_value_error(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, [{"display_name": "Schenectady"}])
+        with pytest.raises(ValueError, match="no usable bounding box"):
+            geocode("Schenectady NY", cache_path=cache_path)
+
+    def test_malformed_bounding_box_raises_value_error(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, [{"display_name": "x", "boundingbox": ["a", "b", "c", "d"]}])
+        with pytest.raises(ValueError, match="malformed bounding box"):
+            geocode("Schenectady NY", cache_path=cache_path)
+
+    def test_inverted_bounding_box_is_recovered(self, monkeypatch, cache_path):
+        """An inverted box is repaired by the viewport expansion, not rejected."""
+        _install_get(monkeypatch, [{"display_name": "x", "boundingbox": ["43.0", "42.0", "-73.0", "-74.0"]}])
+        result = geocode("Schenectady NY", cache_path=cache_path)
+        assert result.bbox.north > result.bbox.south
+        assert result.bbox.east > result.bbox.west
+
+    def test_non_finite_bounding_box_raises_value_error(self, monkeypatch, cache_path):
+        """NaN bounds pass every BBox comparison and must be rejected outright."""
+        _install_get(monkeypatch, [{"display_name": "x", "boundingbox": ["nan", "nan", "-73.0", "-74.0"]}])
+        with pytest.raises(ValueError, match="non-finite bounding box"):
+            geocode("Schenectady NY", cache_path=cache_path)
+
     def test_network_error_raises_with_hint(self, monkeypatch, cache_path):
         _install_get(monkeypatch, exc=OSError("DNS failure"))
         with pytest.raises(ValueError, match="--north"):

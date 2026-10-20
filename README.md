@@ -525,10 +525,12 @@ for bbox in quadrants:
 
 All search functions accept:
 
-- `impersonate` (default `"chrome136"`) — the `curl_cffi` TLS profile.
+- `impersonate` (default `"chrome136"`) — the `curl_cffi` TLS profile. The
+  HTTP `User-Agent` and client hints are derived from the same profile, so a
+  Safari or Firefox profile no longer presents a Chrome identity.
 - `timeout` (default `30.0` seconds).
 - `max_retries` (default `1`) — retries on 5xx, 429, and network errors. 403
-    responses are not retried.
+  responses are not retried.
 
 ```python
 results = pyzill.for_sale(

@@ -100,6 +100,32 @@ All notable changes to this project are documented here.
   `pyzill.BBox`, or opt in with `allow_nationwide=True`.
 
 ### Fixed
+- The CLI was unimportable: `cli/search.py` imported `_RESULT_CAP` from
+  `pyzill.search`, but the tiling refactor moved that constant to
+  `pyzill.tiling`. Every `pyzill` command failed with `ImportError` and three
+  test modules could not be collected. `pyzill.search` and `pyzill.tiling` now
+  declare `__all__`, so the `split_bbox`/`tiled_search` re-exports are explicit
+  and `mypy --strict` passes again.
+- The search endpoint now sends same-origin XHR headers instead of document
+  navigation headers. It previously carried `Sec-Fetch-Dest: document`,
+  `Sec-Fetch-Mode: navigate`, `Sec-Fetch-User: ?1`,
+  `Upgrade-Insecure-Requests: 1`, and an HTML `Accept` header alongside a JSON
+  body — a self-inflicted fingerprint mismatch on the most block-sensitive
+  request pyzill makes. It now sends `Sec-Fetch-Dest: empty`,
+  `Sec-Fetch-Mode: cors`, `Accept: application/json, text/plain, */*`, and no
+  `Upgrade-Insecure-Requests`.
+- The `User-Agent` and client hints now match the requested `--impersonate`
+  profile. A Safari, Firefox, or Edge profile previously produced a
+  `Chrome/136.0.0.0` User-Agent over a non-Chrome TLS fingerprint. Chromium
+  client hints are sent only for Chromium profiles, and Firefox no longer
+  receives `Sec-Fetch-*` metadata it would never send.
+- Geocoding a malformed Nominatim response raised a bare `KeyError`
+  (`KeyError: 0` or `KeyError: 'boundingbox'`) instead of the intended
+  actionable message. A non-list response, a hit without a bounding box, a
+  non-numeric bounding box, and non-finite bounds now all raise `ValueError`
+  with the `--north/--south/--east/--west` hint. `NaN` bounds are rejected
+  outright: they pass every `BBox` comparison and would silently produce a
+  nonsense search viewport.
 - `db.connect` now closes the connection when a `KeyboardInterrupt` or
   `SystemExit` interrupts a schema migration. The write lock used to be left
   held, so the next open failed with `database is locked`.
