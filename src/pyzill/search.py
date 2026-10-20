@@ -404,5 +404,18 @@ def iter_sold(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mappin
     yield from _iter_search(sold, max_items=max_items, kwargs=kwargs)
 
 
-# Re-exported for backward compatibility.
-__all_tiling__ = (split_bbox, tiled_search)
+# ``split_bbox`` and ``tiled_search`` live in ``pyzill.tiling`` but are
+# re-exported here for backward compatibility.  Listing them in ``__all__``
+# makes the re-export explicit, which ``mypy --strict`` requires.
+__all__ = [
+    "for_rent",
+    "for_sale",
+    "iter_rent",
+    "iter_sale",
+    "iter_search",
+    "iter_sold",
+    "search",
+    "sold",
+    "split_bbox",
+    "tiled_search",
+]

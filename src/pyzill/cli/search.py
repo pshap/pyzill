@@ -49,7 +49,7 @@ from pyzill.cli.options import (
 )
 from pyzill.cli.output import OutputFormat
 from pyzill.geocode import geocode
-from pyzill.search import _RESULT_CAP, tiled_search
+from pyzill.tiling import _RESULT_CAP, tiled_search
 
 search_app = typer.Typer(name="search", help="Search Zillow listings")
 _ZIPCODE_LENGTH = 5
