@@ -8,7 +8,9 @@ import contextlib
 import sqlite3
 from typing import Any
 
-__all__ = ["ensure_schema"]
+from pyzill.normalize import LISTING_FIELDS
+
+__all__ = ["LISTING_TABLE_COLUMNS", "SCHEMA_VERSION", "ensure_schema"]
 
 
 # The current schema version.
@@ -17,41 +19,14 @@ SCHEMA_VERSION = 3
 # Compatibility alias for the historical private name.
 _SCHEMA_VERSION = SCHEMA_VERSION
 
-# Canonical listings columns, in schema order. Shared by the schema DDL, the
-# v1->v2 migration, and upsert_listings so the three can never drift apart.
-_LISTING_TABLE_COLUMNS = (
-    "zpid",
+# Canonical listings columns, in schema order. Derived from the normalized
+# listing shape, so the DDL, the migrations, and the write path all agree on
+# one list. The kind sits second (it is part of the primary key) and the two
+# timestamps are added by the database itself.
+LISTING_TABLE_COLUMNS: tuple[str, ...] = (
+    LISTING_FIELDS[0],
     "kind",
-    "price",
-    "price_label",
-    "beds",
-    "baths",
-    "area",
-    "address",
-    "street",
-    "city",
-    "state",
-    "zipcode",
-    "latitude",
-    "longitude",
-    "home_type",
-    "status",
-    "status_type",
-    "detail_url",
-    "image_url",
-    "zestimate",
-    "rent_zestimate",
-    "days_on_zillow",
-    "price_change",
-    "price_change_date",
-    "price_reduction",
-    "lot_area_value",
-    "lot_area_unit",
-    "year_built",
-    "tax_assessed_value",
-    "listing_sub_type",
-    "unit",
-    "broker_name",
+    *LISTING_FIELDS[1:],
     "first_seen_utc",
     "last_seen_utc",
 )
@@ -159,7 +134,7 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     history is staged in a plain (FK-free) table across the rebuild.
     """
     old_columns = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
-    carried = [col for col in _LISTING_TABLE_COLUMNS if col != "kind" and col in old_columns]
+    carried = [col for col in LISTING_TABLE_COLUMNS if col != "kind" and col in old_columns]
 
     conn.execute(
         """CREATE TABLE price_history_staging (
@@ -175,7 +150,7 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
 
     conn.execute(_CREATE_LISTINGS_SQL.format(name="listings_v2"))
     columns_sql = ", ".join(carried)
-    # columns_sql is built from the fixed _LISTING_TABLE_COLUMNS constant, not user input.
+    # columns_sql is built from the fixed LISTING_TABLE_COLUMNS constant, not user input.
     conn.execute(f"INSERT INTO listings_v2 ({columns_sql}) SELECT {columns_sql} FROM listings")  # noqa: S608
     conn.execute("ALTER TABLE listings RENAME TO listings_v1")
     conn.execute("ALTER TABLE listings_v2 RENAME TO listings")
@@ -194,7 +169,7 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
 def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
     """Rebuild v2 listing tables around composite (zpid, kind) keys."""
     old_columns = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
-    carried = [col for col in _LISTING_TABLE_COLUMNS if col in old_columns]
+    carried = [col for col in LISTING_TABLE_COLUMNS if col in old_columns]
 
     conn.execute("CREATE TABLE listings_v2_staging AS SELECT * FROM listings")
     conn.execute("CREATE TABLE price_history_v2_staging AS SELECT * FROM price_history")
@@ -221,9 +196,9 @@ _MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3}
 
 
 def _backfill_listing_columns(conn: sqlite3.Connection) -> None:
-    """Add any ``_LISTING_TABLE_COLUMNS`` column missing from ``listings``."""
+    """Add any ``LISTING_TABLE_COLUMNS`` column missing from ``listings``."""
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
-    for col in _LISTING_TABLE_COLUMNS:
+    for col in LISTING_TABLE_COLUMNS:
         if col in existing_cols:
             continue
         _integer_cols = ("days_on_zillow", "price_change", "year_built", "tax_assessed_value")

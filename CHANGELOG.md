@@ -66,6 +66,11 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- The listing field lists now have a single source: the normalized `Listing`
+  shape. The database column tuple, the columns the write path fills, and
+  the numeric fields of the query engine are derived from it, and a new test
+  (`tests/test_fields.py`) fails if any of them drifts from the `CREATE
+  TABLE` statement. The schema itself is unchanged.
 - The offline query engine moved out of the CLI into `pyzill.query` (pure
   code that raises `QueryValidationError`); `pyzill.cli.query` keeps the
   commands and the error-to-exit-code mapping, and still re-exports the

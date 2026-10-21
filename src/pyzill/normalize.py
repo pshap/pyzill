@@ -9,7 +9,7 @@ into a flat dict of predictable, numeric-or-``None`` values.
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any, TypedDict, overload
+from typing import Any, TypedDict, get_args, overload
 
 from pyzill.config import ZILLOW_HOME
 from pyzill.utils import get_nested_value
@@ -57,6 +57,22 @@ class Listing(TypedDict):
     listing_sub_type: str | None
     unit: str | None
     broker_name: str | None
+
+
+def _is_numeric(annotation: Any) -> bool:
+    """True when a field's annotation allows a number."""
+    return any(argument is int or argument is float for argument in get_args(annotation))
+
+
+# The listing fields, in declaration order. This is the single source for
+# every list derived from the listing shape: the database columns, the
+# columns the write path fills, and the numeric fields of the query engine.
+LISTING_FIELDS: tuple[str, ...] = tuple(Listing.__annotations__)
+
+# The listing fields whose values are numbers (or None).
+NUMERIC_LISTING_FIELDS: frozenset[str] = frozenset(
+    name for name, annotation in Listing.__annotations__.items() if _is_numeric(annotation)
+)
 
 
 class PropertyDetail(TypedDict):

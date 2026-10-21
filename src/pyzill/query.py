@@ -13,7 +13,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from pyzill.normalize import Listing
+from pyzill.normalize import LISTING_FIELDS, NUMERIC_LISTING_FIELDS
 
 __all__ = [
     "Condition",
@@ -23,28 +23,11 @@ __all__ = [
     "query_rows",
 ]
 
-_QUERY_FIELDS = frozenset(Listing.__annotations__) | {"ppsf"}
+_QUERY_FIELDS = frozenset(LISTING_FIELDS) | {"ppsf"}
 # "kind" is part of the listings primary key but not a normalized Listing field.
 _DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc", "kind"}
-_NUMERIC_FIELDS = frozenset(
-    {
-        "zpid",
-        "price",
-        "beds",
-        "baths",
-        "area",
-        "ppsf",
-        "zestimate",
-        "rent_zestimate",
-        "latitude",
-        "longitude",
-        "days_on_zillow",
-        "price_change",
-        "lot_area_value",
-        "year_built",
-        "tax_assessed_value",
-    }
-)
+# The numeric listing fields, plus the computed price-per-square-foot.
+_NUMERIC_FIELDS = NUMERIC_LISTING_FIELDS | {"ppsf"}
 
 _QUOTED_LITERAL_LENGTH = 2
 _STRING_OPS = frozenset({"=", "==", "!=", "~"})

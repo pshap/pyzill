@@ -14,8 +14,8 @@ from typing import Any, NamedTuple
 
 from pyzill._kinds import KINDS, Kind
 from pyzill.db.runs import begin_sync_run, finish_sync_run, utc_now
-from pyzill.db.schema import _LISTING_TABLE_COLUMNS
-from pyzill.normalize import parse_price
+from pyzill.db.schema import LISTING_TABLE_COLUMNS
+from pyzill.normalize import LISTING_FIELDS, parse_price
 
 __all__ = ["SyncStats", "upsert_listings"]
 
@@ -73,36 +73,10 @@ class _WriteBatch:
     status: list[tuple[int, str, str, str]] = field(default_factory=list)
 
 
-_DATA_COLUMNS = (
-    "price_label",
-    "beds",
-    "baths",
-    "area",
-    "address",
-    "street",
-    "city",
-    "state",
-    "zipcode",
-    "latitude",
-    "longitude",
-    "home_type",
-    "status",
-    "status_type",
-    "detail_url",
-    "image_url",
-    "zestimate",
-    "rent_zestimate",
-    "days_on_zillow",
-    "price_change",
-    "price_change_date",
-    "price_reduction",
-    "lot_area_value",
-    "lot_area_unit",
-    "year_built",
-    "tax_assessed_value",
-    "listing_sub_type",
-    "unit",
-    "broker_name",
+# The listing fields the write path fills. ``zpid``, ``kind``, and the two
+# timestamps are supplied by the write path itself.
+_DATA_COLUMNS: tuple[str, ...] = tuple(
+    field for field in LISTING_FIELDS if field not in ("zpid", "price")
 )
 
 
@@ -123,8 +97,8 @@ def _listing_upsert_sql() -> str:
     The conflict target is ``(zpid, kind)``, so an insert can never change a
     row's kind; there is no kind-transition branch.
     """
-    columns = ", ".join(_LISTING_TABLE_COLUMNS)
-    placeholders = _placeholders(len(_LISTING_TABLE_COLUMNS))
+    columns = ", ".join(LISTING_TABLE_COLUMNS)
+    placeholders = _placeholders(len(LISTING_TABLE_COLUMNS))
     current = "excluded.last_seen_utc >= listings.last_seen_utc"
     assignments = [f"price = CASE WHEN {current} THEN COALESCE(excluded.price, listings.price) ELSE listings.price END"]
     assignments.extend(

@@ -4,7 +4,7 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
-from pyzill.db.schema import _LISTING_TABLE_COLUMNS
+from pyzill.db.schema import LISTING_TABLE_COLUMNS
 
 __all__ = ["get_price_history", "load_listings"]
 
@@ -22,7 +22,7 @@ def load_listings(
     """
     if limit is not None and limit < 1:
         raise ValueError("limit must be at least 1")
-    fields = set(_LISTING_TABLE_COLUMNS)
+    fields = set(LISTING_TABLE_COLUMNS)
     conditions: list[str] = []
     parameters: list[Any] = []
     for field, value in (filters or {}).items():
