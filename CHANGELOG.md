@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10
+
 ### Added
 - `pyzill.responses` holds the two host-agnostic response helpers
   (`json_body` and `raise_for_status`), typed against a small
