@@ -721,6 +721,42 @@ data = pyzill.get_from_apartment_url("https://www.zillow.com/apartments/kissimme
 > The old `department` names and historical `deparment` misspellings remain
 > as deprecated aliases and emit `DeprecationWarning`.
 
+## Workflows (search, normalize, and sync from Python)
+
+`pyzill.workflows` holds the application workflows the CLI runs, so a
+library user can do the same things without going through the command
+line. Nothing in this layer prints or exits the process: it returns data
+and structured notices, and the caller decides what to report.
+
+Search and normalize in one call:
+
+```python
+from pyzill.geocode import geocode
+from pyzill.workflows import SearchFilters, SearchRequest, fetch_listings
+
+bbox = geocode("Schenectady NY").bbox
+request = SearchRequest(query="12305", filters=SearchFilters(north=bbox.north, south=bbox.south))
+result = fetch_listings("sale", request)
+
+print(len(result.listings), "listings")   # normalized Listing dicts
+print(result.truncated)                   # did Zillow cap the result?
+print(result.notices)                     # structured, non-fatal conditions
+```
+
+Sync the same search into the local database:
+
+```python
+from pyzill.db import connect
+from pyzill.workflows import sync_to_db
+
+with connect(":memory:") as conn:
+    outcome = sync_to_db(conn, "sale", request)
+    print(outcome.stats.added, "new listings")
+```
+
+`import_rows` does the same for listings you already have on disk, and
+`extract_listings` pulls the listings out of a saved Zillow response.
+
 ## API
 
 | Function | Description |

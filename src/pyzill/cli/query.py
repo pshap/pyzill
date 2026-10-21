@@ -10,7 +10,6 @@ from typing import Annotated, Any
 
 import typer
 
-from pyzill import normalize_listings
 from pyzill.cli.console import error, read_json, write_output
 from pyzill.cli.options import (
     ColsOpt,
@@ -22,8 +21,8 @@ from pyzill.cli.options import (
     WhereOpt,
 )
 from pyzill.cli.output import OutputFormat
-from pyzill.cli.search import extract_listings
-from pyzill.normalize import Listing
+from pyzill.normalize import Listing, normalize_listings
+from pyzill.workflows import extract_listings
 
 _QUERY_FIELDS = frozenset(Listing.__annotations__) | {"ppsf"}
 # "kind" is part of the listings primary key but not a normalized Listing field.
@@ -358,7 +357,10 @@ def normalize(
 ) -> None:
     """Normalize raw listing data from file or stdin."""
     data = read_json(input_or_dash)
-    listings = extract_listings(data, wrap_single=True)
+    try:
+        listings = extract_listings(data, wrap_single=True)
+    except ValueError as exc:
+        error(str(exc), code=2)
     write_output(normalize_listings(listings), output_format, output)
 
 

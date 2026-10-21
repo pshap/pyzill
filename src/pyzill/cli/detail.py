@@ -6,7 +6,12 @@ from typing import Annotated, Any
 
 import typer
 
-from pyzill import get_from_apartment_id, get_from_apartment_url, get_from_home_id, get_from_home_url
+from pyzill.api import (
+    get_from_apartment_id,
+    get_from_apartment_url,
+    get_from_home_id,
+    get_from_home_url,
+)
 from pyzill.cli.console import context, debug, emit, error, network_errors, write_output
 from pyzill.cli.options import FormatOpt, KeysOpt, OutputOpt, PathOpt
 from pyzill.cli.output import OutputFormat

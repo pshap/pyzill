@@ -10,7 +10,6 @@ from typing import Annotated
 import typer
 from typer._click.exceptions import ClickException, UsageError
 
-from pyzill import resolve_proxy, set_min_interval
 from pyzill.cli.console import (
     Context,
     error,
@@ -23,6 +22,8 @@ from pyzill.cli.query import register as register_offline_commands
 from pyzill.cli.schema import schema_app
 from pyzill.cli.search import search_app
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
+from pyzill.proxy import resolve_proxy
+from pyzill.ratelimit import set_min_interval
 
 app = typer.Typer(
     name="pyzill",

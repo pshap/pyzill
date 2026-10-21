@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- A workflow layer (`pyzill.workflows`) for library users: `fetch_listings`
+  searches and normalizes in one call, `sync_to_db` upserts a search into
+  the local database, `import_rows` stores listings you already have, and
+  `extract_listings` pulls the listings out of a saved Zillow response. The
+  layer never prints and never exits the process; it returns the data plus
+  structured notices, and the caller decides what to report. The CLI now
+  uses these workflows instead of owning the pipeline itself.
 - Database tracking schema v3: `sync_runs` tracks search queries and truncation,
   `sightings` preserves the unnormalized payload (`raw_json`) for offline re-normalization,
   `listings` uses a composite `(zpid, kind)` primary key to keep sales and rentals distinct,
@@ -59,6 +66,11 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- The CLI is now wiring only: the search, sync, and import pipelines moved
+  into the new workflow layer (`pyzill.workflows`), the viewport/bbox and
+  filter-range checks moved with them, and the CLI keeps the flag parsing,
+  the exit-code mapping, and the rendering. The commands, flags, exit codes,
+  output shapes, and messages are unchanged.
 - Transport options are now built in one place (`pyzill.http.build_request_options`).
   `pyzill.http.get_page`/`put_json` hand their options straight to the retry
   loop instead of splitting them into arguments that were immediately

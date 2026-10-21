@@ -1,35 +1,28 @@
-"""Database commands plus shared path resolution and session helpers."""
+"""Database commands: Typer wiring only.
+
+The sync and import pipelines live in :mod:`pyzill.workflows`; this module
+parses the flags, calls the workflow, maps its errors to exit codes, and
+renders the result.
+"""
 
 import datetime as dt
 import sqlite3
 import sys
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 import typer
 
-from pyzill import (
-    connect,
-    db_stats,
-    default_db_path,
-    for_rent,
-    for_sale,
-    get_price_history,
-    is_building_result,
-    normalize_listing,
-    sold,
-    upsert_listings,
-    utc_now,
-)
-from pyzill._kinds import ListingKind
+from pyzill._kinds import ListingKind, as_kind
 from pyzill.cli.console import (
     context,
     emit,
     error,
+    progress,
     read_json,
+    report_notices,
     stderr_line,
     warn,
     write_output,
@@ -63,27 +56,21 @@ from pyzill.cli.options import (
 )
 from pyzill.cli.output import OutputFormat, dumps
 from pyzill.cli.query import cli_query_database
-from pyzill.cli.search import (
-    extract_listings,
-    fetch_and_normalize,
-    query_zipcode,
-    search_options_from_args,
-)
+from pyzill.cli.search import prepare_search, search_options_from_args
 from pyzill.config import read_env
-from pyzill.db import SyncStats, begin_sync_run, comparable_run_had_results, connect_readonly, get_changes
-from pyzill.normalize import Listing
+from pyzill.db import (
+    SyncStats,
+    connect,
+    connect_readonly,
+    db_stats,
+    default_db_path,
+    get_changes,
+    get_price_history,
+    utc_now,
+)
+from pyzill.workflows import fetch_listings, import_rows, prepare_import, sync_to_db
 
 db_app = typer.Typer(name="db", help="Local SQLite database for tracking listings")
-
-_SEARCH_FNS: dict[ListingKind, Callable[..., dict[str, Any]]] = {
-    ListingKind.sale: for_sale,
-    ListingKind.rent: for_rent,
-    ListingKind.sold: sold,
-}
-
-# Keys a row may have and still count as already-normalized for `db import`:
-# the normalized listing fields, plus the database's own timestamp columns.
-_NORMALIZED_KEYS = frozenset(Listing.__annotations__) | {"first_seen_utc", "last_seen_utc"}
 
 
 class _WarningState:
@@ -157,22 +144,6 @@ def _db_session(
         error(f"Database operation failed: {e}", code=1)
 
 
-def _upsert_and_report(  # noqa: PLR0913
-    rows: Sequence[Mapping[str, Any]],
-    db_path: str | None,
-    verb: str,
-    *,
-    seen_utc: str | None = None,
-    kind: ListingKind = ListingKind.sale,
-    output_format: OutputFormat | None = None,
-    raw_rows: Sequence[Mapping[str, Any]] | None = None,
-) -> None:
-    """Upsert rows in one transaction and print the sync summary to stderr."""
-    with _db_session(db_path) as conn:
-        stats = upsert_listings(conn, rows, seen_utc=seen_utc, kind=kind.value, raw_rows=raw_rows)
-    _report_sync_stats(stats, verb, output_format)
-
-
 def _report_sync_stats(stats: SyncStats, verb: str, output_format: OutputFormat | None) -> None:
     total = stats.added + stats.updated
     if output_format is OutputFormat.json:
@@ -197,11 +168,6 @@ def _report_sync_stats(stats: SyncStats, verb: str, output_format: OutputFormat 
         f"{verb} {total} listings:",
         f"{stats.added} new, {stats.updated} updated ({stats.price_changes} price changes), {stats.skipped} skipped",
     )
-
-
-def _looks_normalized(row: Any) -> bool:
-    """True when a row uses normalized field names (so normalizing would null them)."""
-    return isinstance(row, dict) and set(row) <= _NORMALIZED_KEYS
 
 
 @db_app.command("sync")
@@ -239,71 +205,28 @@ def db_sync(  # noqa: PLR0913
         # file import to change detection.
         error("Query must not be empty", code=2)
 
-    options = search_options_from_args(locals())
-    metadata: dict[str, Any] = {}
-    response = fetch_and_normalize(
-        _SEARCH_FNS[kind],
-        options,
-        raw=True,
-        metadata=metadata,
+    request = search_options_from_args(locals())
+    viewport = prepare_search(request)
+    result = fetch_listings(
+        as_kind(kind),
+        request,
+        bbox=viewport.bbox,
+        on_progress=lambda used, total: progress(f"tile {used}:", f"{total} listings so far"),
     )
-    zipcode = query_zipcode(query)
-    raw_rows = [
-        row
-        for row in extract_listings(response, zipcode=zipcode)
-        if isinstance(row, dict) and not is_building_result(row)
-    ]
-    normalized_rows = [normalize_listing(row) for row in raw_rows]
-    pairs = [
-        (normalized, raw)
-        for normalized, raw in zip(normalized_rows, raw_rows, strict=True)
-        if normalized and (zipcode is None or normalized["zipcode"] == zipcode)
-    ]
-    rows = [normalized for normalized, _ in pairs]
-    raw_rows = [raw for _, raw in pairs]
-    started_utc = utc_now()
-    filter_values = asdict(options.filters)
-    filter_values.update(is_room=is_room, is_entire_place=is_entire_place)
-    bbox = metadata.get("bbox")
-    truncated = bool(response.get("truncated", False))
     with _db_session(db_path) as conn:
-        # A zero-row answer for a search that previously matched is more likely
-        # a soft block or transient glitch than a search whose listings all
-        # vanished; flag it truncated so change detection skips the run.
-        if (
-            not rows
-            and not confirm_empty
-            and comparable_run_had_results(conn, kind=kind.value, query=query, bbox=bbox, filters=filter_values)
-        ):
-            truncated = True
-            warn(
-                "Zillow returned no listings for a search that previously matched; "
-                "recording this run as truncated (use --confirm-empty to accept a verified empty result)"
-            )
-        run_id = begin_sync_run(
+        sync_result = sync_to_db(
             conn,
-            kind=kind.value,
-            query=query,
-            bbox=bbox,
-            filters=filter_values,
-            started_utc=started_utc,
+            as_kind(kind),
+            request,
+            result=result,
+            confirm_empty=confirm_empty,
         )
-        # upsert_listings finalizes the run inside its own transaction, so the
-        # truncated flag is persisted rather than rolled back with the session.
-        stats = upsert_listings(
-            conn,
-            rows,
-            raw_rows=raw_rows,
-            seen_utc=started_utc,
-            kind=kind.value,
-            run_id=run_id,
-            truncated=truncated,
-        )
+    report_notices(sync_result.notices)
 
-    if not rows and output_format is not OutputFormat.json:
+    if not sync_result.rows and output_format is not OutputFormat.json:
         warn("No listings found")
         return
-    _report_sync_stats(stats, "Synced", output_format)
+    _report_sync_stats(sync_result.stats, "Synced", output_format)
 
 
 @db_app.command("import")
@@ -326,18 +249,9 @@ def db_import(
     # Detect input shape: raw rows (camelCase / response keys) get normalized,
     # rows that already use normalized field names are kept as-is so a re-import
     # of `db query` output doesn't null out street/city/etc.
-    rows = extract_listings(data, wrap_single=True)
-    imported: list[Mapping[str, Any]] = []
-    raw_imported: list[Mapping[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, dict) or is_building_result(row):
-            continue
-        normalized = row if _looks_normalized(row) else normalize_listing(row)
-        if normalized is not None and normalized.get("zpid") is not None:
-            imported.append(normalized)
-            raw_imported.append(row)
+    rows, raw_rows = prepare_import(data)
 
-    if not imported:
+    if not rows:
         if output_format is OutputFormat.json:
             _report_sync_stats(SyncStats(added=0, updated=0, price_changes=0, skipped=0), "Imported", output_format)
         else:
@@ -347,15 +261,9 @@ def db_import(
     # Parse timestamp; store it in the canonical fixed-width UTC format.
     fetched_at = normalize_utc_timestamp(fetched_at, label="--fetched-at") if fetched_at else utc_now()
 
-    _upsert_and_report(
-        imported,
-        db_path,
-        "Imported",
-        seen_utc=fetched_at,
-        kind=kind,
-        output_format=output_format,
-        raw_rows=raw_imported,
-    )
+    with _db_session(db_path) as conn:
+        result = import_rows(conn, rows, raw_rows, kind=as_kind(kind), seen_utc=fetched_at)
+    _report_sync_stats(result.stats, "Imported", output_format)
 
 
 @db_app.command("query")

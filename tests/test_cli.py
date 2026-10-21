@@ -1468,10 +1468,10 @@ class TestDatabaseCommands:
         assert "updated" in result2.stderr
 
     def test_db_sync_price_change_detection(self, fake_http, tmp_path, monkeypatch):
-        import pyzill.cli.db as cli_db
-
         # Pin the sync clock so the later --fetched-at import is always newer.
-        monkeypatch.setattr(cli_db, "utc_now", lambda: "2026-10-19T10:00:00Z")
+        # The sync run's timestamp is taken by the workflow layer, which owns
+        # the run lifecycle.
+        monkeypatch.setattr("pyzill.workflows.utc_now", lambda: "2026-10-19T10:00:00Z")
 
         # First sync with price 250000
         body1 = {

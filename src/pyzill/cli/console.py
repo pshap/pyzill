@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -16,14 +16,14 @@ import typer
 from rich.console import Console
 from rich.markup import escape
 
-from pyzill import resolve_proxy
 from pyzill.cli.output import OutputFormat
 from pyzill.cli.output import write_output as _render_output
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 from pyzill.exceptions import (
     ZillowError,
 )
-from pyzill.proxy import redact_credentials
+from pyzill.proxy import redact_credentials, resolve_proxy
+from pyzill.workflows import Notice
 
 
 @dataclass
@@ -143,6 +143,41 @@ def debug(message: str) -> None:
     """Print debug message to stderr."""
     if context().verbose:
         stderr_line("dim", "Debug:", message)
+
+
+def report_notices(notices: Iterable[Notice]) -> None:
+    """Print the workflow notices as warnings.
+
+    The workflow layer reports conditions as structured notices; the wording
+    belongs to the CLI, so the messages are rendered here.
+    """
+    for notice in notices:
+        values = notice.values
+        if notice.code == "synthetic_viewport":
+            warn(
+                "Nominatim returned a point-like viewport; pyzill expanded it synthetically, "
+                "which may not cover the full area"
+            )
+        elif notice.code == "tile_capped":
+            warn(
+                f"A tile still returned {values['cap']} listings at --max-depth {values['max_depth']}; "
+                "results may be truncated"
+            )
+        elif notice.code == "result_cap":
+            warn(
+                f"Zillow returned {values['cap']} listings, its per-search cap; "
+                "use --tile to subdivide the bounding box"
+            )
+        elif notice.code == "budget_exhausted":
+            warn(
+                f"request budget of {values['max_requests']} exhausted; returning partial results "
+                "(raise --max-requests or lower --max-depth for more)"
+            )
+        elif notice.code == "suspect_empty":
+            warn(
+                "Zillow returned no listings for a search that previously matched; "
+                "recording this run as truncated (use --confirm-empty to accept a verified empty result)"
+            )
 
 
 @contextmanager
