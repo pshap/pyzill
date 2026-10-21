@@ -13,7 +13,7 @@ from typing import Any, Literal, cast
 from curl_cffi.requests import ProxySpec, Response
 from curl_cffi.requests.exceptions import RequestException
 
-from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
+from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, ZILLOW_HOME
 from pyzill.exceptions import (
     ZillowBlockedError,
     ZillowError,
@@ -37,7 +37,9 @@ __all__ = [
     "request",
 ]
 
-ZILLOW_HOME = "https://www.zillow.com"
+# ``ZILLOW_HOME`` is re-exported here (it is listed in ``__all__``) because
+# this module has always been the place callers imported it from; the value
+# itself now lives in ``pyzill.config``.
 
 
 @dataclass(frozen=True, slots=True)

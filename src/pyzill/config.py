@@ -4,6 +4,11 @@ DEFAULT_IMPERSONATE = "chrome136"
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_MAX_RETRIES = 1
 
+# Canonical Zillow origin. Lives here (the core layer) so the data layer
+# (normalize) and the transport layer (http) can both use it without either
+# importing the other.
+ZILLOW_HOME = "https://www.zillow.com"
+
 _CANONICAL_NAME_BY_ALIAS = {
     "ZILLOW_PROXY": "PYZILL_PROXY",
     "ZILLOW_MIN_INTERVAL": "PYZILL_RATE_LIMIT",

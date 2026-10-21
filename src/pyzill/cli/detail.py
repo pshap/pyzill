@@ -3,7 +3,6 @@
 import re
 from collections.abc import Callable
 from typing import Annotated, Any
-from urllib.parse import urlsplit
 
 import typer
 
@@ -11,6 +10,7 @@ from pyzill import get_from_apartment_id, get_from_apartment_url, get_from_home_
 from pyzill.cli.console import context, debug, emit, error, network_errors, write_output
 from pyzill.cli.options import FormatOpt, KeysOpt, OutputOpt, PathOpt
 from pyzill.cli.output import OutputFormat
+from pyzill.urls import is_zillow_https_url
 
 detail_app = typer.Typer(name="detail", help="Fetch property details")
 
@@ -21,12 +21,7 @@ def home_detail_target(value: str) -> tuple[str, int | str]:
     match = re.fullmatch(r"(\d+)(?:_zpid)?", cleaned)
     if match:
         return "id", int(match.group(1))
-    try:
-        parsed = urlsplit(cleaned)
-        host = parsed.hostname or ""
-    except ValueError as exc:
-        raise ValueError("Home detail input must be a zpid or an HTTPS Zillow URL") from exc
-    if parsed.scheme == "https" and (host == "zillow.com" or host.endswith(".zillow.com")):
+    if is_zillow_https_url(cleaned):
         return "url", cleaned
     raise ValueError("Home detail input must be a zpid or an HTTPS Zillow URL")
 
@@ -44,12 +39,7 @@ def apartment_detail_target(value: str) -> tuple[str, str]:
         raise ValueError("Apartment detail input must be an apartment ID or an HTTPS Zillow URL")
     if "://" not in cleaned and "/" not in cleaned:
         return "id", cleaned
-    try:
-        parsed = urlsplit(cleaned)
-        host = parsed.hostname or ""
-    except ValueError as exc:
-        raise ValueError("Apartment detail input must be an apartment ID or an HTTPS Zillow URL") from exc
-    if parsed.scheme == "https" and (host == "zillow.com" or host.endswith(".zillow.com")):
+    if is_zillow_https_url(cleaned):
         return "url", cleaned
     raise ValueError("Apartment detail input must be an apartment ID or an HTTPS Zillow URL")
 

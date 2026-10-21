@@ -11,6 +11,7 @@ from typing import Any, cast
 from urllib.parse import urlsplit
 
 from pyzill import http
+from pyzill.urls import is_zillow_https_url
 
 _Parser = Callable[[bytes], dict[str, Any]]
 
@@ -18,11 +19,10 @@ _Parser = Callable[[bytes], dict[str, Any]]
 def _fetch(url: str, parser: _Parser, options: http.RequestOptions) -> dict[str, Any]:
     """Fetch and parse one Zillow detail page."""
     try:
-        parsed = urlsplit(url)
-        hostname = parsed.hostname or ""
+        urlsplit(url)
     except ValueError as exc:
         raise ValueError("Detail URL must be an HTTPS Zillow URL") from exc
-    if parsed.scheme != "https" or not (hostname == "zillow.com" or hostname.endswith(".zillow.com")):
+    if not is_zillow_https_url(url):
         raise ValueError("Detail URL must be an HTTPS Zillow URL on a zillow.com host")
     return parser(http.get_page(url, options=options).content)
 

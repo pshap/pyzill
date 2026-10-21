@@ -6,7 +6,6 @@ import sys
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import asdict
-from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -25,6 +24,7 @@ from pyzill import (
     upsert_listings,
     utc_now,
 )
+from pyzill._kinds import ListingKind
 from pyzill.cli.console import (
     context,
     emit,
@@ -72,13 +72,6 @@ from pyzill.cli.search import (
 from pyzill.config import read_env
 from pyzill.db import SyncStats, begin_sync_run, comparable_run_had_results, connect_readonly, get_changes
 from pyzill.normalize import Listing
-
-
-class ListingKind(StrEnum):
-    sale = "sale"
-    rent = "rent"
-    sold = "sold"
-
 
 db_app = typer.Typer(name="db", help="Local SQLite database for tracking listings")
 

@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any, TypedDict, overload
 
-from pyzill.http import ZILLOW_HOME
+from pyzill.config import ZILLOW_HOME
 from pyzill.utils import get_nested_value
 
 _BASE_URL = ZILLOW_HOME

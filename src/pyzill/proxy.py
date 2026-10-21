@@ -6,9 +6,25 @@ from pyzill.config import read_env
 
 _MAX_PORT = 65535
 
-# Credentials embedded in a proxy URL: "scheme://user:pass@" or a scheme-less
+# Credentials embedded in a URL: "scheme://user:pass@" or a scheme-less
 # "user:pass@host". Matched so error messages can mask them.
-_CREDENTIALS_RE = re.compile(r"://[^/@\s]*@|(?<![\w.:])[^/\s:@]+:[^/\s]*@")
+#
+# This is the single redaction helper for the whole package: the CLI, the
+# proxy errors, and the HTTP error paths all mask credentials through it, so
+# a password can never reach a log, traceback, or CI transcript.
+_CREDENTIALS_RE = re.compile(
+    r"(?<=://)[^/\s]*@"  # userinfo after a scheme, up to the last @ before /
+    r"|(?<![\w./])[^/\s:@]+:[^/\s]*@"  # scheme-less user:pass@host (colon required)
+)
+
+
+def redact_credentials(text: str) -> str:
+    """Mask any credentials embedded in ``text``.
+
+    Handles a bare proxy URL as well as a message that merely mentions one,
+    so callers can pass user-facing text straight through.
+    """
+    return _CREDENTIALS_RE.sub("***@", text)
 
 
 def redact_proxy_url(proxy_url: str) -> str:
@@ -18,7 +34,7 @@ def redact_proxy_url(proxy_url: str) -> str:
     wrong; masking keeps the password out of logs, tracebacks, and CI
     transcripts.
     """
-    return _CREDENTIALS_RE.sub(lambda match: "://***@" if match.group(0).startswith("://") else "***@", proxy_url)
+    return redact_credentials(proxy_url)
 
 
 def parse_proxy(ip_or_domain: str, port: str, username: str, password: str, scheme: str = "http") -> str:

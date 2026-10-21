@@ -1,7 +1,16 @@
+"""Small text helpers, plus compatibility re-exports of the proxy helpers.
+
+The proxy functions used to live here. They now live in :mod:`pyzill.proxy`;
+this module keeps re-exporting them so existing imports
+(``from pyzill.utils import resolve_proxy``) keep working. New code should
+import them from :mod:`pyzill.proxy`.
+"""
+
 import re
 from typing import Any
 
 from pyzill.proxy import parse_proxy as parse_proxy
+from pyzill.proxy import redact_credentials as redact_credentials
 from pyzill.proxy import redact_proxy_url as redact_proxy_url
 from pyzill.proxy import resolve_proxy as resolve_proxy
 

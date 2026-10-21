@@ -59,6 +59,18 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- Core knowledge was deduplicated: the Zillow origin constant now lives in
+  `pyzill.config` (re-exported from `pyzill.http` for compatibility), the
+  "is this an HTTPS zillow.com URL?" rule now lives in the new `pyzill.urls`
+  module (used by the detail fetchers and the CLI's detail commands instead
+  of three separate copies), the listing kinds now have a single definition in
+  `pyzill._kinds` (`Kind` plus the `ListingKind` enum the CLI uses for
+  argument choices), and credential redaction has a single implementation
+  (`pyzill.proxy.redact_credentials`) that both the proxy errors and the CLI
+  use. Proxy error messages now mask credentials as completely as the CLI
+  already did (a password containing `@` is no longer partially visible).
+  `pyzill.utils` is now documented as a compatibility re-export of the proxy
+  helpers; the public names it exposes are unchanged.
 - The database module was split into a package: `pyzill/db/runs.py` (sync-run
   bookkeeping), `pyzill/db/schema.py` (DDL, migrations, and column backfills),
   `pyzill/db/connection.py` (opening the database), `pyzill/db/upsert.py` (the

@@ -2,7 +2,6 @@
 
 import json
 import os
-import re
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -24,6 +23,7 @@ from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIME
 from pyzill.exceptions import (
     ZillowError,
 )
+from pyzill.proxy import redact_credentials
 
 
 @dataclass
@@ -84,17 +84,16 @@ def context() -> Context:
     return _active_context.get() or Context()
 
 
-# user:password@ inside a URL (proxy credentials, etc.)
-_USERINFO_RE = re.compile(
-    r"(?<=://)[^/\s]*@"  # userinfo after a scheme, up to the last @ before /
-    r"|(?<![\w./])[^/\s:@]+:[^/\s]*@"  # scheme-less user:pass@host (colon required)
-)
 _USAGE_EXIT_CODE = 2
 
 
 def _redact(message: str) -> str:
-    """Strip credentials from any URLs embedded in a message."""
-    return _USERINFO_RE.sub("***@", message)
+    """Strip credentials from any URLs embedded in a message.
+
+    Delegates to the package-wide redaction helper so the CLI and the
+    library mask credentials with exactly the same rules.
+    """
+    return redact_credentials(message)
 
 
 def stderr_line(style: str, label: str, message: str) -> None:
