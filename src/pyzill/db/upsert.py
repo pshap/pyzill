@@ -82,6 +82,18 @@ class _WriteBatch:
 # and the two timestamps are supplied by the write path itself.
 _DATA_COLUMNS: tuple[str, ...] = tuple(field for field in LISTING_FIELDS if field not in ("zpid", "price"))
 
+# The order a listings row's values are written in. It must match
+# ``LISTING_TABLE_COLUMNS``: the UPSERT names its columns, so a mismatch
+# would put every value in the wrong column. A test keeps the two in step.
+_LISTING_ROW_ORDER: tuple[str, ...] = (
+    "zpid",
+    "kind",
+    "price",
+    *_DATA_COLUMNS,
+    "first_seen_utc",
+    "last_seen_utc",
+)
+
 
 _CHUNK = 500
 
@@ -258,6 +270,24 @@ def _classify_changes(prepared: Sequence[_PreparedRow], state: _BatchState, stat
             added_in_batch.add(key)
 
 
+def _listing_values(entry: _PreparedRow, state: _BatchState) -> tuple[Any, ...]:
+    """Return one listings row's values, in :data:`_LISTING_ROW_ORDER`.
+
+    The values are looked up by column name and placed by the shared
+    order, so they cannot drift from the columns the UPSERT names.
+    """
+    values: dict[str, Any] = {
+        "zpid": entry.zpid,
+        "kind": state.kind,
+        "price": entry.price,
+        "first_seen_utc": state.seen_utc,
+        "last_seen_utc": state.seen_utc,
+    }
+    for column in _DATA_COLUMNS:
+        values[column] = entry.row.get(column)
+    return tuple(values[column] for column in _LISTING_ROW_ORDER)
+
+
 def _build_params(prepared: Sequence[_PreparedRow], state: _BatchState) -> _WriteBatch:
     """Build the parameter rows for every statement the write path issues."""
     batch = _WriteBatch()
@@ -266,16 +296,7 @@ def _build_params(prepared: Sequence[_PreparedRow], state: _BatchState) -> _Writ
         price = entry.price
         key = (entry.zpid, state.kind)
 
-        batch.listing.append(
-            (
-                entry.zpid,
-                state.kind,
-                price,
-                *(row.get(column) for column in _DATA_COLUMNS),
-                state.seen_utc,
-                state.seen_utc,
-            )
-        )
+        batch.listing.append(_listing_values(entry, state))
         # Compare against the price this batch has already staged for the
         # listing, not the pre-batch price: a batch that carries two
         # sightings of the same zpid must not leave the history disagreeing

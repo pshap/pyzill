@@ -605,6 +605,29 @@ def test_v2_database_migrates_to_v3_and_preserves_data(tmp_path: Path):
     conn.close()
 
 
+def test_backfilled_numeric_column_keeps_its_type(tmp_path: Path):
+    """A numeric column added on open must not be added as text.
+
+    A backfilled database that stored a numeric column as text would hand
+    back strings where the listing shape promises numbers.
+    """
+    db_path = tmp_path / "numeric-backfill.db"
+    conn = connect(db_path)
+    conn.execute("ALTER TABLE listings DROP COLUMN beds")
+    conn.commit()
+    conn.close()
+
+    conn = connect(db_path)
+    columns = {row[1]: row[2] for row in conn.execute("PRAGMA table_info(listings)")}
+    assert columns["beds"] == "REAL"
+
+    upsert_listings(conn, [{"zpid": 1, "price": 329900, "beds": 3.5}], seen_utc="2026-10-01T12:00:00Z")
+    listing = load_listings(conn)[0]
+    conn.close()
+
+    assert listing["beds"] == 3.5
+
+
 def test_connect_backfills_missing_columns_at_current_version(tmp_path: Path):
     """A same-version database missing a newer column gains it with the right type."""
     db_path = tmp_path / "partial.db"

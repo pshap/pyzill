@@ -31,6 +31,7 @@ Layer rules:
 - The package facade is not a dependency of the package's own modules.
 - The workflow layer never prints and never exits the process; it returns data and structured notices, and the CLI decides what to report.
 - One listing-kind type (`pyzill._kinds`), one credential redaction helper (`pyzill.proxy.redact_credentials`), one Zillow URL rule (`pyzill.urls`), one listing field list (`pyzill.normalize.Listing`, from which the database columns and the numeric fields are derived).
+- The DDL is the one authority for a column's type (`pyzill.db.schema.LISTING_COLUMN_DEFINITIONS`); the backfill adds a missing column with the definition the DDL declares, so a fresh, a migrated, and a backfilled database agree.
 - One set of scalar coercion rules (`pyzill.values`), shared by the listing shape (`pyzill.normalize`) and the property-detail shape (`pyzill.property_detail`).
 - The workflow package is split by job: `model` (the shapes), `viewport` (resolving a viewport), `extract` (pulling the real listings out of a response), `search` (running one search), `sync` (the sync and import pipelines). A workflow submodule imports its siblings by module, never through the package `__init__`.
 - The sync-run lifecycle belongs to `pyzill.db.runs`: the caller creates the run (with the query, viewport, and filters that make two runs comparable) and the write path finishes it.

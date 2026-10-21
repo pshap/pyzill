@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Fixed
+- A column added to an existing database on open was given the wrong type.
+  The backfill kept its own list of column types, and every numeric column
+  outside that list was added as text — so a backfilled database stored
+  `beds` and `zestimate` as strings and handed back strings where the
+  `Listing` shape promises numbers. The DDL is now the one authority for
+  a column's type, and the backfill adds a missing column with the
+  definition the DDL declares.
+- A backfilled `kind` column is now `NOT NULL DEFAULT 'sale'`, as the DDL
+  declares it, instead of a nullable column with no default.
+- The write path's row order is now derived from a named order that a test
+  checks against the table's column order, so the two cannot drift into
+  putting every value in the wrong column.
 - The price history and the listing price could disagree. A batch that
   carried two sightings of the same zpid compared the second one against
   the pre-batch price instead of the price the first one staged, so the
@@ -13,10 +25,12 @@ All notable changes to this project are documented here.
   announce a price increase the listing contradicted.
 - A price change was not counted when the listing held a price but the
   price history had no row for it — the case an out-of-order batch leaves
-  behind. The counter and the history now agree: either both report the
-  change or neither does.
+  behind. The counter now compares against the recorded state, falling
+  back to the price the listing's own row carries, so the counter and
+  the history always agree.
 
 ### Changed
+
 - The two largest modules are split by job. `pyzill.workflows` is now a
   package: `model` (the shapes), `viewport` (resolving a viewport),
   `extract` (pulling the real listings out of a response), `search`

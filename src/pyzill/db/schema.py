@@ -4,13 +4,18 @@ The DDL, the canonical column list, and the migration steps live here so the
 fresh-schema path and the upgrade path can never drift apart.
 """
 
-import contextlib
+import re
 import sqlite3
 from typing import Any
 
 from pyzill.normalize import LISTING_FIELDS
 
-__all__ = ["LISTING_TABLE_COLUMNS", "SCHEMA_VERSION", "ensure_schema"]
+__all__ = [
+    "LISTING_COLUMN_DEFINITIONS",
+    "LISTING_TABLE_COLUMNS",
+    "SCHEMA_VERSION",
+    "ensure_schema",
+]
 
 
 # The current schema version.
@@ -72,12 +77,24 @@ _CREATE_LISTINGS_SQL = """CREATE TABLE IF NOT EXISTS {name} (
 
 _CREATE_PRICE_HISTORY_SQL = """CREATE TABLE IF NOT EXISTS {name} (
     zpid INTEGER NOT NULL,
-  kind TEXT NOT NULL DEFAULT 'sale',
-  price INTEGER NOT NULL,
-  seen_utc TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'sale',
+    price INTEGER NOT NULL,
+    seen_utc TEXT NOT NULL,
     PRIMARY KEY (zpid, kind, seen_utc),
     FOREIGN KEY (zpid, kind) REFERENCES listings(zpid, kind) ON DELETE CASCADE
 );"""
+
+
+# Each listings column as the DDL declares it: the storage type plus any
+# constraint. The DDL is the one authority for a column's type, so the
+# backfill parses it instead of keeping a second list of its own.
+_DDL_COLUMN_RE = re.compile(r"^[ \t]{4}(\w+)[ \t]+(INTEGER|REAL|TEXT)([^,\n]*)", re.MULTILINE)
+
+LISTING_COLUMN_DEFINITIONS: dict[str, str] = {
+    name: f"{column_type}{constraint}".strip()
+    for name, column_type, constraint in _DDL_COLUMN_RE.findall(_CREATE_LISTINGS_SQL.format(name="listings"))
+}
+
 
 _CREATE_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS ix_listings_kind_zipcode ON listings(kind, zipcode)",
@@ -195,16 +212,42 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
 _MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3}
 
 
+def _addable_definition(definition: str) -> str:
+    """Return a column definition SQLite can add to an existing table.
+
+    SQLite refuses to add a NOT NULL column that has no default, so such a
+    column is added as a nullable one. The write path fills it anyway, and a
+    column that cannot be added at all is better added plain than not at all.
+    """
+    if "NOT NULL" in definition and "DEFAULT" not in definition:
+        return definition.split(" NOT NULL", 1)[0]
+    return definition
+
+
 def _backfill_listing_columns(conn: sqlite3.Connection) -> None:
-    """Add any ``LISTING_TABLE_COLUMNS`` column missing from ``listings``."""
+    """Add any ``LISTING_TABLE_COLUMNS`` column missing from ``listings``.
+
+    The column is added with the definition the DDL gives it, so a
+    backfilled database has the same column types as a fresh one.
+    """
     existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
+    if not existing_cols:
+        # There is no listings table to repair. Only the schema path
+        # creates one, so this is a database that never held listings.
+        return
     for col in LISTING_TABLE_COLUMNS:
         if col in existing_cols:
             continue
-        _integer_cols = ("days_on_zillow", "price_change", "year_built", "tax_assessed_value")
-        col_type = "REAL" if col == "lot_area_value" else ("INTEGER" if col in _integer_cols else "TEXT")
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {col_type}")
+        definition = LISTING_COLUMN_DEFINITIONS.get(col)
+        if definition is None:
+            raise sqlite3.DatabaseError(f"No column definition for {col!r} in the listings schema")
+        try:
+            conn.execute(f"ALTER TABLE listings ADD COLUMN {col} {_addable_definition(definition)}")
+        except sqlite3.OperationalError as exc:
+            # Another process may have added the column between the check
+            # above and this statement; anything else is a real fault.
+            if "duplicate column name" not in str(exc):
+                raise
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
