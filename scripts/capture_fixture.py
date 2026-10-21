@@ -19,6 +19,12 @@ Usage:
 
 Search kinds fetch a small default bbox (override with --north/--south/
 --east/--west). Detail kinds need --target (zpid/ID or Zillow URL).
+
+Each capture also writes a *shape* -- the set of key paths in the payload,
+with no values -- to tests/shapes/. A shape holds no listing data, so it is
+committed, and it is the contract the parsers are checked against: a
+renamed field shows up there as a diff rather than as a silently empty
+column.
 """
 
 import argparse
@@ -100,6 +106,31 @@ def trim(value: Any, max_results: int) -> Any:
     return value
 
 
+def shape_of(value: Any, prefix: str = "") -> set[str]:
+    """Return the set of key paths in a payload, with no values.
+
+    The shape is the contract between Zillow's payload and the parsers that
+    read it: it names every field the payload carries, and nothing about
+    what is in them. A shape is therefore safe to commit, and a change in it
+    is a change in Zillow's payload that a human has to look at.
+    """
+    paths: set[str] = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            path = f"{prefix}.{key}" if prefix else str(key)
+            paths.add(path)
+            paths |= shape_of(item, path)
+    elif isinstance(value, list):
+        for item in value:
+            paths |= shape_of(item, f"{prefix}[]")
+    return paths
+
+
+def shape_text(payload: Any) -> str:
+    """Render a payload's shape as sorted key paths, one per line."""
+    return "\n".join(sorted(shape_of(payload))) + "\n"
+
+
 def fetch_payload(kind: str, target: str | None, bbox: BBox) -> Any:
     """Fetch one live response for the given fixture kind."""
     if kind == "search-sale":
@@ -122,6 +153,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("kind", choices=sorted(_FIXTURE_NAMES), help="Which fixture to capture")
     parser.add_argument(
         "--out", type=Path, default=Path("tests/fixtures"), help="Output directory (default: tests/fixtures)"
+    )
+    parser.add_argument(
+        "--shapes",
+        type=Path,
+        default=Path("tests/shapes"),
+        help="Directory for the committed shape baselines (default: tests/shapes)",
     )
     parser.add_argument("--target", help="zpid, apartment ID, or Zillow URL (required for detail kinds)")
     parser.add_argument(
@@ -166,6 +203,14 @@ def main(argv: list[str] | None = None) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(f"Wrote {out_path}")
+
+    # The shape names the payload's fields and holds none of their values, so
+    # it is safe to commit. It is the contract the parsers are checked
+    # against, and it is what makes a change in Zillow's payload visible.
+    shape_path = args.shapes / _FIXTURE_NAMES[args.kind].replace(".json", ".txt")
+    shape_path.parent.mkdir(parents=True, exist_ok=True)
+    shape_path.write_text(shape_text(payload), encoding="utf-8")
+    print(f"Wrote {shape_path}")
     return 0
 
 

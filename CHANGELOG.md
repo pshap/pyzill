@@ -129,6 +129,22 @@ All notable changes to this project are documented here.
   usage error, and `db import` reports a payload that is not a listing
   array the way `pyzill normalize` does.
 
+### Added
+
+- A committed contract with Zillow's payload shape. The captured fixtures
+  hold real listing data and stay local, but the *shape* of a capture -- the
+  set of key paths in it, with no values -- is committed under
+  `tests/shapes/`. A test names the fields the parsers depend on and fails
+  when the recorded shape no longer carries them, so a field Zillow renames
+  is a failure to look at rather than a column that quietly fills with
+  nulls. A second test compares a fresh capture against the recorded shape
+  and reports exactly what changed. `scripts/capture_fixture.py` writes the
+  shape next to every capture.
+- A quality gate script (`scripts/check.sh`) and a CI workflow that runs
+  it on every push and pull request: the formatter, the linter, the type
+  checker, the dead-code check, and the offline test suite, failing on the
+  first gate that fails.
+
 ### Changed
 
 - The two largest modules are split by job. `pyzill.workflows` is now a

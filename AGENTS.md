@@ -3,9 +3,10 @@
 ## Workflows
 
 - Install the project with its development extra, then use the repository virtual environment for checks.
-- Before each phase checkpoint, run `pytest -q`, `ruff check src tests scripts`, `ruff format --check src tests scripts`, `mypy --strict`, and `vulture src`; do not proceed with a failing gate.
+- Before each phase checkpoint, run `scripts/check.sh` (or `scripts/check.sh --fix` to format and fix what can be fixed). It runs the formatter, the linter, `mypy --strict`, the dead-code check, and the offline test suite, and fails on the first gate that fails; do not proceed with a failing gate. CI runs the same script.
 - The default test suite is offline. Live requests are opt-in with `PYZILL_LIVE=1 pytest -m live`; never enable them for routine checks.
 - Record user-visible changes in `README.md` and `CHANGELOG.md`.
+- The captured fixtures under `tests/fixtures/` hold real listing data and stay local. The *shape* of a capture -- its key paths, with no values -- is committed under `tests/shapes/` and is the contract with Zillow's payload: `tests/test_shapes.py` fails when a field the parsers read is no longer there. Regenerate a shape with `scripts/capture_fixture.py`, and read the diff before committing it.
 
 ## Package Layers
 

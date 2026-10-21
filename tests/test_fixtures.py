@@ -102,13 +102,45 @@ class TestMainGating:
             },
         )
 
-        rc = capture.main(["search-sale", "--confirm", "--out", str(tmp_path), "--max-results", "2"])
+        rc = capture.main(
+            [
+                "search-sale",
+                "--confirm",
+                "--out",
+                str(tmp_path),
+                "--shapes",
+                str(tmp_path),
+                "--max-results",
+                "2",
+            ]
+        )
 
         assert rc == 0
         written = json.loads((tmp_path / "search_sale.json").read_text())
         assert len(written["mapResults"]) == 2
         assert written["mapResults"][0]["agentName"] == "[redacted]"
         assert written["mapResults"][0]["zpid"] == 0
+
+    def test_search_writes_the_shape_of_the_payload(
+        self, capture: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The shape names the payload's fields and holds none of their values."""
+        monkeypatch.setattr(
+            capture,
+            "fetch_payload",
+            lambda kind, target, bbox: {
+                "mapResults": [{"zpid": i, "price": 100_000 + i, "agentName": "Jane"} for i in range(10)]
+            },
+        )
+
+        rc = capture.main(["search-sale", "--confirm", "--out", str(tmp_path), "--shapes", str(tmp_path)])
+
+        assert rc == 0
+        shape = (tmp_path / "search_sale.txt").read_text()
+        assert "mapResults[].price" in shape
+        assert "mapResults[].zpid" in shape
+        assert "100_000" not in shape
+        assert "Jane" not in shape
 
     def test_failed_fetch_returns_1(self, capture: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         def boom(kind: str, target: str | None, bbox: object) -> None:

@@ -813,17 +813,34 @@ that zipcode's listings are kept.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest            # run tests
-ruff check .      # lint
-ruff format .     # format
-mypy              # type-check (strict; config in pyproject.toml)
-vulture src       # dead code (config in pyproject.toml)
+scripts/check.sh        # the whole gate: format, lint, types, dead code, tests
+scripts/check.sh --fix  # the same, but format and fix what can be fixed
 ```
+
+The gate runs the formatter, the linter, `mypy --strict`, the dead-code
+check, and the offline test suite, and fails on the first gate that fails.
+CI runs the same script on every push and pull request.
 
 The `@pytest.mark.live` smoke checks are skipped by default. To opt
 in, set `PYZILL_LIVE=1`. They hit a fixed Schenectady viewport for
 sale/rent/sold search, resolve a zpid from the sale search for the home-detail
 check, and exercise the live Nominatim geocode path once.
+
+### Keeping up with Zillow's payload
+
+Zillow's payloads are not committed: a capture holds real listing data and
+stays local. What *is* committed is the **shape** of a capture -- the set of
+key paths in it, with no values -- under `tests/shapes/`. The shapes are the
+contract between Zillow and the parsers: a field Zillow renames fails
+`tests/test_shapes.py` instead of quietly filling a column with nulls.
+
+To refresh a shape, capture a payload and commit the shape that comes with
+it:
+
+```bash
+python scripts/capture_fixture.py search-sale --confirm
+git diff tests/shapes/       # read this: it is the change in Zillow's payload
+```
 
 ## License
 
