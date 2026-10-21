@@ -4,7 +4,7 @@ import contextlib
 import sqlite3
 from pathlib import Path
 
-from pyzill.db.schema import _SCHEMA_VERSION, ensure_schema
+from pyzill.db.schema import SCHEMA_VERSION, ensure_schema
 
 __all__ = ["connect", "connect_readonly"]
 
@@ -31,10 +31,10 @@ def connect(path: Path | str) -> sqlite3.Connection:
             conn.execute("PRAGMA journal_mode = wal")
 
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    if version > _SCHEMA_VERSION:
+    if version > SCHEMA_VERSION:
         conn.close()
         raise sqlite3.DatabaseError(
-            f"Database schema version {version} is newer than supported version {_SCHEMA_VERSION}"
+            f"Database schema version {version} is newer than supported version {SCHEMA_VERSION}"
         )
 
     try:

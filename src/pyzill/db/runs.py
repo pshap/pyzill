@@ -1,31 +1,24 @@
-"""Sync-run bookkeeping: timestamps, run records, and the default DB path."""
+"""Sync-run bookkeeping: run records and the timestamps they carry.
+
+The run lifecycle lives here: :func:`begin_sync_run` creates a run and
+:func:`finish_sync_run` completes it. Callers that want a comparable run
+(complete search results) create it with the query text; the write path
+finishes the run it was given.
+"""
 
 import json
-import os
 import sqlite3
 from collections.abc import Mapping
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
+
+from pyzill.db.timestamps import utc_now
 
 __all__ = [
     "begin_sync_run",
     "comparable_run_had_results",
-    "default_db_path",
     "finish_sync_run",
     "utc_now",
 ]
-
-
-def default_db_path() -> Path:
-    """Return the XDG data directory's pyzill database path."""
-    data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
-    return data_home / "pyzill" / "pyzill.db"
-
-
-def utc_now() -> str:
-    """Return current UTC time as ISO string (fixed-width %Y-%m-%dT%H:%M:%SZ)."""
-    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def begin_sync_run(  # noqa: PLR0913

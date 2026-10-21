@@ -368,10 +368,18 @@ def upsert_listings(  # noqa: PLR0913
     queries before any writes; the write itself is one UPSERT per row. The run
     is finalized and committed in that same transaction.
 
+    The run lifecycle belongs to :mod:`pyzill.db.runs`: the caller creates the
+    run (with the query text, viewport, and filters that make two runs
+    comparable) and this function finishes it. When no run is supplied, an
+    anonymous ingest run is created here, so an import is never recorded as a
+    complete search snapshot.
+
     Args:
         conn: Database connection.
         rows: List of normalized listing dicts (must have 'zpid' field).
         seen_utc: Timestamp for this batch (default: utc_now()).
+        kind: Listing kind for the batch.
+        raw_rows: The raw rows behind ``rows``, stored as sightings.
         run_id: Existing sync_run to attach sightings to (created if omitted).
             Pass a run created with a query text for a complete search
             snapshot; the run created here records an ingest, whose absences

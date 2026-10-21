@@ -66,6 +66,20 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- The offline query engine moved out of the CLI into `pyzill.query` (pure
+  code that raises `QueryValidationError`); `pyzill.cli.query` keeps the
+  commands and the error-to-exit-code mapping, and still re-exports the
+  engine's names.
+- The database path and timestamp helpers moved into the database package
+  (`pyzill.db.paths` for the default/environment path resolution,
+  `pyzill.db.timestamps` for `utc_now` and `normalize_utc_timestamp`), and
+  the change-event derivation moved into `pyzill.db.changes`. The public
+  `pyzill.db` names are unchanged; an invalid timestamp is still a usage
+  error (exit 2) with the same message.
+- The sync-run lifecycle now has one owner: `pyzill.db.runs` creates and
+  finishes runs, the workflow layer requests a run with its query,
+  viewport, and filters, and the write path only finishes the run it was
+  given (an import still records an anonymous ingest run).
 - The CLI is now wiring only: the search, sync, and import pipelines moved
   into the new workflow layer (`pyzill.workflows`), the viewport/bbox and
   filter-range checks moved with them, and the CLI keeps the flag parsing,

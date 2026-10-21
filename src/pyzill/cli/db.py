@@ -5,7 +5,6 @@ parses the flags, calls the workflow, maps its errors to exit codes, and
 renders the result.
 """
 
-import datetime as dt
 import sqlite3
 import sys
 from collections.abc import Iterator
@@ -66,6 +65,8 @@ from pyzill.db import (
     default_db_path,
     get_changes,
     get_price_history,
+    normalize_utc_timestamp,
+    resolve_db_path,
     utc_now,
 )
 from pyzill.workflows import fetch_listings, import_rows, prepare_import, sync_to_db
@@ -80,28 +81,12 @@ class _WarningState:
 _warning_state = _WarningState()
 
 
-def resolve_db_path(explicit_path: str | None, environment_path: str | None, default_path: Path) -> Path:
-    if explicit_path:
-        return Path(explicit_path)
-    if environment_path:
-        return Path(environment_path)
-    return default_path
-
-
-def normalize_utc_timestamp(value: str, *, label: str) -> str:
-    """Parse an ISO-8601 timestamp and return the canonical ``...Z`` form.
-
-    Normalizing keeps string comparisons against stored timestamps (which are
-    fixed-width UTC) correct even when the caller passes an offset or
-    milliseconds. Invalid input is a usage error (exit 2).
-    """
+def _timestamp(value: str, *, label: str) -> str:
+    """Normalize a timestamp, reporting an invalid one as a usage error."""
     try:
-        parsed = dt.datetime.fromisoformat(value)
-    except ValueError:
-        error(f"Invalid {label} timestamp: {value}. Use ISO format like 2026-10-17T12:00:00Z", code=2)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=dt.UTC)
-    return parsed.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return normalize_utc_timestamp(value, label=label)
+    except ValueError as exc:
+        error(str(exc), code=2)
 
 
 def _resolve_db_path(db_path: str | None) -> Path:
@@ -259,7 +244,7 @@ def db_import(
         return
 
     # Parse timestamp; store it in the canonical fixed-width UTC format.
-    fetched_at = normalize_utc_timestamp(fetched_at, label="--fetched-at") if fetched_at else utc_now()
+    fetched_at = _timestamp(fetched_at, label="--fetched-at") if fetched_at else utc_now()
 
     with _db_session(db_path) as conn:
         result = import_rows(conn, rows, raw_rows, kind=as_kind(kind), seen_utc=fetched_at)
@@ -320,7 +305,7 @@ def db_changes(
     output: OutputOpt = None,
 ) -> None:
     """Report listing changes since a timestamp."""
-    since = normalize_utc_timestamp(since, label="SINCE argument")
+    since = _timestamp(since, label="SINCE argument")
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
         events = get_changes(conn, since)
     write_output(events, output_format, output)

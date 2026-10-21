@@ -11,16 +11,18 @@ for writes, :mod:`pyzill.db.queries` for reads, and :mod:`pyzill.db.stats` for
 summary figures. This package re-exports the public names.
 """
 
+from pyzill.db.changes import get_changes
 from pyzill.db.connection import connect, connect_readonly
-from pyzill.db.queries import get_changes, get_price_history, load_listings
+from pyzill.db.paths import default_db_path, resolve_db_path
+from pyzill.db.queries import get_price_history, load_listings
 from pyzill.db.runs import (
     begin_sync_run,
     comparable_run_had_results,
-    default_db_path,
     finish_sync_run,
     utc_now,
 )
 from pyzill.db.stats import DBStats, db_stats
+from pyzill.db.timestamps import normalize_utc_timestamp
 from pyzill.db.upsert import SyncStats, upsert_listings
 
 __all__ = [
@@ -36,6 +38,8 @@ __all__ = [
     "get_changes",
     "get_price_history",
     "load_listings",
+    "normalize_utc_timestamp",
+    "resolve_db_path",
     "upsert_listings",
     "utc_now",
 ]

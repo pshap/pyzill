@@ -11,7 +11,11 @@ from typing import Any
 __all__ = ["ensure_schema"]
 
 
-_SCHEMA_VERSION = 3
+# The current schema version.
+SCHEMA_VERSION = 3
+
+# Compatibility alias for the historical private name.
+_SCHEMA_VERSION = SCHEMA_VERSION
 
 # Canonical listings columns, in schema order. Shared by the schema DDL, the
 # v1->v2 migration, and upsert_listings so the three can never drift apart.
@@ -235,18 +239,18 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     lock so a concurrent first open cannot migrate the same database twice.
     """
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    if version > _SCHEMA_VERSION:
+    if version > SCHEMA_VERSION:
         raise sqlite3.DatabaseError(
-            f"Database schema version {version} is newer than supported version {_SCHEMA_VERSION}"
+            f"Database schema version {version} is newer than supported version {SCHEMA_VERSION}"
         )
-    if version < _SCHEMA_VERSION:
+    if version < SCHEMA_VERSION:
         if version == 0:
             conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
             conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
             for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
                 conn.execute(statement)
-            version = _SCHEMA_VERSION
-        while version < _SCHEMA_VERSION:
+            version = SCHEMA_VERSION
+        while version < SCHEMA_VERSION:
             migration = _MIGRATIONS.get(version)
             if migration is None:
                 raise sqlite3.DatabaseError(f"No migration available from schema version {version}")
