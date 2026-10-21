@@ -808,23 +808,11 @@ that zipcode's listings are kept.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-scripts/check.sh    # run every gate (format, lint, types, dead code, tests)
-```
-
-`scripts/check.sh` is the project's quality gate: it runs the formatter, the
-linter, the type checker, the dead-code check, and the offline test suite,
-and fails on the first gate that fails. `scripts/check.sh --fix` lets the
-formatter and the linter fix what they can. The same gate runs in CI on
-every push and pull request.
-
-The individual checks are:
-
-```bash
-ruff format --check .  # formatter
-ruff check .           # lint
-mypy                   # type-check (strict; config in pyproject.toml)
-vulture src            # dead code (config in pyproject.toml)
-pytest                 # run tests
+pytest            # run tests
+ruff check .      # lint
+ruff format .     # format
+mypy              # type-check (strict; config in pyproject.toml)
+vulture src       # dead code (config in pyproject.toml)
 ```
 
 The `@pytest.mark.live` smoke checks are skipped by default. To opt
