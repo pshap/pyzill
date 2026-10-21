@@ -34,22 +34,6 @@ All notable changes to this project are documented here.
   behind. The counter now compares against the recorded state, falling
   back to the price the listing's own row carries, so the counter and
   the history always agree.
-
-### Changed
-
-- The two largest modules are split by job. `pyzill.workflows` is now a
-  package: `model` (the shapes), `viewport` (resolving a viewport),
-  `extract` (pulling the real listings out of a response), `search`
-  (running one search), and `sync` (the sync and import pipelines). Every
-  name the module exported is still importable from `pyzill.workflows`.
-- The property-detail shape moved out of `pyzill.normalize` into
-  `pyzill.property_detail`, and the scalar coercion rules both shapes read
-  moved into `pyzill.values`. `pyzill.normalize.Listing` is still the one
-  listing field list the database columns and the numeric fields are
-  derived from, and `pyzill.parse_price` and
-  `pyzill.normalize.parse_price` still work.
-
-### Fixed
 - Normalized string fields are now always `str` or `None`, as the `Listing`
   and `PropertyDetail` shapes promise. Zillow sometimes sends a number where
   a string belongs — a numeric `addressZipcode` became the integer `12305`,
@@ -77,8 +61,48 @@ All notable changes to this project are documented here.
   checked against the `Listing` shape; the honest signature is
   `normalize_listing(listing: Any) -> Listing | None`, and callers that
   pass an object now have to narrow the result.
+- A tiled search was always recorded as truncated. Zillow's per-search
+  result cap was applied to the union of every tile, but a union larger than
+  the cap is the whole point of tiling. Every tiled run was stored with
+  `truncated = 1`, and change detection only compares runs that were not
+  truncated — so `db sync --tile` never reported a delisting or a
+  relisting, and the `suspect_empty` heuristic never fired for it. A tiled
+  run is now truncated only when a tile hit the cap and could not be
+  subdivided any further, or when the run ran out of its request budget.
+- A tile was not subdivided when only its sidebar list reached the cap.
+  Zillow caps each result list separately, so a tile whose map rows are
+  empty but whose sidebar list is full is truncated just as much.
+- Zillow's `-1` day-count sentinel reached the normalized shape. Every map
+  row in a live capture carries `daysOnZillow: -1`, and the nested copy of
+  the field won over the top-level one, so every listing was stored with
+  `days_on_zillow = -1` and `--where days_on_zillow > 0` matched nothing.
+  A negative count is now reported as unknown (`None`), and the first known
+  count wins. Zero is still a real count.
+- A lot size was reported 43,560 times too large. A detail payload states
+  its lot size in square feet (`"1,742 sqft"`), but the number was read as
+  acres and multiplied by the acre conversion, so a 1,742 sqft lot became
+  75,881,520 sqft. A value that names its unit is now trusted, and is
+  converted only when it names acres; an unlabeled number is reported as it
+  arrived, with no unit.
+- The building-card test and the normalizer disagreed about a listing's
+  zpid. The test accepted a zpid from `hdpData.homeInfo` while the
+  normalizer read only the top-level `zpid`, so a listing that carried only
+  the nested zpid was kept by one rule and dropped by the other. Both now
+  read the zpid through one function, so they cannot disagree.
 
 ### Changed
+
+- The two largest modules are split by job. `pyzill.workflows` is now a
+  package: `model` (the shapes), `viewport` (resolving a viewport),
+  `extract` (pulling the real listings out of a response), `search`
+  (running one search), and `sync` (the sync and import pipelines). Every
+  name the module exported is still importable from `pyzill.workflows`.
+- The property-detail shape moved out of `pyzill.normalize` into
+  `pyzill.property_detail`, and the scalar coercion rules both shapes read
+  moved into `pyzill.values`. `pyzill.normalize.Listing` is still the one
+  listing field list the database columns and the numeric fields are
+  derived from, and `pyzill.parse_price` and
+  `pyzill.normalize.parse_price` still work.
 - A search normalizes each row once. Choosing between `mapResults` and
   `listResults` and filtering the winner shared the same normalization
   pass, so a 500-row response was normalized 1,000 times.
@@ -86,6 +110,14 @@ All notable changes to this project are documented here.
   filters through one table, so a new filter reaches Zillow by being added
   to that table alone. A test keeps the filter and query vocabularies in
   step.
+- A search picks the sidebar's list over the map's when the two hold the
+  same number of listings. The two lists hold the same properties, but the
+  map rows carry an abbreviated property (a `daysOnZillow` stamped `-1`)
+  while the sidebar rows carry the real values, so the sidebar is now the
+  one that is kept.
+- `pyzill.values.to_quantity` splits a Zillow measurement into its number
+  and the unit it was stated in ("1,742 sqft", "0.25 acres"), so a unit
+  that arrived with the number is no longer dropped.
 
 ## [1.4.0] - 2026-10
 

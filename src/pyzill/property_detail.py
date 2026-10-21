@@ -2,16 +2,16 @@
 
 The detail page is a different payload from a search result and a different
 shape from a search listing: it carries the address in one object, the
-living area under another name, the lot size in acres, and the HOA fee with
-its own unit.  This module owns that shape; :mod:`pyzill.normalize` owns the
-search listing shape.  The scalar rules both read are in
+living area under another name, the lot size with its own unit, and the HOA
+fee with its own unit.  This module owns that shape; :mod:`pyzill.normalize`
+owns the search listing shape.  The scalar rules both read are in
 :mod:`pyzill.values`.
 """
 
 from collections.abc import Mapping
 from typing import Any, TypedDict
 
-from pyzill.values import parse_price, to_number, to_text, to_zpid
+from pyzill.values import parse_price, to_number, to_quantity, to_text, to_zpid
 
 __all__ = ["PropertyDetail", "normalize_property_detail"]
 
@@ -49,27 +49,65 @@ _ACRES_TO_SQFT = 43_560.0
 _LotSizeResult = tuple[int | float | None, str | None]
 
 
+def _canonical_unit(unit: str | None) -> str | None:
+    """Return the canonical name of a lot-size unit, or None when unknown.
+
+    Zillow spells the same unit several ways ("sqft", "sq ft", "Square
+    Feet"), and the detail payload uses a different field name for it than the
+    search payload does.  The canonical names are ``sqft`` and ``acre``;
+    anything else is reported as it was sent.
+    """
+    if not unit:
+        return None
+    text = unit.strip().lower().rstrip(".")
+    if text.startswith("acre"):
+        return "acre"
+    if "sq" in text or "square" in text:
+        return "sqft"
+    return text or None
+
+
+def _to_sqft(number: int | float, unit: str | None) -> _LotSizeResult:
+    """Convert a lot size to square feet when its unit says acres."""
+    canonical = _canonical_unit(unit)
+    if canonical == "acre":
+        return round(number * _ACRES_TO_SQFT, 2), "sqft (from acres)"
+    if canonical == "sqft":
+        return number, "sqft"
+    return number, canonical
+
+
 def _lot_size_in_sqft(property_data: Mapping[str, Any], reso_dict: Mapping[str, Any]) -> _LotSizeResult:
     """Return the lot size in square feet and the unit it was reported in.
 
-    Zillow reports ``lotSize`` in acres on home-detail payloads (with the unit
-    spelled out nearby), while ``lotAreaValue``/``lotAreaUnit`` from search
-    results are already in the stated unit. To avoid mixing units in one field,
-    everything here is normalized to square feet, matching the ``Listing``
-    convention. The original unit is returned alongside the value so callers can
-    tell an acre-derived figure from a raw square-foot one.
+    Zillow states the lot size in more than one place and in more than one
+    unit.  ``lotAreaValue`` is paired with a unit field -- ``lotAreaUnits`` on
+    a detail payload, ``lotAreaUnit`` on a search payload -- and ``lotSize``
+    sometimes carries its own unit in the string ("1,742 sqft").
+
+    A value that names its unit is trusted, and is converted to square feet
+    when it names acres.  A value with no unit anywhere is reported as it was
+    sent, with no unit: an unlabeled number is never multiplied by the acre
+    conversion, because that is how a 1,742 sqft lot becomes 75 million square
+    feet.  The unit is returned alongside the value so callers can tell an
+    acre-derived figure from a raw square-foot one.
     """
-    for container, key in ((reso_dict, "lotSize"), (property_data, "lotSize")):
-        acres = to_number(container.get(key))
-        if acres is not None:
-            return round(acres * _ACRES_TO_SQFT, 2), "sqft (from acres)"
     area = to_number(property_data.get("lotAreaValue"))
-    if area is None:
-        return None, None
-    unit = str(property_data.get("lotAreaUnit") or "").lower()
-    if unit.startswith("acre"):
-        return round(area * _ACRES_TO_SQFT, 2), "sqft (from acres)"
-    return area, unit or "sqft"
+    if area is not None:
+        unit = to_text(property_data.get("lotAreaUnits") or property_data.get("lotAreaUnit"))
+        return _to_sqft(area, unit)
+
+    for container in (reso_dict, property_data):
+        number, unit = to_quantity(container.get("lotSize"))
+        if number is not None and unit:
+            return _to_sqft(number, unit)
+
+    for container in (reso_dict, property_data):
+        number = to_number(container.get("lotSize"))
+        if number is not None:
+            return number, None
+
+    return None, None
 
 
 def normalize_property_detail(property_data: Mapping[str, Any]) -> PropertyDetail:

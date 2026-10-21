@@ -132,6 +132,42 @@ def _number_with_zero_fallback(value: Any, fallback: Any, *, preserve_zero: bool
     return None if number == 0 and not preserve_zero else number
 
 
+def _resolve_zpid(listing: Mapping[str, Any]) -> int | None:
+    """Return the listing's zpid, from the top level or from ``homeInfo``.
+
+    Zillow carries the zpid in two places: at the top level of the row and
+    under ``hdpData.homeInfo``.  A building card sometimes stamps a
+    ``buildingId`` (a lat-lng string such as ``"47.61503--122.34274"``) into
+    the top-level ``zpid``, which is not a zpid at all, so the nested copy is
+    consulted as well.  Both the building-card test and the normalizer read
+    the zpid through this one function, so they cannot disagree about which
+    rows are listings.
+    """
+    zpid = to_zpid(listing.get("zpid"))
+    if zpid is not None:
+        return zpid
+    info = get_nested_value(listing, "hdpData.homeInfo", {})
+    if isinstance(info, dict):
+        return to_zpid(info.get("zpid"))
+    return None
+
+
+def _days_on_zillow(*values: Any) -> int | None:
+    """Return how many days a listing has been on Zillow.
+
+    Zillow stamps ``-1`` when it does not know the value.  Live captures show
+    the sentinel on the nested ``hdpData.homeInfo`` copy of a search row
+    while the sidebar's copy of the same property carries the real count, so
+    a negative value is treated as unknown and the first known count wins.
+    Zero is a real count (a listing added today).
+    """
+    for value in values:
+        number = to_number(value)
+        if number is not None and number >= 0:
+            return int(number)
+    return None
+
+
 def is_building_result(listing: Any) -> bool:
     """Return True for a building-only map/list result that has no ``zpid``.
 
@@ -153,10 +189,7 @@ def is_building_result(listing: Any) -> bool:
         return False
     if not listing.get("isBuilding"):
         return False
-    if to_zpid(listing.get("zpid")) is not None:
-        return False
-    info = get_nested_value(listing, "hdpData.homeInfo", {})
-    return not (isinstance(info, dict) and to_zpid(info.get("zpid")) is not None)
+    return _resolve_zpid(listing) is None
 
 
 def normalize_listing(listing: Any) -> Listing | None:
@@ -194,11 +227,7 @@ def normalize_listing(listing: Any) -> Listing | None:
     else:
         detail_url = None
 
-    days_on_zillow_raw = (
-        info.get("daysOnZillow") if info.get("daysOnZillow") is not None else listing.get("daysOnZillow")
-    )
-    days_on_zillow_number = to_number(days_on_zillow_raw)
-    days_on_zillow = int(days_on_zillow_number) if days_on_zillow_number is not None else None
+    days_on_zillow = _days_on_zillow(info.get("daysOnZillow"), listing.get("daysOnZillow"))
 
     price_change_raw = info.get("priceChange") if info.get("priceChange") is not None else listing.get("priceChange")
     price_change_number = to_number(price_change_raw)
@@ -223,7 +252,7 @@ def normalize_listing(listing: Any) -> Listing | None:
     broker_name = listing.get("brokerName") or info.get("brokerName")
 
     return {
-        "zpid": to_zpid(listing.get("zpid")),
+        "zpid": _resolve_zpid(listing),
         "price": price,
         "price_label": to_text(listing.get("priceLabel")),
         "beds": _number_with_zero_fallback(listing.get("beds"), info.get("bedrooms"), preserve_zero=True),

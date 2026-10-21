@@ -71,7 +71,9 @@ def _select_listings(
     real listings wins. Zillow's ``mapResults`` often contain only
     building-level cards (``isBuilding``, no zpid), while ``listResults``
     hold the individual units, so returning the first key blindly would drop
-    every usable row in those areas.
+    every usable row in those areas. A tie goes to the sidebar list: the map
+    rows carry an abbreviated property (a ``daysOnZillow`` stamped ``-1``)
+    while the sidebar rows carry the same properties with their real values.
 
     Raises:
         ValueError: If the payload is neither an object nor an array.
@@ -80,7 +82,9 @@ def _select_listings(
         return data, _usable_listings(data, zipcode=zipcode)
     if isinstance(data, dict):
         candidates: list[list[Any]] = []
-        for key in ("mapResults", "listResults"):
+        # The sidebar list is listed first so it wins a tie: ``max`` keeps
+        # the first of equally sized candidates.
+        for key in ("listResults", "mapResults"):
             if key not in data:
                 continue
             value = data[key]

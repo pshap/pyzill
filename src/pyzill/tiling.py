@@ -68,6 +68,7 @@ def tiled_search(  # noqa: PLR0913 - a single bounded tiling loop with callbacks
         response = search_fn(**kwargs, bbox=tile)
         requests_used += 1
         map_results = response.get("mapResults", []) or []
+        list_results = response.get("listResults", []) or []
         for result_key in combined:
             for listing in response.get(result_key, []) or []:
                 if not isinstance(listing, Mapping):
@@ -76,7 +77,10 @@ def tiled_search(  # noqa: PLR0913 - a single bounded tiling loop with callbacks
         if on_progress is not None:
             on_progress(requests_used, len(combined["mapResults"]))
 
-        if len(map_results) >= _RESULT_CAP:
+        # A tile is cut off when *either* result list reached the cap: Zillow
+        # caps each list separately, and a tile whose map results are empty
+        # but whose sidebar list is full is truncated just as much.
+        if len(map_results) >= _RESULT_CAP or len(list_results) >= _RESULT_CAP:
             if depth < max_depth:
                 for child in tile.split():
                     queue.append((child, depth + 1))

@@ -611,7 +611,9 @@ for home in pyzill.normalize_listings(results["mapResults"]):
 
 A home-detail page is a different payload with a different shape;
 `normalize_property_detail` flattens it into a `PropertyDetail` (lot size
-in square feet with its unit, HOA fee with its unit).
+in square feet when its unit says so, HOA fee with its unit). A lot size
+whose unit is not stated anywhere is reported as it arrived, with no unit,
+rather than assumed to be acres.
 
 The output shape is available as a `TypedDict` for static analysis (no runtime
 dependency). `normalize_listing` returns `None` for an entry that is not an
@@ -798,7 +800,7 @@ that zipcode's listings are kept.
 | `normalize_listing(listing)` / `normalize_listings(listings)` | Flatten raw listings to numeric-or-`None` fields |
 | `Listing` | `TypedDict` describing the normalized listing shape |
 | `parse_price(value)` | Parse a Zillow price string/number into an int |
-| `normalize_property_detail(property_data)` | Flatten a Zillow home-detail page into a `PropertyDetail` (lot size in square feet with its unit, HOA fee with its unit) |
+| `normalize_property_detail(property_data)` | Flatten a Zillow home-detail page into a `PropertyDetail` (lot size in square feet when its unit says so, HOA fee with its unit) |
 | `ZillowBlockedError` | Raised for block/rate-limit responses (also remains a base for server errors) |
 | `ZillowNotFoundError` / `ZillowServerError` | HTTP 404 / final 5xx response |
 | `ZillowParseError` | Successful page response with unexpected or missing data |

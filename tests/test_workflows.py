@@ -313,6 +313,106 @@ class TestComparableRuns:
         assert "suspect_empty" not in [notice.code for notice in result.notices]
 
 
+class _TiledClient:
+    """A client whose first call fills Zillow's cap and whose later calls do not.
+
+    The first call is the parent tile: it comes back full, so the tiling loop
+    subdivides it. Every later call is a smaller tile whose rows are distinct,
+    so the union of the tiles is larger than the cap that a single search
+    would have been cut off at.
+    """
+
+    def __init__(self, first: int, rest: int) -> None:
+        self.first = first
+        self.rest = rest
+        self.calls = 0
+
+    def _response(self) -> dict[str, Any]:
+        self.calls += 1
+        count = self.first if self.calls == 1 else self.rest
+        start = 1_000 * self.calls
+        return {"mapResults": [_listing(start + i) for i in range(count)], "listResults": []}
+
+    def search_sale(self, **_kwargs: Any) -> dict[str, Any]:
+        return self._response()
+
+    def search_rent(self, **_kwargs: Any) -> dict[str, Any]:
+        return self._response()
+
+    def search_sold(self, **_kwargs: Any) -> dict[str, Any]:
+        return self._response()
+
+
+class TestTruncation:
+    """A run is truncated only when Zillow's cap actually cut it short."""
+
+    def test_a_single_search_at_the_cap_is_truncated(self, monkeypatch):
+        client = FakeClient({"mapResults": [{"zpid": i} for i in range(500)], "listResults": []})
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
+
+        result = fetch_listings("sale", SearchRequest(query="12305"), bbox=BBOX)
+
+        assert result.truncated is True
+
+    def test_a_single_search_below_the_cap_is_not_truncated(self, monkeypatch):
+        client = FakeClient({"mapResults": [{"zpid": 1}], "listResults": []})
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
+
+        result = fetch_listings("sale", SearchRequest(query="12305"), bbox=BBOX)
+
+        assert result.truncated is False
+
+    def test_a_tiled_run_larger_than_the_cap_is_not_truncated(self, monkeypatch):
+        """The union of the tiles is expected to exceed the per-search cap.
+
+        A tiled run is capped by its own budget, not by the union's size: a
+        union larger than the cap is the whole point of tiling.
+        """
+        client = _TiledClient(first=500, rest=200)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
+
+        request = SearchRequest(query="12305", filters=SearchFilters(tile=True))
+        result = fetch_listings("sale", request, bbox=BBOX)
+
+        assert len(result.listings) > 500
+        assert result.truncated is False
+
+    def test_a_tiled_run_that_could_not_subdivide_further_is_truncated(self, monkeypatch):
+        client = _TiledClient(first=500, rest=500)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
+
+        request = SearchRequest(query="12305", filters=SearchFilters(tile=True, max_depth=1))
+        result = fetch_listings("sale", request, bbox=BBOX)
+
+        assert result.truncated is True
+
+    def test_a_tiled_run_that_ran_out_of_its_budget_is_truncated(self, monkeypatch):
+        client = _TiledClient(first=500, rest=500)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
+
+        request = SearchRequest(query="12305", filters=SearchFilters(tile=True, max_requests=2))
+        result = fetch_listings("sale", request, bbox=BBOX)
+
+        assert result.truncated is True
+
+    def test_a_tiled_run_is_recorded_as_complete(self, monkeypatch):
+        """A complete tiled run must be comparable with the next one.
+
+        Change detection only compares runs that were not truncated, so a
+        tiled run wrongly marked truncated would never report a delisting.
+        """
+        conn = sqlite3.connect(":memory:")
+        ensure_schema(conn)
+        client = _TiledClient(first=500, rest=200)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
+
+        request = SearchRequest(query="12305", filters=SearchFilters(tile=True))
+        result = sync_to_db(conn, "sale", request, bbox=BBOX)
+
+        stored = conn.execute("SELECT truncated FROM sync_runs WHERE id = ?", (result.run_id,)).fetchone()
+        assert stored == (0,)
+
+
 def test_prepare_import_drops_rows_without_a_zpid():
     rows, _ = prepare_import([_listing(1), _listing("47.61503--122.34274")])
     assert [row["zpid"] for row in rows] == [1]

@@ -335,3 +335,37 @@ def test_normalize_listings_drops_building_cards():
     )
     assert len(out) == 1
     assert out[0]["zpid"] == 2
+
+
+class TestDaysOnZillow:
+    """Zillow stamps ``-1`` when it does not know the day's count."""
+
+    def test_negative_sentinel_is_reported_as_unknown(self):
+        out = _normalize({"zpid": "1", "hdpData": {"homeInfo": {"daysOnZillow": -1}}})
+        assert out["days_on_zillow"] is None
+
+    def test_a_known_count_wins_over_the_sentinel(self):
+        out = _normalize({"zpid": "1", "daysOnZillow": 12, "hdpData": {"homeInfo": {"daysOnZillow": -1}}})
+        assert out["days_on_zillow"] == 12
+
+    def test_zero_is_a_real_count(self):
+        out = _normalize({"zpid": "1", "hdpData": {"homeInfo": {"daysOnZillow": 0}}})
+        assert out["days_on_zillow"] == 0
+
+
+class TestZpidResolution:
+    """The building-card test and the normalizer must agree on the zpid."""
+
+    def test_a_nested_zpid_is_the_listing_identity(self):
+        raw = {"isBuilding": True, "hdpData": {"homeInfo": {"zpid": "12345"}}}
+        assert not normalize.is_building_result(raw)
+        assert _normalize(raw)["zpid"] == 12345
+
+    def test_the_top_level_zpid_wins_over_the_nested_one(self):
+        raw = {"zpid": "999", "hdpData": {"homeInfo": {"zpid": "12345"}}}
+        assert _normalize(raw)["zpid"] == 999
+
+    def test_a_building_id_is_not_a_zpid(self):
+        raw = {"isBuilding": True, "zpid": "47.61503--122.34274"}
+        assert normalize.is_building_result(raw)
+        assert _normalize(raw)["zpid"] is None

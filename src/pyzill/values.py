@@ -9,7 +9,7 @@ property-detail shape cannot drift apart on how a value is read.
 import re
 from typing import Any
 
-__all__ = ["parse_price", "to_number", "to_text", "to_zpid"]
+__all__ = ["parse_price", "to_number", "to_quantity", "to_text", "to_zpid"]
 
 
 # Anything that is not a digit, minus sign or decimal point.
@@ -17,6 +17,8 @@ _NOT_NUMBER = re.compile(r"[^0-9.\-]")
 _PRICE_SUFFIXES = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
 # Trailing rental / "starting at" adornments attached to a price.
 _RENTAL_SUFFIX = re.compile(r"(?:/month(?:ly)?|/mo|\+)\s*$", re.IGNORECASE)
+# A measurement with its unit spelled out: "1,742 sqft", "0.25 acres".
+_QUANTITY_RE = re.compile(r"^(?P<number>[-+]?[\d,]*\.?\d+)\s*(?P<unit>[A-Za-z][A-Za-z.\s]*)?$")
 
 
 def to_number(value: Any) -> int | float | None:
@@ -35,6 +37,42 @@ def to_number(value: Any) -> int | float | None:
             return None
         return int(num) if num.is_integer() else num
     return None
+
+
+def to_quantity(value: Any) -> tuple[int | float | None, str | None]:
+    """Split a Zillow measurement into its number and the unit it was stated in.
+
+    Zillow states some measurements as a number with the unit spelled out in
+    the same string ("1,742 sqft", "0.25 acres").  Splitting the two apart
+    keeps the unit from being silently dropped: a number that arrived with
+    "sqft" attached and a bare number are not the same measurement, and only
+    the first one says what it is.
+
+    A value that carries no unit (a number, or a string of digits) yields a
+    ``None`` unit.  A value that is not a measurement at all yields
+    ``(None, None)``.
+
+    Args:
+        value: Raw measurement, e.g. ``"1,742 sqft"``, ``1742``, ``None``.
+
+    Returns:
+        tuple: the number and the lower-cased unit, either of which may be
+        ``None``.
+    """
+    if value is None or isinstance(value, bool):
+        return None, None
+    if isinstance(value, (int, float)):
+        return value, None
+    if not isinstance(value, str):
+        return None, None
+    match = _QUANTITY_RE.match(value.strip())
+    if match is None:
+        return None, None
+    number = to_number(match.group("number"))
+    if number is None:
+        return None, None
+    unit = (match.group("unit") or "").strip().lower() or None
+    return number, unit
 
 
 def to_text(value: Any) -> str | None:

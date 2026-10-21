@@ -16,6 +16,7 @@ import pytest
 
 from pyzill.cli.search import extract_listings
 from pyzill.normalize import normalize_listings
+from pyzill.property_detail import normalize_property_detail
 
 FIXTURES = Path(__file__).parent / "fixtures"
 _SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "capture_fixture.py"
@@ -147,3 +148,34 @@ def test_detail_fixture_is_a_populated_object(name: str) -> None:
     payload = _load_fixture(name)
     assert isinstance(payload, dict)
     assert payload, f"{name} is empty"
+
+
+@pytest.mark.parametrize("name", ["detail_home.json"])
+def test_detail_fixture_lot_size_agrees_with_the_payload(name: str) -> None:
+    """The normalized lot size must agree with the payload's own lot area.
+
+    A detail payload states its lot size in square feet ("1,742 sqft"), so a
+    normalizer that reads the number as acres reports the lot 43,560 times
+    too large while still looking like a plausible number.
+    """
+    payload = _load_fixture(name)
+    assert isinstance(payload, dict)
+    expected = payload.get("lotAreaValue")
+    if expected is None:
+        pytest.skip(f"{name} carries no lot area")
+    detail = normalize_property_detail(payload)
+    assert detail["lot_size"] == pytest.approx(float(expected), rel=0.01)
+
+
+@pytest.mark.parametrize("name", ["search_sale.json", "search_rent.json", "search_sold.json"])
+def test_search_fixture_days_on_zillow_is_never_negative(name: str) -> None:
+    """Zillow stamps ``-1`` for an unknown day count; it must not reach the shape.
+
+    Every map row in a live capture carries the sentinel, so a normalizer
+    that passes it through stores -1 for every listing in the database.
+    """
+    payload = _load_fixture(name)
+    listings = normalize_listings(extract_listings(payload))
+    for listing in listings:
+        days = listing["days_on_zillow"]
+        assert days is None or days >= 0

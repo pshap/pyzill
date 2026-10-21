@@ -5,7 +5,7 @@ build on: it resolves the viewport, calls Zillow (optionally tiled), and
 returns the real listings of the response.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict
 from typing import Any
 
@@ -49,6 +49,17 @@ def _search_kwargs(request: SearchRequest) -> dict[str, Any]:
         kwargs[param_name] = filters[filter_name]
     kwargs.update(request.transport)
     return kwargs
+
+
+def _hit_cap(result: Mapping[str, Any]) -> bool:
+    """True when a single search's response was cut off by Zillow's result cap.
+
+    Zillow caps one search at :data:`~pyzill.tiling.RESULT_CAP` rows, so a
+    response that reaches the cap was truncated by Zillow. This applies to a
+    single search only: a tiled run's response is the union of its tiles and
+    is expected to exceed the cap.
+    """
+    return any(len(result.get(key, []) or []) >= RESULT_CAP for key in ("mapResults", "listResults"))
 
 
 def fetch_listings(  # noqa: PLR0913 - one search entry point with its inputs
@@ -112,17 +123,18 @@ def fetch_listings(  # noqa: PLR0913 - one search entry point with its inputs
             on_budget=on_budget,
             **search_kwargs,
         )
+        # A tiled result is the union of every tile, so Zillow's per-search
+        # cap cannot be applied to it: exceeding the cap is exactly what
+        # tiling is for, and a union larger than the cap is a complete run.
+        # The tiling loop reports the two ways a tiled run can be incomplete:
+        # a tile that hit the cap and could not be subdivided any further,
+        # and a run that ran out of its request budget.
+        truncated = bool(capped_at_depth or result.get("budget_exhausted"))
     else:
         result = search_fn(bbox=bbox, **search_kwargs)
+        truncated = _hit_cap(result)
         if len(result.get("mapResults", []) or []) >= RESULT_CAP:
             notices.append(Notice("result_cap", {"cap": RESULT_CAP}))
-
-    truncated = bool(
-        capped_at_depth
-        or result.get("budget_exhausted")
-        or len(result.get("mapResults", []) or []) >= RESULT_CAP
-        or len(result.get("listResults", []) or []) >= RESULT_CAP
-    )
 
     zipcode = query_zipcode(request.query)
     _, usable = _select_listings(result, wrap_single=False, zipcode=zipcode)
