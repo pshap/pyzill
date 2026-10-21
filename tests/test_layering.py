@@ -27,6 +27,7 @@ LAYERS: dict[str, int] = {
     "pyzill.utils": 0,
     # transport
     "pyzill.http": 1,
+    "pyzill.http_headers": 1,
     "pyzill.ratelimit": 1,
     # pure data
     "pyzill.normalize": 2,

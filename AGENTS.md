@@ -15,7 +15,7 @@ Imports may only point downward. The map below is enforced by
 | Layer | Modules | Holds |
 |---|---|---|
 | 0 core | `config`, `exceptions`, `_kinds`, `bbox`, `proxy`, `urls`, `utils` | constants, the exception taxonomy, the listing kinds, the URL and credential rules |
-| 1 transport | `http`, `ratelimit` | the retry loop, the headers, the request budget |
+| 1 transport | `http`, `http_headers`, `ratelimit` | the retry loop, the browser identity, the request budget |
 | 2 data | `parse`, `normalize` | page parsing and the normalized listing shape |
 | 3 request/response | `search_request`, `detail_request`, `geocode`, `tiling` | building requests, checking responses |
 | 4 client | `client` | sessions, proxy rotation, the rate limiter |

@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -16,8 +16,16 @@ import typer
 from rich.console import Console
 from rich.markup import escape
 
-from pyzill.cli.output import OutputFormat
-from pyzill.cli.output import write_output as _render_output
+from pyzill.cli.output import (
+    OutputError,
+    OutputFormat,
+    render_csv,
+    render_json,
+    render_jsonl,
+    render_table,
+    render_table_text,
+    require_list,
+)
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 from pyzill.exceptions import (
     ZillowError,
@@ -278,15 +286,37 @@ def write_output(
     columns: list[str] | None = None,
     use_db_columns: bool = False,
 ) -> None:
-    """Write output using the standalone renderer and CLI callbacks."""
-    _render_output(
-        data,
-        output_format,
-        output,
-        columns,
-        use_db_columns,
-        emit=emit,
-        error=error,
-        warn=warn,
-        console=context().stdout_console,
-    )
+    """Render the data and write it out, deciding what to report on the way.
+
+    The renderers in :mod:`pyzill.cli.output` are pure; this is where the
+    CLI decides to emit, warn, or fail.
+    """
+    if output == "-":
+        output = None
+    if output_format is OutputFormat.json:
+        emit(_render(render_json, data), output)
+        return
+    if output_format is OutputFormat.jsonl:
+        emit(_render(render_jsonl, data), output)
+        return
+    rows = _render(require_list, data, output_format)
+    if not rows:
+        warn("No listings found")
+    if output_format is OutputFormat.csv:
+        emit(render_csv(rows, columns), output)
+        return
+    if not rows:
+        return
+    table = render_table(rows, columns, use_db_columns)
+    if output:
+        emit(render_table_text(table), output)
+        return
+    context().stdout_console.print(table)
+
+
+def _render[T](renderer: Callable[..., T], *args: Any) -> T:
+    """Run a renderer, turning its failure into a CLI error."""
+    try:
+        return renderer(*args)
+    except OutputError as exc:
+        error(str(exc), code=exc.exit_code)

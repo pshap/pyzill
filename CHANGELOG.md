@@ -71,6 +71,14 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- The CLI's output renderers are pure again: `pyzill.cli.output` renders
+  data into text (or a table) and raises `OutputError` when the data does
+  not fit the format, and `pyzill.cli.console` decides to emit, warn, or
+  fail. The renderer no longer receives callbacks that could exit the
+  process, and the output, exit codes, and messages are unchanged.
+- The browser identity (headers, client hints, and the impersonation
+  profile mapping) moved out of `pyzill.http` into `pyzill.http_headers`;
+  `pyzill.http.build_headers` still works.
 - The listing field lists now have a single source: the normalized `Listing`
   shape. The database column tuple, the columns the write path fills, and
   the numeric fields of the query engine are derived from it, and a new test
