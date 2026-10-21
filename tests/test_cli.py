@@ -1261,6 +1261,38 @@ class TestDetailExploration:
 class TestDatabaseCommands:
     """Test db sub-app commands."""
 
+    def test_db_query_empty_result_emits_json_array(self, tmp_path):
+        """An empty match must still produce valid JSON on stdout."""
+        db_path = tmp_path / "empty.db"
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps([{"zpid": 1, "price": 100000}]))
+
+        assert runner.invoke(app, ["db", "import", str(input_file), "--db", str(db_path)]).exit_code == 0
+
+        result = runner.invoke(app, ["db", "query", "--db", str(db_path), "--where", "price>999999999"])
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) == []
+
+    def test_db_query_empty_result_warns_for_human_output(self, tmp_path):
+        db_path = tmp_path / "empty.db"
+        input_file = tmp_path / "input.json"
+        input_file.write_text(json.dumps([{"zpid": 1, "price": 100000}]))
+
+        assert runner.invoke(app, ["db", "import", str(input_file), "--db", str(db_path)]).exit_code == 0
+
+        result = runner.invoke(app, ["db", "query", "--db", str(db_path), "--where", "price>999999999", "-f", "table"])
+
+        assert result.exit_code == 0
+        assert "No listings matched the query" in result.stderr
+
+    def test_db_sync_rejects_empty_query(self, tmp_path):
+        """An empty query would make a search run look like a file import."""
+        result = runner.invoke(app, ["db", "sync", "sale", "", "--db", str(tmp_path / "q.db")])
+
+        assert result.exit_code == 2
+        assert "Query must not be empty" in result.stderr
+
     def test_db_sync_zip_only_stores_listings_in_requested_zip(self, fake_http, tmp_path):
         fake_http.install(
             "PUT",
@@ -1743,7 +1775,8 @@ class TestDatabaseCommands:
         assert result.exit_code == 0
         assert json.loads(result.stdout) == []
 
-    def test_db_changes_reports_price_and_delisted_events(self, tmp_path):
+    def test_db_changes_reports_price_drop_from_imports(self, tmp_path):
+        """Imports still report price changes, but never a delisting."""
         db_path = tmp_path / "changes.db"
         input_file = tmp_path / "first.json"
         input_file.write_text(json.dumps([{"zpid": 1, "price": 300000}, {"zpid": 2, "price": 200000}]))
@@ -1762,6 +1795,35 @@ class TestDatabaseCommands:
         assert result.exit_code == 0
         event_types = {(event["event"], event["zpid"]) for event in json.loads(result.stdout)}
         assert ("price_drop", 1) in event_types
+        # The second import simply did not mention zpid 2; that is not a
+        # delisting, so the two imports must not be compared with each other.
+        assert ("delisted", 2) not in event_types
+
+    def test_db_changes_reports_delisted_from_searches(self, fake_http, tmp_path):
+        """Two searches of the same query detect a listing that disappeared."""
+        db_path = tmp_path / "searches.db"
+
+        def body(*zpids: int) -> dict[str, Any]:
+            return {
+                "cat1": {
+                    "searchResults": {
+                        "mapResults": [{"zpid": zpid, "addressZipcode": "12305", "price": 300000} for zpid in zpids]
+                    }
+                }
+            }
+
+        fake_http.install("PUT", json_data=body(1, 2))
+        first = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        assert first.exit_code == 0
+
+        fake_http.install("PUT", json_data=body(1))
+        second = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        assert second.exit_code == 0
+
+        result = runner.invoke(app, ["db", "changes", "2020-01-01T00:00:00Z", "--db", str(db_path)])
+
+        assert result.exit_code == 0
+        event_types = {(event["event"], event["zpid"]) for event in json.loads(result.stdout)}
         assert ("delisted", 2) in event_types
 
     def test_db_changes_normalizes_since_with_offset(self, tmp_path):

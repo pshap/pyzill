@@ -240,8 +240,15 @@ pyzill db stats
 - New zpid → insert row and its first priced sighting
 - Existing zpid → preserve known fields when a sighting omits them; `price: null` keeps the last known price of that kind
 - Older sightings extend history but cannot overwrite current listing state; first/last-seen timestamps track the actual minimum/maximum
-- A kind change updates the current listing kind and is not reported as a price change
+- Each `(zpid, kind)` pair keeps its own row, so a sale and a sold listing for the same zpid are separate rows with separate price histories
 - Rows without zpid are skipped and counted
+
+**Delisting detection** — `db changes` reports a listing as delisted when it
+appeared in one search result set and is missing from a later one. Only search
+runs are compared with each other: two `db sync` runs of the same query,
+viewport, and filters. File imports (`db import`) are never compared, because a
+listing missing from an imported file was never observed as gone — only the
+price and status changes they bring in are reported.
 
 **Timestamps** are fixed-width UTC ISO strings (`%Y-%m-%dT%H:%M:%SZ`) — sortable lexicographically, so the existing `--where`/`--sort` machinery works on them unchanged.
 
@@ -268,6 +275,11 @@ pyzill db history 32463997
 `--format json`; it uses human-readable text on a terminal and JSON when
 stdout is redirected. `db sync` and `db import` accept `--format json` to emit
 their count summary to stdout instead of the human summary on stderr.
+
+`db query` always writes valid JSON to stdout in `--format json`, including an
+empty array (`[]`) when nothing matches, so its output can be parsed without
+special-casing an empty response. The other formats print a warning and no
+rows instead.
 
 `pyzill schema listing` prints the versioned JSON Schema for normalized
 listings.

@@ -100,6 +100,23 @@ All notable changes to this project are documented here.
   `pyzill.BBox`, or opt in with `allow_nationwide=True`.
 
 ### Fixed
+- `pyzill db changes` no longer reports a delisting when two `db import`
+  operations ingest different files. Every run used to look alike, so two
+  unrelated imports were compared as if they were two searches of the same
+  query and every listing missing from the second file was reported as
+  delisted. Only search runs — those that record the query they ran — are
+  compared with each other now; a run without a query records an ingest,
+  whose absences mean "not in this batch". Two searches of the same query
+  still detect delistings as before.
+- `pyzill db query` now writes an empty JSON array (`[]`) to stdout when
+  nothing matches, instead of printing a warning and nothing at all. The
+  output is now valid JSON for every result set, matching `pyzill query` and
+  `pyzill db history`. The warning no longer claims the database is empty
+  when only the filter matched nothing.
+- `pyzill db sync` now rejects an empty query with a usage error (exit 2)
+  instead of failing later with a confusing geocoding error. A search run
+  that records no query would be indistinguishable from a file import to
+  change detection.
 - The geocode cache is now written under an exclusive lock, so concurrent
   processes no longer lose each other's entries. The cache is a
   read-modify-write of one JSON file; without the lock, eight concurrent

@@ -403,6 +403,54 @@ def test_get_changes_skips_truncated_runs(tmp_path: Path):
     conn.close()
 
 
+def test_get_changes_ignores_import_runs(tmp_path: Path):
+    """Two imports of different files must not look like a delisting.
+
+    An import ingests a file snapshot: a listing missing from the second file
+    was never observed as gone, so change detection must not compare the two
+    runs against each other.
+    """
+    conn = connect(tmp_path / "imports.db")
+
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 100}, {"zpid": 2, "price": 200}],
+        seen_utc="2026-10-01T00:00:00Z",
+        kind="sale",
+    )
+    upsert_listings(conn, [{"zpid": 1, "price": 100}], seen_utc="2026-10-02T00:00:00Z", kind="sale")
+
+    events = get_changes(conn, "2026-10-01T12:00:00Z")
+
+    assert [event for event in events if event["event"] == "delisted"] == []
+    assert [event for event in events if event["event"] == "relisted"] == []
+    conn.close()
+
+
+def test_get_changes_compares_search_runs_with_the_same_query(tmp_path: Path):
+    """Search runs of the same query still detect delistings."""
+    conn = connect(tmp_path / "searches.db")
+    query_args: dict[str, Any] = {"kind": "sale", "query": "Albany", "bbox": {"north": 43, "south": 42}}
+
+    first = begin_sync_run(conn, **query_args, started_utc="2026-10-01T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 300000}, {"zpid": 2, "price": 200000}],
+        seen_utc="2026-10-01T00:00:00Z",
+        run_id=first,
+    )
+    finish_sync_run(conn, first, result_count=2, finished_utc="2026-10-01T00:00:00Z")
+
+    second = begin_sync_run(conn, **query_args, started_utc="2026-10-02T00:00:00Z")
+    upsert_listings(conn, [{"zpid": 1, "price": 300000}], seen_utc="2026-10-02T00:00:00Z", run_id=second)
+    finish_sync_run(conn, second, result_count=1, finished_utc="2026-10-02T00:00:00Z")
+
+    events = {(event["event"], event["zpid"]) for event in get_changes(conn, "2026-10-02T00:00:00Z")}
+
+    assert ("delisted", 2) in events
+    conn.close()
+
+
 def test_comparable_run_had_results(tmp_path: Path):
     from pyzill.db import comparable_run_had_results
 

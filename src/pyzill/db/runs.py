@@ -37,7 +37,14 @@ def begin_sync_run(  # noqa: PLR0913
     filters: Mapping[str, Any] | None = None,
     started_utc: str | None = None,
 ) -> int:
-    """Create a run record and return its database ID."""
+    """Create a run record and return its database ID.
+
+    A run with a non-empty ``query`` is a complete snapshot of that query's
+    results, so two such runs can be compared to detect delistings. A run with
+    no query text records an ingest (``db import``) or an anonymous upsert,
+    whose absences mean "not in this batch" rather than "delisted"; change
+    detection never compares those runs.
+    """
     cursor = conn.execute(
         "INSERT INTO sync_runs (started_utc, kind, query, bbox_json, filters_json) VALUES (?, ?, ?, ?, ?)",
         (

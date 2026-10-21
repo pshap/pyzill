@@ -361,6 +361,9 @@ def upsert_listings(  # noqa: PLR0913
         rows: List of normalized listing dicts (must have 'zpid' field).
         seen_utc: Timestamp for this batch (default: utc_now()).
         run_id: Existing sync_run to attach sightings to (created if omitted).
+            Pass a run created with a query text for a complete search
+            snapshot; the run created here records an ingest, whose absences
+            never count as delistings.
         truncated: Whether the source result was partial (capped search or
             exhausted request budget); stored on the run so change detection
             can skip comparing it.

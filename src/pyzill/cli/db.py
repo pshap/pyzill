@@ -240,6 +240,11 @@ def db_sync(  # noqa: PLR0913
     """Fetch listings from Zillow and upsert to local database."""
     if (is_room or is_entire_place) and kind is not ListingKind.rent:
         error("--room and --entire-place only work with 'rent' kind", code=2)
+    if not query.strip():
+        # A search run is only comparable with another run of the same query
+        # when it records one; an empty query would make the run look like a
+        # file import to change detection.
+        error("Query must not be empty", code=2)
 
     options = search_options_from_args(locals())
     metadata: dict[str, Any] = {}
@@ -382,8 +387,8 @@ def db_query(  # noqa: PLR0913
             limit=limit,
         )
 
-    if not rows:
-        warn("No listings in database")
+    if not rows and output_format is not OutputFormat.json:
+        warn("No listings matched the query")
         return
 
     write_output(rows, output_format, output, columns=selected, use_db_columns=True)

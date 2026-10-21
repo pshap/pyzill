@@ -120,9 +120,13 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
             }
         )
 
+    # Only search runs are compared. A run with no query text is an ingest of
+    # a file snapshot (``db import``) or an anonymous upsert, where an absence
+    # means "not in this batch", not "delisted". Comparing two of those would
+    # report every listing missing from the second batch as delisted.
     run_rows = conn.execute(
         "SELECT id, started_utc, finished_utc, kind, query, bbox_json, filters_json FROM sync_runs "
-        "WHERE finished_utc IS NOT NULL AND truncated = 0 ORDER BY started_utc, id"
+        "WHERE query != '' AND finished_utc IS NOT NULL AND truncated = 0 ORDER BY started_utc, id"
     ).fetchall()
     comparable: dict[tuple[str, str, str | None, str | None], list[tuple[int, str]]] = {}
     for run_id, started_utc, _, kind, query, bbox_json, filters_json in run_rows:
