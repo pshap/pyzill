@@ -5,6 +5,12 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- `pyzill.responses` holds the two host-agnostic response helpers
+  (`json_body` and `raise_for_status`), typed against a small
+  `ResponseLike` protocol so they work with any response object and need no
+  `type: ignore`. `pyzill.http` re-exports both, so `http.json_body` keeps
+  working, and the geocoder now uses them instead of borrowing the Zillow
+  transport.
 - A test that enforces the package's layer map (`tests/test_layering.py`):
   modules may only import modules in their own layer or a lower one, the
   package facade may not be a dependency of the package's own modules, and

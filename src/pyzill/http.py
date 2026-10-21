@@ -25,6 +25,7 @@ from pyzill.exceptions import (
 )
 from pyzill.http_headers import JSON_ACCEPT, build_headers
 from pyzill.ratelimit import RateLimiter, default_limiter
+from pyzill.responses import json_body, raise_for_status
 from pyzill.utils import resolve_proxy
 
 __all__ = [
@@ -38,7 +39,9 @@ __all__ = [
     "build_request_options",
     "default_session",
     "get_page",
+    "json_body",
     "put_json",
+    "raise_for_status",
     "request",
 ]
 
@@ -117,16 +120,6 @@ def default_session() -> Any:
     pass one in; this is the session for direct, one-off requests.
     """
     return Session()
-
-
-def json_body(response: Response) -> Any:
-    """Parse a response body as JSON, the single place ``type: ignore`` lives."""
-    return response.json()  # type: ignore[no-untyped-call]
-
-
-def raise_for_status(response: Response) -> None:
-    """Raise an HTTPError for unsuccessful responses (used by geocode)."""
-    response.raise_for_status()  # type: ignore[no-untyped-call]
 
 
 def _looks_blocked(response: Response) -> bool:

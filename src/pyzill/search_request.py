@@ -13,6 +13,7 @@ from pyzill import http
 from pyzill._kinds import Kind
 from pyzill.bbox import CONTINENTAL_US, BBox
 from pyzill.exceptions import ZillowParseError
+from pyzill.responses import json_body
 
 __all__ = [
     "SEARCH_URL",
@@ -269,7 +270,7 @@ def search_request(params: SearchQuery, options: http.RequestOptions) -> dict[st
     }
     response = http.put_json(SEARCH_URL, input_data, options=options)
     try:
-        data = http.json_body(response)
+        data = json_body(response)
     except ValueError as exc:
         raise ZillowParseError("Zillow search response was not valid JSON") from exc
     if not isinstance(data, dict):

@@ -29,6 +29,7 @@ LAYERS: dict[str, int] = {
     "pyzill.http": 1,
     "pyzill.http_headers": 1,
     "pyzill.ratelimit": 1,
+    "pyzill.responses": 1,
     # pure data
     "pyzill.normalize": 2,
     "pyzill.parse": 2,

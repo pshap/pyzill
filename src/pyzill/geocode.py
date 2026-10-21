@@ -28,9 +28,9 @@ from typing import Any
 
 from curl_cffi import requests
 
-from pyzill import http
 from pyzill.bbox import BBox
 from pyzill.ratelimit import RateLimiter
+from pyzill.responses import json_body, raise_for_status
 from pyzill.utils import resolve_proxy
 
 try:  # pragma: no cover - Windows has no fcntl
@@ -286,8 +286,8 @@ def _fetch_hits(place: str, proxy_url: str | None) -> list[Any]:
             proxies={"http": resolved_proxy, "https": resolved_proxy} if resolved_proxy else None,
             timeout=_TIMEOUT,
         )
-        http.raise_for_status(response)
-        hits = http.json_body(response)
+        raise_for_status(response)
+        hits = json_body(response)
     except (OSError, ValueError) as exc:
         # Network failures, HTTP errors, and unparseable bodies all mean the
         # same thing to the caller: the place could not be resolved.
