@@ -3,7 +3,7 @@
 ## Workflows
 
 - Install the project with its development extra, then use the repository virtual environment for checks.
-- Before each phase checkpoint, run `pytest -q`, `ruff check src tests scripts`, and `mypy --strict`; do not proceed with a failing gate.
+- Before each phase checkpoint, run `pytest -q`, `ruff check src tests scripts`, `mypy --strict`, and `vulture src`; do not proceed with a failing gate.
 - The default test suite is offline. Live requests are opt-in with `PYZILL_LIVE=1 pytest -m live`; never enable them for routine checks.
 - Record user-visible changes in `README.md` and `CHANGELOG.md`.
 

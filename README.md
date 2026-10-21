@@ -791,6 +791,7 @@ pytest            # run tests
 ruff check .      # lint
 ruff format .     # format
 mypy              # type-check (strict; config in pyproject.toml)
+vulture src       # dead code (config in pyproject.toml)
 ```
 
 The `@pytest.mark.live` smoke checks are skipped by default. To opt
