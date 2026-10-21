@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- The price history and the listing price could disagree. A batch that
+  carried two sightings of the same zpid compared the second one against
+  the pre-batch price instead of the price the first one staged, so the
+  newest history row could name a price the listing did not hold. The
+  change report derives its price moves from that history, so it could
+  announce a price increase the listing contradicted.
+- A price change was not counted when the listing held a price but the
+  price history had no row for it — the case an out-of-order batch leaves
+  behind. The counter and the history now agree: either both report the
+  change or neither does.
+
 ### Changed
 - The two largest modules are split by job. `pyzill.workflows` is now a
   package: `model` (the shapes), `viewport` (resolving a viewport),

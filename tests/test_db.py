@@ -754,6 +754,76 @@ def test_price_change_counting_rules(tmp_path: Path):
     conn.close()
 
 
+def test_price_history_matches_the_listing_when_a_batch_carries_two_sightings(tmp_path: Path):
+    """A batch with two sightings of one zpid must not leave the history disagreeing.
+
+    The second sighting is compared against the price the first one staged,
+    so the newest history row is the price the listing actually ends up
+    holding -- otherwise the change report would announce a price move
+    that the listing contradicts.
+    """
+    conn = connect(tmp_path / "staged.db")
+
+    upsert_listings(conn, [{"zpid": 1, "price": 100}], seen_utc="2026-10-01T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 200}, {"zpid": 1, "price": 100}],
+        seen_utc="2026-10-02T00:00:00Z",
+    )
+
+    listing_price = conn.execute("SELECT price FROM listings WHERE zpid = 1").fetchone()[0]
+    newest_history = conn.execute(
+        "SELECT price FROM price_history WHERE zpid = 1 ORDER BY seen_utc DESC LIMIT 1"
+    ).fetchone()[0]
+
+    assert listing_price == 100
+    assert newest_history == listing_price
+
+    conn.close()
+
+
+def test_price_change_counted_when_the_listing_has_a_price_but_no_history(tmp_path: Path):
+    """A change is counted against the recorded state, even without a history row.
+
+    The listing holds a price but the history has no row for it (an
+    out-of-order batch, or a database whose history predates the row).
+    The counter and the history must agree: either both report the
+    change or neither does.
+    """
+    conn = connect(tmp_path / "no-history.db")
+
+    upsert_listings(conn, [{"zpid": 1, "price": 100}], seen_utc="2026-10-01T00:00:00Z")
+    conn.execute("DELETE FROM price_history")
+    conn.commit()
+
+    stats = upsert_listings(conn, [{"zpid": 1, "price": 200}], seen_utc="2026-10-02T00:00:00Z")
+
+    history = [row["price"] for row in get_price_history(conn, 1)]
+    assert stats.price_changes == 1
+    assert history[-1] == 200
+
+    conn.close()
+
+
+def test_change_report_agrees_with_the_listing_price(tmp_path: Path):
+    """The reported price moves must match the prices the listing holds."""
+    conn = connect(tmp_path / "agrees.db")
+
+    upsert_listings(conn, [{"zpid": 1, "price": 100}], seen_utc="2026-10-01T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 200}, {"zpid": 1, "price": 100}],
+        seen_utc="2026-10-02T00:00:00Z",
+    )
+
+    listing_price = conn.execute("SELECT price FROM listings WHERE zpid = 1").fetchone()[0]
+    price_events = [event for event in get_changes(conn, "2026-10-01T00:00:00Z") if event["event"].startswith("price_")]
+
+    assert not price_events or price_events[-1]["price"] == listing_price
+
+    conn.close()
+
+
 def test_upsert_skip_no_zpid(tmp_path: Path):
     """Test upsert_listings skips rows without zpid."""
     db_path = tmp_path / "test.db"

@@ -59,9 +59,13 @@ class _BatchState:
     kind: str
     run_id: int
     seen_utc: str
-    existing: Mapping[tuple[int, str], Any]
+    existing: Mapping[tuple[int, str], int | None]
     prior_prices: Mapping[tuple[int, str], int | None]
     prior_statuses: dict[int, str]
+    # The price each listing has been seen at so far in this batch, so a
+    # second sighting of the same zpid is compared against the price the
+    # first one staged rather than against the stale pre-batch price.
+    staged_prices: dict[tuple[int, str], int | None]
 
 
 @dataclass
@@ -74,8 +78,8 @@ class _WriteBatch:
     status: list[tuple[int, str, str, str]] = field(default_factory=list)
 
 
-# The listing fields the write path fills. ``zpid``, ``kind``, and the two
-# timestamps are supplied by the write path itself.
+# The listing fields the write path fills. ``zpid``, ``kind``, ``price``,
+# and the two timestamps are supplied by the write path itself.
 _DATA_COLUMNS: tuple[str, ...] = tuple(field for field in LISTING_FIELDS if field not in ("zpid", "price"))
 
 
@@ -119,7 +123,7 @@ _LISTING_UPSERT_SQL = _listing_upsert_sql()
 
 def _prefetch(
     conn: sqlite3.Connection, zpids: list[int], kind: str, seen_utc: str
-) -> tuple[dict[tuple[int, str], Any], dict[tuple[int, str], int | None]]:
+) -> tuple[dict[tuple[int, str], int | None], dict[tuple[int, str], int | None]]:
     """Read pre-batch listing state and prior prices for the batch zpids.
 
     Returns existing: (zpid, kind) -> current price for listings that already
@@ -127,7 +131,7 @@ def _prefetch(
     entry with the batch timestamp wins over the latest strictly-earlier one;
     missing when none exists).
     """
-    existing: dict[tuple[int, str], Any] = {}
+    existing: dict[tuple[int, str], int | None] = {}
     prior_prices: dict[tuple[int, str], int | None] = {}
     for start in range(0, len(zpids), _CHUNK):
         chunk = zpids[start : start + _CHUNK]
@@ -242,9 +246,11 @@ def _classify_changes(prepared: Sequence[_PreparedRow], state: _BatchState, stat
                 continue
             old_price = state.existing[key]
             prior_price = state.prior_prices.get(key)
-            if entry.price is not None and (
-                (prior_price is not None and prior_price != entry.price) or (prior_price is None and old_price is None)
-            ):
+            # The recorded state is the last price the history knows about. A
+            # listing that holds a price but has no history row falls back to
+            # the price its own row carries, so a change is still counted.
+            baseline = prior_price if prior_price is not None else old_price
+            if entry.price is not None and entry.price != baseline:
                 price_changed_in_batch.add(key)
                 stats.price_changes += 1
         elif key not in added_in_batch:
@@ -270,8 +276,15 @@ def _build_params(prepared: Sequence[_PreparedRow], state: _BatchState) -> _Writ
                 state.seen_utc,
             )
         )
-        if price is not None and state.prior_prices.get(key) != price:
+        # Compare against the price this batch has already staged for the
+        # listing, not the pre-batch price: a batch that carries two
+        # sightings of the same zpid must not leave the history disagreeing
+        # with the price the listing ends up holding.
+        held = state.staged_prices.get(key, state.prior_prices.get(key))
+        if price is not None and price != held:
             batch.history.append((entry.zpid, state.kind, price, state.seen_utc))
+        if price is not None:
+            state.staged_prices[key] = price
         status = row.get("status")
         status_type = row.get("status_type")
         batch.sighting.append(
@@ -385,6 +398,7 @@ def upsert_listings(  # noqa: PLR0913
         existing=existing,
         prior_prices=prior_prices,
         prior_statuses=prior_statuses,
+        staged_prices={},
     )
     _classify_changes(prepared, state, stats)
     batch = _build_params(prepared, state)
