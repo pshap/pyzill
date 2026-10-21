@@ -16,9 +16,6 @@ from pyzill.db.schema import ensure_schema
 from pyzill.normalize import normalize_listing
 from pyzill.search_request import SearchQuery
 from pyzill.workflows import (
-    _BUDGET_FILTERS,
-    _FILTER_PARAMS,
-    _VIEWPORT_FILTERS,
     SearchFilters,
     SearchRequest,
     extract_listings,
@@ -28,6 +25,7 @@ from pyzill.workflows import (
     sync_to_db,
     usable_row_count,
 )
+from pyzill.workflows.model import BUDGET_FILTERS, FILTER_PARAMS, VIEWPORT_FILTERS
 
 BBOX = BBox(north=43.0, south=42.0, east=-73.0, west=-74.0)
 
@@ -61,11 +59,11 @@ class TestFilterVocabulary:
 
     def test_every_filter_is_classified(self):
         """A new filter must be a query filter, a viewport bound, or a tiling knob."""
-        classified = set(_FILTER_PARAMS) | set(_VIEWPORT_FILTERS) | set(_BUDGET_FILTERS)
+        classified = set(FILTER_PARAMS) | set(VIEWPORT_FILTERS) | set(BUDGET_FILTERS)
         assert classified == set(SearchFilters.__annotations__)
 
     def test_every_query_param_is_a_real_search_field(self):
-        assert set(_FILTER_PARAMS.values()) <= set(SearchQuery.__annotations__)
+        assert set(FILTER_PARAMS.values()) <= set(SearchQuery.__annotations__)
 
     def test_filters_reach_the_search_request(self, monkeypatch):
         client = FakeClient({"mapResults": [], "listResults": []})
@@ -82,7 +80,7 @@ class TestFilterVocabulary:
             ),
             transport={"proxy_url": "http://proxy:8080"},
         )
-        monkeypatch.setattr("pyzill.workflows.get_default_client", lambda: client)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         fetch_listings("sale", request, bbox=BBOX)
 
@@ -102,7 +100,7 @@ class TestFilterVocabulary:
             query="12305",
             filters=SearchFilters(north=43.0, south=42.0, east=-73.0, west=-74.0),
         )
-        monkeypatch.setattr("pyzill.workflows.get_default_client", lambda: client)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         fetch_listings("sale", request, bbox=BBOX)
 
@@ -126,7 +124,7 @@ class TestUsableListings:
                 "listResults": [],
             }
         )
-        monkeypatch.setattr("pyzill.workflows.get_default_client", lambda: client)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         result = fetch_listings("sale", SearchRequest(query="12305"), bbox=BBOX)
 
@@ -137,7 +135,7 @@ class TestUsableListings:
         """The rule that picks the result list is the rule that filters it."""
         rows = [_listing(1), _listing("47.61503--122.34274"), {"isBuilding": True}]
         client = FakeClient({"mapResults": rows, "listResults": []})
-        monkeypatch.setattr("pyzill.workflows.get_default_client", lambda: client)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         result = fetch_listings("sale", SearchRequest(query="12305"), bbox=BBOX)
 
@@ -148,7 +146,7 @@ class TestUsableListings:
         client = FakeClient(
             {"mapResults": [_listing(1), _listing(2)], "listResults": [_listing(3)]}
         )
-        monkeypatch.setattr("pyzill.workflows.get_default_client", lambda: client)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         calls: list[Any] = []
         original = normalize_listing
@@ -157,7 +155,7 @@ class TestUsableListings:
             calls.append(listing)
             return original(listing)
 
-        monkeypatch.setattr("pyzill.workflows.normalize_listing", counting_normalize)
+        monkeypatch.setattr("pyzill.workflows.extract.normalize_listing", counting_normalize)
 
         fetch_listings("sale", SearchRequest(query="12305"), bbox=BBOX)
 
@@ -168,7 +166,7 @@ class TestUsableListings:
         client = FakeClient(
             {"mapResults": [{"zpid": 1, "price": 100, "addressZipcode": 12305}], "listResults": []}
         )
-        monkeypatch.setattr("pyzill.workflows.get_default_client", lambda: client)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         result = fetch_listings("sale", SearchRequest(query="12305"), bbox=BBOX)
 
@@ -242,7 +240,7 @@ class TestComparableRuns:
         conn = sqlite3.connect(":memory:")
         ensure_schema(conn)
         client = FakeClient({"mapResults": [], "listResults": []})
-        monkeypatch.setattr("pyzill.workflows.get_default_client", lambda: client)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         # A prior run of the same search, recorded with the old filter shape.
         self._seed_run(
@@ -270,7 +268,7 @@ class TestComparableRuns:
         conn = sqlite3.connect(":memory:")
         ensure_schema(conn)
         client = FakeClient({"mapResults": [], "listResults": []})
-        monkeypatch.setattr("pyzill.workflows.get_default_client", lambda: client)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         request = SearchRequest(
             query="12305",
@@ -295,7 +293,7 @@ class TestComparableRuns:
         conn = sqlite3.connect(":memory:")
         ensure_schema(conn)
         client = FakeClient({"mapResults": [], "listResults": []})
-        monkeypatch.setattr("pyzill.workflows.get_default_client", lambda: client)
+        monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         self._seed_run(
             conn,
@@ -333,7 +331,7 @@ def test_prepare_import_keeps_a_row_whose_zpid_the_write_path_can_coerce():
 @pytest.mark.parametrize("kind", ["sale", "rent", "sold"])
 def test_fetch_listings_returns_the_listings_of_a_response(kind, monkeypatch):
     client = FakeClient({"mapResults": [_listing(1)], "listResults": []})
-    monkeypatch.setattr("pyzill.workflows.get_default_client", lambda: client)
+    monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
     result = fetch_listings(kind, SearchRequest(query="12305"), bbox=BBOX)
 

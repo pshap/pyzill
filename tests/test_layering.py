@@ -33,6 +33,8 @@ LAYERS: dict[str, int] = {
     # pure data
     "pyzill.normalize": 2,
     "pyzill.parse": 2,
+    "pyzill.property_detail": 2,
+    "pyzill.values": 2,
     # request/response
     "pyzill.detail_request": 3,
     "pyzill.geocode": 3,

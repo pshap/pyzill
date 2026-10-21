@@ -41,16 +41,15 @@ from pyzill.exceptions import (
 from pyzill.geocode import GeoResult
 from pyzill.normalize import (
     Listing,
-    PropertyDetail,
     is_building_result,
     normalize_listing,
     normalize_listings,
-    normalize_property_detail,
-    parse_price,
 )
+from pyzill.property_detail import PropertyDetail, normalize_property_detail
 from pyzill.ratelimit import get_min_interval, set_min_interval
 from pyzill.tiling import split_bbox, tiled_search
 from pyzill.utils import parse_proxy, resolve_proxy
+from pyzill.values import parse_price
 
 __all__ = [
     "CONTINENTAL_US",

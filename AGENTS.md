@@ -16,12 +16,12 @@ Imports may only point downward. The map below is enforced by
 |---|---|---|
 | 0 core | `config`, `exceptions`, `_kinds`, `bbox`, `proxy`, `urls`, `utils` | constants, the exception taxonomy, the listing kinds, the URL and credential rules |
 | 1 transport | `http`, `http_headers`, `ratelimit`, `responses` | the retry loop, the browser identity, the request budget, the generic response helpers |
-| 2 data | `parse`, `normalize` | page parsing and the normalized listing shape |
+| 2 data | `parse`, `normalize`, `property_detail`, `values` | page parsing, the normalized listing and property-detail shapes, the shared scalar coercion rules |
 | 3 request/response | `search_request`, `detail_request`, `geocode`, `tiling` | building requests, checking responses |
 | 4 client | `client` | sessions, proxy rotation, the rate limiter |
 | 5 convenience API | `api` (re-exported by `search` and `details`) | the module-level entry points over the default client |
 | 6 database | `db/*`, `query` | the schema, the write path, the query engine |
-| 7 services | `workflows` | the search/sync/import workflows |
+| 7 services | `workflows/*` | the search/sync/import workflows |
 | 8 CLI | `cli/*` | Typer wiring: flags to request objects, exceptions to exit codes, results to output |
 | 9 facade | `pyzill/__init__.py` | the public names; only the outside world may import it |
 
@@ -31,6 +31,8 @@ Layer rules:
 - The package facade is not a dependency of the package's own modules.
 - The workflow layer never prints and never exits the process; it returns data and structured notices, and the CLI decides what to report.
 - One listing-kind type (`pyzill._kinds`), one credential redaction helper (`pyzill.proxy.redact_credentials`), one Zillow URL rule (`pyzill.urls`), one listing field list (`pyzill.normalize.Listing`, from which the database columns and the numeric fields are derived).
+- One set of scalar coercion rules (`pyzill.values`), shared by the listing shape (`pyzill.normalize`) and the property-detail shape (`pyzill.property_detail`).
+- The workflow package is split by job: `model` (the shapes), `viewport` (resolving a viewport), `extract` (pulling the real listings out of a response), `search` (running one search), `sync` (the sync and import pipelines). A workflow submodule imports its siblings by module, never through the package `__init__`.
 - The sync-run lifecycle belongs to `pyzill.db.runs`: the caller creates the run (with the query, viewport, and filters that make two runs comparable) and the write path finishes it.
 
 ## Request Budget and Rate Limits

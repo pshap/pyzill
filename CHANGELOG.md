@@ -4,6 +4,19 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+- The two largest modules are split by job. `pyzill.workflows` is now a
+  package: `model` (the shapes), `viewport` (resolving a viewport),
+  `extract` (pulling the real listings out of a response), `search`
+  (running one search), and `sync` (the sync and import pipelines). Every
+  name the module exported is still importable from `pyzill.workflows`.
+- The property-detail shape moved out of `pyzill.normalize` into
+  `pyzill.property_detail`, and the scalar coercion rules both shapes read
+  moved into `pyzill.values`. `pyzill.normalize.Listing` is still the one
+  listing field list the database columns and the numeric fields are
+  derived from, and `pyzill.parse_price` and
+  `pyzill.normalize.parse_price` still work.
+
 ### Fixed
 - Normalized string fields are now always `str` or `None`, as the `Listing`
   and `PropertyDetail` shapes promise. Zillow sometimes sends a number where

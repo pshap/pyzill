@@ -15,7 +15,8 @@ from typing import Any, NamedTuple
 from pyzill._kinds import KINDS, Kind
 from pyzill.db.runs import begin_sync_run, finish_sync_run, utc_now
 from pyzill.db.schema import LISTING_TABLE_COLUMNS
-from pyzill.normalize import LISTING_FIELDS, parse_price
+from pyzill.normalize import LISTING_FIELDS
+from pyzill.values import parse_price
 
 __all__ = ["SyncStats", "upsert_listings"]
 

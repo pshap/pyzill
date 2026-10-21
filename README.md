@@ -611,6 +611,10 @@ for home in pyzill.normalize_listings(results["mapResults"]):
 `latitude`, `longitude`, `home_type`, `status`, `status_type`, `detail_url`
 (absolute), `image_url`, `zestimate`, `rent_zestimate`.
 
+A home-detail page is a different payload with a different shape;
+`normalize_property_detail` flattens it into a `PropertyDetail` (lot size
+in square feet with its unit, HOA fee with its unit).
+
 The output shape is available as a `TypedDict` for static analysis (no runtime
 dependency). `normalize_listing` returns `None` for an entry that is not an
 object, so narrow the result before using it:
@@ -739,6 +743,10 @@ data = pyzill.get_from_apartment_url("https://www.zillow.com/apartments/kissimme
 library user can do the same things without going through the command
 line. Nothing in this layer prints or exits the process: it returns data
 and structured notices, and the caller decides what to report.
+
+The names above are all importable from `pyzill.workflows`; the package is
+split by job underneath (`model`, `viewport`, `extract`, `search`, `sync`)
+for anyone who wants to import a single piece.
 
 Search and normalize in one call:
 
