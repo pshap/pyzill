@@ -8,10 +8,11 @@ import sys
 from typing import Annotated
 
 import typer
-from typer._click.exceptions import ClickException, UsageError
+from typer._click.exceptions import ClickException
 
 from pyzill.cli.console import (
     Context,
+    context_installed,
     error,
     set_context,
     version_callback,
@@ -147,11 +148,18 @@ def main_entry() -> None:
     try:
         exit_code = app(standalone_mode=False)
     except ClickException as exc:
-        root = exc.ctx if isinstance(exc, UsageError) else None
-        while root is not None and root.parent is not None:
-            root = root.parent
-        json_errors = root.params.get("json_errors") if root is not None else None
-        set_context(Context(json_errors=json_errors if json_errors is not None else not sys.stdout.isatty()))
+        if not context_installed():
+            # The root callback never ran, so its --json-errors choice is
+            # unknown: take it from the context the exception carries.
+            # When the callback did run, the installed context already holds
+            # the user's choice, and overwriting it here would discard it.
+            # Only a UsageError carries a context; a plain ClickException
+            # has no `ctx` attribute at all.
+            root = getattr(exc, "ctx", None)
+            while root is not None and root.parent is not None:
+                root = root.parent
+            json_errors = root.params.get("json_errors") if root is not None else None
+            set_context(Context(json_errors=json_errors if json_errors is not None else not sys.stdout.isatty()))
         try:
             error(exc.format_message(), code=exc.exit_code)
         except typer.Exit as usage_exit:

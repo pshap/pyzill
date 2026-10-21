@@ -7,10 +7,11 @@ from typing import Any, ClassVar
 
 import pytest
 import typer
+from typer._click.exceptions import ClickException
 from typer.testing import CliRunner
 
 from pyzill.bbox import BBox
-from pyzill.cli import app
+from pyzill.cli import app, main_entry
 from pyzill.cli.search import extract_listings
 from pyzill.geocode import GeoResult
 
@@ -938,6 +939,78 @@ class TestModuleInvocation:
 
         assert result.returncode == 2
         assert result.stderr.startswith("Error: Invalid value for '--max-requests'")
+
+
+class TestMainEntry:
+    """The console-script entry point: exit codes and the error format.
+
+    The subprocess tests cover the parser errors; these cover the entry
+    point in-process, including the errors a command raises itself.
+    """
+
+    @pytest.fixture
+    def boom_command(self):
+        """A command that raises a plain ClickException, not a UsageError."""
+
+        @app.command("boom")
+        def boom() -> None:
+            raise ClickException("something went wrong")
+
+        try:
+            yield
+        finally:
+            for command in list(app.registered_commands):
+                if command.name == "boom":
+                    app.registered_commands.remove(command)
+
+    def _run(self, monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> int:
+        """Run the entry point with the given arguments and return its exit code."""
+        monkeypatch.setattr(sys, "argv", ["pyzill", *argv])
+        with pytest.raises(SystemExit) as exit_info:
+            main_entry()
+        code = exit_info.value.code
+        assert isinstance(code, int)
+        return code
+
+    def test_a_usage_error_exits_with_code_2(self, monkeypatch, capsys):
+        code = self._run(monkeypatch, ["--json-errors", "search", "sale"])
+
+        assert code == 2
+        assert json.loads(capsys.readouterr().err)["error"]["code"] == "usage"
+
+    def test_no_json_errors_emits_a_plain_message(self, monkeypatch, capsys):
+        code = self._run(monkeypatch, ["--no-json-errors", "search", "sale"])
+
+        assert code == 2
+        captured = capsys.readouterr().err
+        assert captured.startswith("Error:")
+        assert "{" not in captured
+
+    @pytest.mark.usefixtures("boom_command")
+    def test_a_command_error_honors_no_json_errors(self, monkeypatch, capsys):
+        """An error a command raises itself must honor the flag too.
+
+        Only a UsageError carries a context, so the error format cannot be
+        derived from the exception here; the context the root callback
+        installed is what says which format the user asked for.
+        """
+        code = self._run(monkeypatch, ["--no-json-errors", "boom"])
+
+        assert code == 1
+        captured = capsys.readouterr().err
+        assert captured.startswith("Error:")
+        assert "{" not in captured
+
+    @pytest.mark.usefixtures("boom_command")
+    def test_a_command_error_is_json_when_requested(self, monkeypatch, capsys):
+        code = self._run(monkeypatch, ["--json-errors", "boom"])
+
+        assert code == 1
+        assert json.loads(capsys.readouterr().err)["error"] == {
+            "code": "other",
+            "message": "something went wrong",
+            "retryable": False,
+        }
 
 
 class TestGeocodeIntegration:

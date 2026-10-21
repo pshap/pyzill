@@ -5,6 +5,12 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Fixed
+- `--json-errors` / `--no-json-errors` was ignored for an error the CLI
+  raised itself rather than a parser error. The entry point rebuilt the
+  error format from the exception, and only a `UsageError` carries a
+  context to read the flag from. The context the root callback installed
+  is now kept, and the exception is only consulted when the callback
+  never ran.
 - A column added to an existing database on open was given the wrong type.
   The backfill kept its own list of column types, and every numeric column
   outside that list was added as text — so a backfilled database stored

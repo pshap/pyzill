@@ -87,6 +87,16 @@ def set_context(context: Context) -> None:
     _active_context.set(context)
 
 
+def context_installed() -> bool:
+    """True when a CLI command has installed its context.
+
+    The root callback installs it, so this is False only when the error
+    happened before the callback ran -- while the root's own parameters
+    were being parsed, for instance.
+    """
+    return _active_context.get() is not None
+
+
 def context() -> Context:
     """Return the active context, or a default one outside a command."""
     return _active_context.get() or Context()
