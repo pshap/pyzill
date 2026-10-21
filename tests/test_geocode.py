@@ -1,6 +1,7 @@
 """Tests for the Nominatim geocoding helper."""
 
 import json
+import re
 import time
 from importlib.metadata import version
 from typing import Any
@@ -281,3 +282,83 @@ def test_geocode_is_reachable_as_a_module_attribute():
 
     assert callable(pyzill.geocode.geocode)
     assert pyzill.GeoResult is pyzill.geocode.GeoResult
+
+
+class TestErrorMessages:
+    """The full text of every error message is pinned.
+
+    The hint ("pass the viewport flags instead") is written in one place in
+    the module; these tests fail if a message drifts away from it, which a
+    fragment match would not catch.
+    """
+
+    _HINT = "Pass --north/--south/--east/--west to search without geocoding."
+
+    def _assert_raises(self, expected: str, call) -> None:
+        """Assert that the call fails with exactly this message."""
+        with pytest.raises(ValueError, match=re.escape(expected)) as exc_info:
+            call()
+        assert str(exc_info.value) == expected
+
+    def test_empty_place(self, cache_path):
+        self._assert_raises("Cannot geocode an empty place name", lambda: geocode("   ", cache_path=cache_path))
+
+    def test_network_failure(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, exc=OSError("DNS failure"))
+        self._assert_raises(
+            f"Geocoding 'Schenectady NY' failed: DNS failure. {self._HINT}",
+            lambda: geocode("Schenectady NY", cache_path=cache_path),
+        )
+
+    def test_unexpected_response_shape(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, {"error": "Unable to geocode"})
+        self._assert_raises(
+            f"Geocoding 'Schenectady NY' returned an unexpected response shape. {self._HINT}",
+            lambda: geocode("Schenectady NY", cache_path=cache_path),
+        )
+
+    def test_no_result(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, [])
+        self._assert_raises(
+            "No geocoding result for 'zzzznowhere'. Try a more specific name, or pass --north/--south/--east/--west.",
+            lambda: geocode("zzzznowhere", cache_path=cache_path),
+        )
+
+    def test_unexpected_result(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, ["not a dict"])
+        self._assert_raises(
+            f"Geocoding 'Schenectady NY' returned an unexpected result. {self._HINT}",
+            lambda: geocode("Schenectady NY", cache_path=cache_path),
+        )
+
+    def test_no_usable_bounding_box(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, [{"display_name": "Schenectady"}])
+        self._assert_raises(
+            f"Geocoding 'Schenectady NY' returned no usable bounding box. {self._HINT}",
+            lambda: geocode("Schenectady NY", cache_path=cache_path),
+        )
+
+    def test_malformed_bounding_box(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, [{"display_name": "x", "boundingbox": ["a", "b", "c", "d"]}])
+        self._assert_raises(
+            f"Geocoding 'Schenectady NY' returned a malformed bounding box. {self._HINT}",
+            lambda: geocode("Schenectady NY", cache_path=cache_path),
+        )
+
+    def test_non_finite_bounding_box(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, [{"display_name": "x", "boundingbox": ["nan", "nan", "-73.0", "-74.0"]}])
+        self._assert_raises(
+            f"Geocoding 'Schenectady NY' returned a non-finite bounding box. {self._HINT}",
+            lambda: geocode("Schenectady NY", cache_path=cache_path),
+        )
+
+    def test_unusable_viewport(self, monkeypatch, cache_path):
+        # A box so large that expanding it cannot change the float value, so
+        # the bounds stay equal and the viewport is rejected.
+        huge = [{"display_name": "x", "boundingbox": ["1e308", "1e308", "1e308", "1e308"]}]
+        _install_get(monkeypatch, huge)
+        self._assert_raises(
+            "Geocoding 'Schenectady NY' returned an unusable viewport "
+            "(north/east bounds must be greater than south/west bounds). " + self._HINT,
+            lambda: geocode("Schenectady NY", cache_path=cache_path),
+        )

@@ -71,6 +71,15 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- The geocoder was split up: `geocode()` now orchestrates four small
+  helpers (the cache lookup, the Nominatim request, the hit-to-viewport
+  conversion, and the error builder) instead of doing five jobs in one
+  131-line function. The "pass the viewport flags instead" hint now lives in
+  one constant instead of being copied into seven error messages, and the
+  messages themselves are unchanged byte for byte (a new test pins their
+  full text). The request failure handler now catches only network, HTTP,
+  and parse errors, so a bug in that block is no longer reported as a
+  failed lookup.
 - The CLI's output renderers are pure again: `pyzill.cli.output` renders
   data into text (or a table) and raises `OutputError` when the data does
   not fit the format, and `pyzill.cli.console` decides to emit, warn, or

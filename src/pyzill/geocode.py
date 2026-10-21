@@ -5,8 +5,8 @@ address into one. Results are cached on disk so repeated queries for the same
 place cost no network traffic.
 
 Nominatim's usage policy requires a descriptive User-Agent and at most one
-request per second; the CLI's caller-side throttle plus the on-disk cache keep
-us well under that.
+request per second; this module's own limiter plus the on-disk cache keep us
+well under that.
 
 This module talks to Nominatim directly instead of going through
 ``pyzill.http``: it is a different host with a different identity (a
@@ -39,6 +39,12 @@ except ImportError:  # pragma: no cover - Windows
     fcntl = None  # type: ignore[assignment]
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+
+# The viewport flags a caller can use instead of geocoding. Every error
+# message points at them, so the list lives in one place.
+_VIEWPORT_FLAGS = "--north/--south/--east/--west"
+_NO_GEOCODE_HINT = f"Pass {_VIEWPORT_FLAGS} to search without geocoding."
+_NO_RESULT_HINT = f"Try a more specific name, or pass {_VIEWPORT_FLAGS}."
 
 
 def _user_agent() -> str:
@@ -150,6 +156,105 @@ def _store_cache(path: Path, key: str, entry: dict[str, Any]) -> None:
         pass
 
 
+def _geocode_error(place: str, detail: str, hint: str = _NO_GEOCODE_HINT) -> ValueError:
+    """Build the error for a failed lookup.
+
+    Every failure points at the same hint, so the wording lives in one place
+    instead of being copied into each message.
+    """
+    return ValueError(f"Geocoding {place!r} {detail}. {hint}")
+
+
+def _cached_result(cache_path: Path, key: str, place: str) -> GeoResult | None:
+    """Return the cached result for a place, or None if there is no fresh one.
+
+    A corrupt or expired entry is treated as no entry: the lookup is redone.
+    """
+    cached = _load_cache(cache_path).get(key)
+    if not (
+        isinstance(cached, dict)
+        and isinstance(cached.get("cached_at"), (int, float))
+        and time.time() - cached["cached_at"] < _CACHE_TTL_SECONDS
+        and {"north", "south", "east", "west"} <= cached.keys()
+    ):
+        return None
+    try:
+        return GeoResult(
+            display_name=str(cached.get("display_name", place)),
+            bbox=BBox(
+                north=float(cached["north"]),
+                south=float(cached["south"]),
+                east=float(cached["east"]),
+                west=float(cached["west"]),
+            ),
+            synthetic_bbox=bool(cached.get("synthetic_bbox", False)),
+        )
+    except (TypeError, ValueError):
+        return None  # Corrupt entry; re-fetch.
+
+
+def _fetch_hits(place: str, proxy_url: str | None) -> list[Any]:
+    """Ask Nominatim for the hits matching a place.
+
+    Raises:
+        ValueError: If the request failed, or the response was not a list.
+    """
+    try:
+        _nominatim_limiter.wait()
+        resolved_proxy = resolve_proxy(proxy_url) if proxy_url else None
+        response = requests.get(
+            NOMINATIM_URL,
+            params={"q": place, "format": "jsonv2", "limit": 1, "countrycodes": "us"},
+            headers={"User-Agent": _user_agent()},
+            proxies={"http": resolved_proxy, "https": resolved_proxy} if resolved_proxy else None,
+            timeout=_TIMEOUT,
+        )
+        http.raise_for_status(response)
+        hits = http.json_body(response)
+    except (OSError, ValueError) as exc:
+        # Network failures, HTTP errors, and unparseable bodies all mean the
+        # same thing to the caller: the place could not be resolved.
+        raise _geocode_error(place, f"failed: {exc}") from exc
+    if not isinstance(hits, list):
+        raise _geocode_error(place, "returned an unexpected response shape")
+    return hits
+
+
+def _result_from_hit(hit: Any, place: str) -> GeoResult:
+    """Build the search viewport for one Nominatim hit.
+
+    Raises:
+        ValueError: If the hit does not carry a usable bounding box.
+    """
+    if not isinstance(hit, dict):
+        raise _geocode_error(place, "returned an unexpected result")
+    # Nominatim's boundingbox is [south, north, west, east], all strings.
+    raw_bbox = hit.get("boundingbox")
+    if not isinstance(raw_bbox, (list, tuple)) or len(raw_bbox) != _BBOX_LENGTH:
+        raise _geocode_error(place, "returned no usable bounding box")
+    try:
+        south, north, west, east = (float(x) for x in raw_bbox)
+    except (TypeError, ValueError) as exc:
+        raise _geocode_error(place, "returned a malformed bounding box") from exc
+    if not all(math.isfinite(value) for value in (north, south, east, west)):
+        # NaN/inf bounds survive the BBox comparison (every comparison with
+        # NaN is False) and would silently produce a nonsense search viewport.
+        raise _geocode_error(place, "returned a non-finite bounding box")
+    synthetic_bbox = north - south < 2 * _MIN_HALF_EXTENT or east - west < 2 * _MIN_HALF_EXTENT
+    north, south, east, west = _expand_viewport(north, south, east, west)
+
+    try:
+        bbox = BBox(north=north, south=south, east=east, west=west)
+    except ValueError as exc:
+        raise _geocode_error(place, f"returned an unusable viewport ({exc})") from exc
+
+    return GeoResult(
+        display_name=str(hit.get("display_name", place)),
+        bbox=bbox,
+        synthetic_bbox=synthetic_bbox,
+    )
+
+
 def geocode(
     place: str,
     *,
@@ -177,107 +282,25 @@ def geocode(
     cache_path = cache_path or default_cache_path()
     key = f"us:jsonv2:{place.lower()}"
 
-    cached = _load_cache(cache_path).get(key)
-    if (
-        isinstance(cached, dict)
-        and isinstance(cached.get("cached_at"), (int, float))
-        and time.time() - cached["cached_at"] < _CACHE_TTL_SECONDS
-        and {"north", "south", "east", "west"} <= cached.keys()
-    ):
-        try:
-            return GeoResult(
-                display_name=str(cached.get("display_name", place)),
-                bbox=BBox(
-                    north=float(cached["north"]),
-                    south=float(cached["south"]),
-                    east=float(cached["east"]),
-                    west=float(cached["west"]),
-                ),
-                synthetic_bbox=bool(cached.get("synthetic_bbox", False)),
-            )
-        except (TypeError, ValueError):
-            pass  # Corrupt entry; re-fetch.
+    cached = _cached_result(cache_path, key, place)
+    if cached is not None:
+        return cached
 
-    try:
-        _nominatim_limiter.wait()
-        resolved_proxy = resolve_proxy(proxy_url) if proxy_url else None
-        response = requests.get(
-            NOMINATIM_URL,
-            params={"q": place, "format": "jsonv2", "limit": 1, "countrycodes": "us"},
-            headers={"User-Agent": _user_agent()},
-            proxies={"http": resolved_proxy, "https": resolved_proxy} if resolved_proxy else None,
-            timeout=_TIMEOUT,
-        )
-        http.raise_for_status(response)
-        hits = http.json_body(response)
-    except Exception as e:
-        raise ValueError(
-            f"Geocoding {place!r} failed: {e}. Pass --north/--south/--east/--west to search without geocoding."
-        ) from e
-
-    if not isinstance(hits, list):
-        raise ValueError(
-            f"Geocoding {place!r} returned an unexpected response shape. "
-            "Pass --north/--south/--east/--west to search without geocoding."
-        )
+    hits = _fetch_hits(place, proxy_url)
     if not hits:
-        raise ValueError(
-            f"No geocoding result for {place!r}. Try a more specific name, or pass --north/--south/--east/--west."
-        )
+        raise ValueError(f"No geocoding result for {place!r}. {_NO_RESULT_HINT}")
 
-    hit = hits[0]
-    if not isinstance(hit, dict):
-        raise ValueError(
-            f"Geocoding {place!r} returned an unexpected result. "
-            "Pass --north/--south/--east/--west to search without geocoding."
-        )
-    # Nominatim's boundingbox is [south, north, west, east], all strings.
-    raw_bbox = hit.get("boundingbox")
-    if not isinstance(raw_bbox, (list, tuple)) or len(raw_bbox) != _BBOX_LENGTH:
-        raise ValueError(
-            f"Geocoding {place!r} returned no usable bounding box. "
-            "Pass --north/--south/--east/--west to search without geocoding."
-        )
-    try:
-        south, north, west, east = (float(x) for x in raw_bbox)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"Geocoding {place!r} returned a malformed bounding box. "
-            "Pass --north/--south/--east/--west to search without geocoding."
-        ) from exc
-    if not all(math.isfinite(value) for value in (north, south, east, west)):
-        # NaN/inf bounds survive the BBox comparison (every comparison with
-        # NaN is False) and would silently produce a nonsense search viewport.
-        raise ValueError(
-            f"Geocoding {place!r} returned a non-finite bounding box. "
-            "Pass --north/--south/--east/--west to search without geocoding."
-        )
-    synthetic_bbox = north - south < 2 * _MIN_HALF_EXTENT or east - west < 2 * _MIN_HALF_EXTENT
-    north, south, east, west = _expand_viewport(north, south, east, west)
-
-    try:
-        bbox = BBox(north=north, south=south, east=east, west=west)
-    except ValueError as exc:
-        raise ValueError(
-            f"Geocoding {place!r} returned an unusable viewport ({exc}). "
-            "Pass --north/--south/--east/--west to search without geocoding."
-        ) from exc
-
-    result = GeoResult(
-        display_name=str(hit.get("display_name", place)),
-        bbox=bbox,
-        synthetic_bbox=synthetic_bbox,
-    )
+    result = _result_from_hit(hits[0], place)
     _store_cache(
         cache_path,
         key,
         {
             "display_name": result.display_name,
-            "north": north,
-            "south": south,
-            "east": east,
-            "west": west,
-            "synthetic_bbox": synthetic_bbox,
+            "north": result.bbox.north,
+            "south": result.bbox.south,
+            "east": result.bbox.east,
+            "west": result.bbox.west,
+            "synthetic_bbox": result.synthetic_bbox,
         },
     )
     return result
