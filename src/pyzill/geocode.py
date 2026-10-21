@@ -69,6 +69,10 @@ _MIN_HALF_EXTENT = 0.01  # degrees, roughly 1 km
 # Nominatim's boundingbox is [south, north, west, east].
 _BBOX_LENGTH = 4
 _CACHE_TTL_SECONDS = 30 * 24 * 60 * 60
+# How many places the cache keeps. The cache is one JSON file that is parsed
+# on every lookup and rewritten on every new place, so it has to stay small:
+# 1000 entries are about 300 KiB and parse in a few milliseconds.
+_CACHE_MAX_ENTRIES = 1000
 _nominatim_limiter = RateLimiter(min_interval=1.0, jitter=0)
 
 
@@ -98,12 +102,83 @@ def _expand_viewport(north: float, south: float, east: float, west: float) -> tu
     return north, south, east, west
 
 
-def _load_cache(path: Path) -> dict[str, Any]:
+def _read_cache_file(path: Path) -> dict[str, Any]:
+    """Read and parse the cache file."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def _cache_stamp(path: Path) -> tuple[str, int, int, int] | None:
+    """Return a cheap fingerprint of the cache file, or None if it is gone.
+
+    The fingerprint changes whenever the file does, so the parsed cache can
+    be reused until another process (or this one) writes to it.
+    """
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (str(path), stat.st_mtime_ns, stat.st_size, stat.st_ino)
+
+
+class _CacheMemo:
+    """The parsed cache, reused until the file changes on disk."""
+
+    def __init__(self) -> None:
+        self.entries: dict[str, Any] = {}
+        self.stamp: tuple[str, int, int, int] | None = None
+
+
+# Re-parsing the whole file on every lookup is wasteful when the file has
+# not changed since the last read.
+_cache_memo = _CacheMemo()
+
+
+def _load_cache(path: Path) -> dict[str, Any]:
+    """Return the cached entries, re-parsing the file only when it changed.
+
+    The returned mapping is the shared in-memory copy: treat it as read-only
+    (callers that change it copy it first).
+    """
+    stamp = _cache_stamp(path)
+    if stamp is not None and stamp == _cache_memo.stamp:
+        return _cache_memo.entries
+    cache = _read_cache_file(path)
+    _cache_memo.entries = cache
+    _cache_memo.stamp = stamp
+    return cache
+
+
+def _entry_timestamp(entry: Any) -> float:
+    """Return an entry's age stamp, or 0 for an entry that has none."""
+    if not isinstance(entry, dict):
+        return 0.0
+    value = entry.get("cached_at", 0)
+    return float(value) if isinstance(value, (int, float)) else 0.0
+
+
+def _prune_cache(cache: dict[str, Any]) -> dict[str, Any]:
+    """Drop expired entries, then the oldest ones over the entry cap.
+
+    Expiry is lazy: the TTL is checked when an entry is read, and the stale
+    ones are removed the next time the file is written. Pruning on write
+    keeps the file (and the time spent parsing it) bounded.
+    """
+    now = time.time()
+    fresh = {
+        key: entry
+        for key, entry in cache.items()
+        if isinstance(entry, dict) and now - _entry_timestamp(entry) < _CACHE_TTL_SECONDS
+    }
+    overflow = len(fresh) - _CACHE_MAX_ENTRIES
+    if overflow > 0:
+        oldest = sorted(fresh.items(), key=lambda item: _entry_timestamp(item[1]))[:overflow]
+        for key, _ in oldest:
+            del fresh[key]
+    return fresh
 
 
 @contextmanager
@@ -136,8 +211,10 @@ def _store_cache(path: Path, key: str, entry: dict[str, Any]) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with _cache_lock(path):
-            cache = _load_cache(path)
+            # Copy: the loaded cache is the shared in-memory copy.
+            cache = dict(_load_cache(path))
             cache[key] = {**entry, "cached_at": time.time()}
+            cache = _prune_cache(cache)
             temporary_path: Path | None = None
             try:
                 with tempfile.NamedTemporaryFile(

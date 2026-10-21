@@ -4,6 +4,7 @@ import json
 import re
 import time
 from importlib.metadata import version
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -362,3 +363,96 @@ class TestErrorMessages:
             "(north/east bounds must be greater than south/west bounds). " + self._HINT,
             lambda: geocode("Schenectady NY", cache_path=cache_path),
         )
+
+
+class TestCacheMaintenance:
+    """The cache stays bounded, and an unchanged file is parsed only once."""
+
+    @staticmethod
+    def _entry(cached_at: float) -> dict[str, Any]:
+        return {
+            "display_name": "Somewhere",
+            "north": 42.9,
+            "south": 42.7,
+            "east": -73.8,
+            "west": -74.0,
+            "synthetic_bbox": False,
+            "cached_at": cached_at,
+        }
+
+    def test_expired_entries_are_dropped_on_write(self, monkeypatch, cache_path):
+        """Stale entries are pruned the next time the cache is written."""
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "us:jsonv2:fresh": self._entry(time.time()),
+                    "us:jsonv2:stale": self._entry(0),
+                }
+            )
+        )
+        _install_get(monkeypatch, HIT)
+
+        geocode("Schenectady NY", cache_path=cache_path)
+
+        stored = json.loads(cache_path.read_text())
+        assert "us:jsonv2:stale" not in stored
+        assert "us:jsonv2:fresh" in stored
+        assert "us:jsonv2:schenectady ny" in stored
+
+    def test_cache_never_exceeds_the_entry_cap(self, monkeypatch, cache_path):
+        """The file cannot grow past the cap, however many places are added."""
+        import pyzill.geocode as geocode_module
+
+        cap = geocode_module._CACHE_MAX_ENTRIES
+        entries = {f"us:jsonv2:place {index}": self._entry(time.time()) for index in range(cap + 10)}
+        cache_path.write_text(json.dumps(entries))
+        _install_get(monkeypatch, HIT)
+
+        geocode("Schenectady NY", cache_path=cache_path)
+
+        stored = json.loads(cache_path.read_text())
+        assert len(stored) <= cap
+        assert "us:jsonv2:schenectady ny" in stored
+
+    def test_unchanged_cache_file_is_parsed_once(self, monkeypatch, cache_path):
+        """A repeated lookup reuses the parsed cache instead of re-reading it."""
+        import pyzill.geocode as geocode_module
+
+        cache_path.write_text(json.dumps({"us:jsonv2:schenectady ny": self._entry(time.time())}))
+        calls = _install_get(monkeypatch, HIT)
+        reads: list[Path] = []
+        original = geocode_module._read_cache_file
+
+        def counting_read(path: Path) -> dict[str, Any]:
+            reads.append(path)
+            return original(path)
+
+        monkeypatch.setattr(geocode_module, "_read_cache_file", counting_read)
+
+        geocode("Schenectady NY", cache_path=cache_path)
+        geocode("Schenectady NY", cache_path=cache_path)
+
+        assert calls == []  # both lookups were served from the cache
+        assert len(reads) == 1
+
+    def test_cache_written_by_another_process_is_seen(self, monkeypatch, cache_path):
+        """A file that changed on disk is re-read, not served from memory."""
+        calls = _install_get(monkeypatch, HIT)
+        cache_path.write_text(json.dumps({"us:jsonv2:schenectady ny": self._entry(time.time())}))
+
+        geocode("Schenectady NY", cache_path=cache_path)
+        assert calls == []
+
+        # Another process adds a place to the cache file.
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "us:jsonv2:schenectady ny": self._entry(time.time()),
+                    "us:jsonv2:albany ny": self._entry(time.time()),
+                }
+            )
+        )
+        result = geocode("Albany NY", cache_path=cache_path)
+
+        assert calls == []  # the new entry was picked up from disk
+        assert result.bbox.north == 42.9

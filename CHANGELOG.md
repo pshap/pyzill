@@ -71,6 +71,13 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- The geocode cache is now bounded and cheap to read. Expired entries are
+  pruned and the file is capped at 1000 places the next time it is written
+  (it previously grew without limit), and the parsed cache is reused between
+  lookups while the file on disk is unchanged, which makes a cache hit about
+  130 times cheaper. A cache file written by another process is still picked
+  up immediately; the worst case of a stale fingerprint is one missed cache
+  hit, never a wrong answer.
 - The geocoder was split up: `geocode()` now orchestrates four small
   helpers (the cache lookup, the Nominatim request, the hit-to-viewport
   conversion, and the error builder) instead of doing five jobs in one
