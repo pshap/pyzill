@@ -8,6 +8,7 @@ in the requested format. The CLI layer decides what to do with the result.
 import csv
 import io
 import json
+from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any
 
@@ -37,8 +38,25 @@ class OutputUsageError(OutputError):
     exit_code = 2
 
 
-_TABLE_COLUMNS = ("address", "price", "beds", "baths", "area", "city", "state", "home_type", "status")
-_DB_TABLE_COLUMNS = (*_TABLE_COLUMNS, "first_seen_utc", "last_seen_utc")
+__all__ = [
+    "DB_LISTING_TABLE_COLUMNS",
+    "LISTING_TABLE_COLUMNS",
+    "OutputError",
+    "OutputFormat",
+    "OutputUsageError",
+    "dumps",
+    "render_csv",
+    "render_json",
+    "render_jsonl",
+    "render_table",
+    "render_table_text",
+    "require_list",
+]
+
+# The columns a listing table shows. The database adds the two timestamps it
+# keeps, so a listing read back from the database carries those as well.
+LISTING_TABLE_COLUMNS = ("address", "price", "beds", "baths", "area", "city", "state", "home_type", "status")
+DB_LISTING_TABLE_COLUMNS = (*LISTING_TABLE_COLUMNS, "first_seen_utc", "last_seen_utc")
 
 
 def _cell(value: Any) -> str:
@@ -91,14 +109,22 @@ def render_jsonl(value: Any) -> str:
 def render_table(
     rows: list[dict[str, Any]],
     columns: list[str] | None,
-    use_db_columns: bool,
+    default_columns: Sequence[str] | None,
     title: str = "Listings",
 ) -> Table:
-    """Render rows as a table."""
+    """Render rows as a table.
+
+    ``columns`` is the caller's own choice of columns, as asked for with
+    ``--cols``. ``default_columns`` is what a command shows when the caller
+    chose none: the listing columns for a listing, or None for rows that
+    are not listings, whose own columns are shown instead.
+    """
     if columns is None:
-        defaults = _DB_TABLE_COLUMNS if use_db_columns else _TABLE_COLUMNS
-        display = [column for column in defaults if any(column in row for row in rows)]
-        columns = display or _columns(rows)
+        if default_columns is None:
+            columns = _columns(rows)
+        else:
+            shown = [column for column in default_columns if any(column in row for row in rows)]
+            columns = shown or _columns(rows)
     table = Table(title=title)
     for column in columns:
         table.add_column(column)

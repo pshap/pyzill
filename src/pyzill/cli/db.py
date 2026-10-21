@@ -55,7 +55,7 @@ from pyzill.cli.options import (
     WhereOpt,
     Zoom,
 )
-from pyzill.cli.output import OutputFormat, dumps
+from pyzill.cli.output import DB_LISTING_TABLE_COLUMNS, OutputFormat, dumps
 from pyzill.cli.query import cli_query_database
 from pyzill.cli.search import prepare_search, search_options_from_args
 from pyzill.config import read_env
@@ -308,7 +308,7 @@ def db_query(  # noqa: PLR0913
         warn("No listings matched the query")
         return
 
-    write_output(rows, output_format, output, columns=selected, use_db_columns=True)
+    write_output(rows, output_format, output, columns=selected, default_columns=DB_LISTING_TABLE_COLUMNS)
 
 
 @db_app.command("history")
@@ -325,7 +325,7 @@ def db_history(
         warn(f"No price history found for zpid {zpid}")
         return
 
-    write_output(history, output_format)
+    write_output(history, output_format, default_columns=None, title="Price history")
 
 
 @db_app.command("changes")
@@ -339,7 +339,7 @@ def db_changes(
     since = _timestamp(since, label="SINCE argument")
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
         events = get_changes(conn, since)
-    write_output(events, output_format, output)
+    write_output(events, output_format, output, default_columns=None, title="Changes", empty_message="No changes found")
 
 
 @db_app.command("runs")
@@ -360,7 +360,14 @@ def db_runs(
     """
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
         runs = list_runs(conn, kind=kind, limit=limit)
-    write_output([asdict(run) for run in runs], output_format, output, title="Sync runs")
+    write_output(
+        [asdict(run) for run in runs],
+        output_format,
+        output,
+        default_columns=None,
+        title="Sync runs",
+        empty_message="No sync runs found",
+    )
 
 
 @db_app.command("stats")

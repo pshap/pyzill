@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Fixed
+- A table of something that is not a listing now shows what the rows carry.
+  The table renderer applied the listing columns to every row set, so
+  `pyzill db changes --format table` showed a single `price` column and
+  dropped the event, the zpid, and the timestamps, and `pyzill db history
+  --format table` showed a single `price` column for the same reason. A
+  change report or a price history is not a listing, so its own columns
+  are shown now. The listing tables (`search`, `normalize`, `db query`)
+  are unchanged.
+- An empty result says what was empty. `pyzill db changes` reported "No
+  listings found" when it had found no changes, and `pyzill db runs`
+  reported the same for a database with no runs.
 - The write path now rolls a failed batch back. `upsert_listings` committed
   the transaction it owned but never undid it, so a failure part-way through
   a batch left the rows written before the failure pending: a caller that

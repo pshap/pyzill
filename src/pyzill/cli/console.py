@@ -3,7 +3,7 @@
 import json
 import os
 import sys
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from pyzill.cli.output import (
+    LISTING_TABLE_COLUMNS,
     OutputError,
     OutputFormat,
     render_csv,
@@ -298,13 +299,19 @@ def write_output(  # noqa: PLR0913
     output_format: OutputFormat,
     output: str | None = None,
     columns: list[str] | None = None,
-    use_db_columns: bool = False,
+    default_columns: Sequence[str] | None = LISTING_TABLE_COLUMNS,
     title: str = "Listings",
+    empty_message: str = "No listings found",
 ) -> None:
     """Render the data and write it out, deciding what to report on the way.
 
     The renderers in :mod:`pyzill.cli.output` are pure; this is where the
     CLI decides to emit, warn, or fail.
+
+    ``columns`` is the caller's own choice of columns. ``default_columns``
+    is what a table shows when the caller chose none: the listing columns
+    for a listing, and None for rows that are not listings, whose own
+    columns are shown instead.
     """
     if output == "-":
         output = None
@@ -316,13 +323,13 @@ def write_output(  # noqa: PLR0913
         return
     rows = _render(require_list, data, output_format)
     if not rows:
-        warn("No listings found")
+        warn(empty_message)
     if output_format is OutputFormat.csv:
         emit(render_csv(rows, columns), output)
         return
     if not rows:
         return
-    table = render_table(rows, columns, use_db_columns, title)
+    table = render_table(rows, columns, default_columns, title)
     if output:
         emit(render_table_text(table), output)
         return

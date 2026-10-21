@@ -1878,6 +1878,36 @@ class TestDatabaseCommands:
         # delisting, so the two imports must not be compared with each other.
         assert ("delisted", 2) not in event_types
 
+    def test_db_changes_table_shows_the_columns_of_the_events(self, import_rows):
+        """A change is not a listing: the table shows what an event carries."""
+        db_path = import_rows([{"zpid": 1, "price": 250000}], fetched_at="2026-10-01T00:00:00Z")
+        import_rows([{"zpid": 1, "price": 240000}], db_path=db_path, fetched_at="2026-10-02T00:00:00Z")
+
+        result = runner.invoke(app, ["db", "changes", "2026-10-01T00:00:00Z", "--db", str(db_path), "-f", "table"])
+
+        assert result.exit_code == 0
+        assert "event" in result.stdout
+        assert "zpid" in result.stdout
+        assert "price_drop" in result.stdout
+
+    def test_db_changes_with_no_events_says_so(self, import_rows):
+        db_path = import_rows([{"zpid": 1, "price": 250000}], fetched_at="2026-10-01T00:00:00Z")
+
+        result = runner.invoke(app, ["db", "changes", "2030-01-01T00:00:00Z", "--db", str(db_path), "-f", "table"])
+
+        assert result.exit_code == 0
+        assert "No changes found" in result.stderr
+        assert "No listings found" not in result.stderr
+
+    def test_db_history_table_shows_the_columns_of_the_history(self, import_rows):
+        db_path = import_rows([{"zpid": 1, "price": 250000}], fetched_at="2026-10-01T00:00:00Z")
+
+        result = runner.invoke(app, ["db", "history", "1", "--db", str(db_path), "-f", "table"])
+
+        assert result.exit_code == 0
+        assert "seen_utc" in result.stdout
+        assert "kind" in result.stdout
+
     def test_db_changes_reports_delisted_from_searches(self, run_sync, tmp_path):
         """Two searches of the same query detect a listing that disappeared."""
         db_path = tmp_path / "searches.db"

@@ -103,6 +103,10 @@ pyzill search sale "12305" --format csv
 pyzill search sale "12305" --format table
 ```
 
+A table of listings shows the listing columns. A table of anything else --
+the rows of `db changes`, the history of `db history`, the runs of
+`db runs` -- shows the columns those rows carry.
+
 Output to a file:
 
 ```bash
