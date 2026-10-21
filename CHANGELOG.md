@@ -77,6 +77,11 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- The geocode cache directory now holds only the cache file. The cross-process
+  lock moved from a sibling `geocode.json.lock` file to the cache directory
+  itself (the cache file is replaced atomically, so a lock held on the file
+  would not survive the swap, but the directory's inode is stable), and a
+  lock file left by an older version is removed on the next write.
 - The geocode cache is now bounded and cheap to read. Expired entries are
   pruned and the file is capped at 1000 places the next time it is written
   (it previously grew without limit), and the parsed cache is reused between

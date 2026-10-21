@@ -183,28 +183,41 @@ def _prune_cache(cache: dict[str, Any]) -> dict[str, Any]:
 
 @contextmanager
 def _cache_lock(path: Path) -> Iterator[None]:
-    """Hold an exclusive lock on the geocode cache for one update.
+    """Hold an exclusive lock while the cache file is updated.
 
-    The cache is a read-modify-write of a whole JSON file, so two processes
-    geocoding at the same time would otherwise lose one another's entries.
-    The lock lives in a sibling file because the cache itself is replaced
-    atomically (swapping the inode would drop a lock held on it).
+    The cache file is replaced atomically (a fresh inode takes its place), so
+    a lock held on the file itself would not survive the swap. The lock is
+    taken on the cache *directory* instead, whose inode is stable -- which
+    also keeps the cache directory free of a lock file.
 
-    Locking is best-effort: on a platform without ``fcntl``, or when the lock
-    file cannot be created, the update still proceeds.
+    Locking is best-effort: on a platform without ``fcntl``, or when the
+    directory cannot be opened, the update still proceeds.
     """
-    lock_path = path.with_name(f"{path.name}.lock")
+    if fcntl is None:
+        yield
+        return
     try:
-        handle = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        handle = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     except OSError:
         yield
         return
     try:
-        if fcntl is not None:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+        fcntl.flock(handle, fcntl.LOCK_EX)
         yield
     finally:
         os.close(handle)
+
+
+def _remove_legacy_lock(path: Path) -> None:
+    """Remove the lock file older versions of pyzill left next to the cache.
+
+    The lock now lives on the cache directory, so the sibling file is dead
+    weight. Removing it is best-effort: a pyzill process of an older version
+    that is still running would lose its mutual exclusion, which costs at
+    most one cache entry.
+    """
+    with suppress(OSError):
+        path.with_name(f"{path.name}.lock").unlink()
 
 
 def _store_cache(path: Path, key: str, entry: dict[str, Any]) -> None:
@@ -229,6 +242,7 @@ def _store_cache(path: Path, key: str, entry: dict[str, Any]) -> None:
                 if temporary_path is not None:
                     with suppress(OSError):
                         temporary_path.unlink(missing_ok=True)
+            _remove_legacy_lock(path)
     except OSError:
         pass
 

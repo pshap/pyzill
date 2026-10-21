@@ -456,3 +456,25 @@ class TestCacheMaintenance:
 
         assert calls == []  # the new entry was picked up from disk
         assert result.bbox.north == 42.9
+
+
+class TestCacheFiles:
+    """The cache directory holds the cache file and nothing else."""
+
+    def test_writing_the_cache_leaves_no_lock_file(self, monkeypatch, cache_path):
+        _install_get(monkeypatch, HIT)
+
+        geocode("Schenectady NY", cache_path=cache_path)
+
+        assert sorted(path.name for path in cache_path.parent.iterdir()) == [cache_path.name]
+
+    def test_legacy_lock_file_is_removed(self, monkeypatch, cache_path):
+        """The lock file older versions left behind does not survive."""
+        legacy_lock = cache_path.with_name(f"{cache_path.name}.lock")
+        legacy_lock.write_text("")
+        _install_get(monkeypatch, HIT)
+
+        geocode("Schenectady NY", cache_path=cache_path)
+
+        assert not legacy_lock.exists()
+        assert sorted(path.name for path in cache_path.parent.iterdir()) == [cache_path.name]
