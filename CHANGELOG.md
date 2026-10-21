@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Fixed
+- The write path now rolls a failed batch back. `upsert_listings` committed
+  the transaction it owned but never undid it, so a failure part-way through
+  a batch left the rows written before the failure pending: a caller that
+  caught the error and reused the connection committed a half-applied batch,
+  with listings that had no sighting and no price history and a run record
+  that was never finished. The write path now rolls the whole transaction
+  back on failure and leaves the connection with no transaction open.
+- `load_listings` and the query engine now answer the same question the
+  same way. `load_listings` ran its own SQL: a case-sensitive equality
+  filter, and a row order that did not match the engine's, so the library
+  and `pyzill db query` could disagree about the rows a filter selects. The
+  library helper now goes through the shared engine, and the engine's
+  default order breaks ties on `kind` so both sources agree.
+- A database with a `listings` table but no schema version could not be
+  opened at all. Such a database was treated as a fresh file, so the old
+  table was left in place and building an index over a column it did not
+  have failed with `no such column: kind`, leaving the data unreachable. A
+  database of unknown provenance is now rebuilt from the current DDL: the
+  columns the old table has are carried across, a column it does not have
+  takes the DDL's default, and a price history row for a listing that is
+  not there is dropped.
 - `--json-errors` / `--no-json-errors` was ignored for an error the CLI
   raised itself rather than a parser error. The entry point rebuilt the
   error format from the exception, and only a `UsageError` carries a
@@ -131,6 +152,25 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- `pyzill db runs` lists the recorded sync runs, newest first, with the run
+  id, the query, the viewport, the filters, the result count, and whether
+  the run was truncated. A run id handed out by `db sync --format json` or
+  `db import --format json` could not be resolved afterwards; the runs
+  table was written but never read back. `--kind` and `--limit` narrow the
+  list. The reader is public as `pyzill.list_runs`, returning `pyzill.SyncRun`
+  records.
+- `pyzill geocode` resolves a place name to the viewport a search would
+  use, and prints it as JSON. A search geocodes its own query, so there was
+  no way to get the viewport for a place alone — for another tool, or for a
+  script of your own. A place that does not resolve exits with code 1; a
+  Nominatim service that cannot be reached exits with code 6 and reports the
+  error as retryable.
+- Two more published schemas. `pyzill schema db-listing` describes a row of
+  the database's `listings` table — the listing fields plus the `kind` and
+  the two timestamps the database adds, and the computed `ppsf` that
+  `--cols ppsf` projects — so the output of `pyzill db query` can be
+  validated. `pyzill schema detail` describes the normalized property
+  detail. `pyzill schema listing` is unchanged.
 - A committed contract with Zillow's payload shape. The captured fixtures
   hold real listing data and stay local, but the *shape* of a capture -- the
   set of key paths in it, with no values -- is committed under
@@ -147,6 +187,16 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- `load_listings` filters text without regard to case, and rejects a value
+  that is not a number for a numeric column instead of matching nothing.
+  It now shares the query engine's rules, so a filter means the same thing
+  in the library and in `pyzill db query`. A filter on an unknown column
+  still raises `ValueError`.
+- A failed geocoding lookup now raises `pyzill.GeocodeError` (a subclass of
+  `ValueError`, so the callers that already handle it keep working) or
+  `pyzill.GeocodeUnavailableError` when the request itself failed. The
+  second one is retryable: a place that does not resolve will not resolve on
+  a second try, but an unreachable service might.
 - The two largest modules are split by job. `pyzill.workflows` is now a
   package: `model` (the shapes), `viewport` (resolving a viewport),
   `extract` (pulling the real listings out of a response), `search`

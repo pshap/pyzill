@@ -144,6 +144,21 @@ pyzill search sale "Schenectady NY" --max-price 400000 --min-beds 3
 - If geocoding fails, the CLI exits with code 1 and tells you to pass an
   explicit bbox.
 
+To resolve a place on its own — to get the viewport for your own script, or
+to pass to another command — use the `geocode` command:
+
+```bash
+pyzill geocode "Schenectady NY"
+# {"place": "Schenectady NY", "display_name": "Schenectady, NY, USA",
+#  "north": 42.9, "south": 42.6, "east": -73.8, "west": -74.1,
+#  "synthetic_bbox": false}
+```
+
+The four bounds are the values `--north/--south/--east/--west` take. The
+command prints JSON only. A place that does not resolve exits with code 1; a
+Nominatim service that cannot be reached exits with code 6 and reports the
+error as retryable.
+
 ### Offline re-slicing (`query`)
 
 `pyzill query` filters previously saved search results on your machine —
@@ -223,6 +238,10 @@ pyzill db changes 2026-10-01T00:00:00Z
 
 # Show price history for a single listing
 pyzill db history 32463997
+
+# List the recorded sync runs, newest first
+pyzill db runs
+pyzill db runs --kind rent --limit 10
 
 # Database statistics
 pyzill db stats
@@ -304,7 +323,18 @@ special-casing an empty response. The other formats print a warning and no
 rows instead.
 
 `pyzill schema listing` prints the versioned JSON Schema for normalized
-listings.
+listings. Two more schemas are published for the other shapes pyzill emits:
+
+```bash
+pyzill schema db-listing   # a row of the database's listings table, as db query returns it
+pyzill schema detail        # the normalized property detail
+```
+
+`schema db-listing` describes every column the `listings` table has -- the
+listing fields plus the `kind` and the two timestamps -- and the computed
+`ppsf` that `--cols ppsf` projects. No property is required, because
+`--cols` projects a subset of them; a property the table does not have is
+still rejected.
 
 ### Exploring detail responses
 
