@@ -20,7 +20,13 @@ from curl_cffi import requests
 from pyzill._kinds import Kind
 from pyzill.detail_request import apartment_target, fetch_apartment, fetch_home, home_target
 from pyzill.exceptions import ZillowBlockedError
-from pyzill.http import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, RequestOptions
+from pyzill.http import (
+    DEFAULT_IMPERSONATE,
+    DEFAULT_MAX_RETRIES,
+    DEFAULT_TIMEOUT,
+    RequestOptions,
+    build_request_options,
+)
 from pyzill.ratelimit import RateLimiter, SharedBudgetLimiter, default_limiter
 from pyzill.search_request import build_custom_params, build_kind_params, search_request
 from pyzill.tiling import tiled_search
@@ -88,7 +94,7 @@ class ZillowClient:
         self._sessions: dict[str | None, Any] = {}
         self.session: Any = self._session_for(self._proxy_urls[0] if self._proxy_urls else None)
         self.limiter = _resolve_limiter(rate_limit, _limiter_instance)
-        self.options = RequestOptions(
+        self.options = build_request_options(
             proxy_url=self._proxy_urls[0] if self._proxy_urls else None,
             impersonate=impersonate,
             timeout=timeout,

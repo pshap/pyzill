@@ -16,7 +16,7 @@ from typing import Any, Unpack
 
 from pyzill.client import get_default_client
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
-from pyzill.http import RequestOptions
+from pyzill.http import RequestOptions, build_request_options
 from pyzill.normalize import is_building_result
 from pyzill.search_request import SearchParams
 
@@ -200,7 +200,7 @@ def _detail_options(
     """Return the transport options for one detail fetch."""
     if options is not None:
         return options
-    return RequestOptions(
+    return build_request_options(
         proxy_url=proxy_url,
         impersonate=impersonate,
         timeout=timeout,

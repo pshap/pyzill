@@ -59,6 +59,13 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- Transport options are now built in one place (`pyzill.http.build_request_options`).
+  `pyzill.http.get_page`/`put_json` hand their options straight to the retry
+  loop instead of splitting them into arguments that were immediately
+  reassembled, and the search/detail entry points no longer rebuild the
+  options themselves. Search keywords are split into query fields (what to
+  search for) and transport fields (how to send it). Behavior, defaults, and
+  results are unchanged.
 - The import cycles between the transport, request, and client layers are
   gone. `pyzill.http` no longer reaches up into `pyzill.client` for a default
   session (it owns a fallback session and the process-wide limiter itself),

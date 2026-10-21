@@ -33,6 +33,8 @@ __all__ = [
     "RequestOptions",
     "build_headers",
     "build_proxies",
+    "build_request_options",
+    "default_session",
     "get_page",
     "put_json",
     "request",
@@ -77,6 +79,32 @@ _RETRY_DELAY = 1.0
 # `scripts.perimeterx` tag for bot mitigation, so the bare word appears on
 # legitimate detail HTML. The markers below are challenge-specific.
 _BLOCK_MARKERS = ("px-captcha", "captcha-delivery")
+
+
+def build_request_options(  # noqa: PLR0913 - one builder for every Zillow request
+    *,
+    proxy_url: str | None = None,
+    impersonate: str = DEFAULT_IMPERSONATE,
+    timeout: float = DEFAULT_TIMEOUT,
+    max_retries: int = DEFAULT_MAX_RETRIES,
+    max_retry_after: float = 60.0,
+    session: Any | None = None,
+    limiter: RateLimiter | None = None,
+) -> RequestOptions:
+    """Build the transport options for a Zillow request.
+
+    This is the one place loose transport arguments become a
+    :class:`RequestOptions`, so the defaults live in exactly one spot.
+    """
+    return RequestOptions(
+        proxy_url=proxy_url,
+        impersonate=impersonate,
+        timeout=timeout,
+        max_retries=max_retries,
+        max_retry_after=max_retry_after,
+        session=session,
+        limiter=limiter,
+    )
 
 
 @cache
@@ -387,18 +415,13 @@ def get_page(
     options: RequestOptions | None = None,
 ) -> Response:
     """Fetch a Zillow page using browser navigation headers."""
-    options = options or RequestOptions()
-    return request(
+    options = options or build_request_options()
+    return _send(
         "GET",
         url,
         headers=build_headers(options.impersonate),
-        proxy_url=options.proxy_url,
-        impersonate=options.impersonate,
-        timeout=options.timeout,
-        max_retries=options.max_retries,
-        session=options.session,
-        limiter=options.limiter,
-        max_retry_after=options.max_retry_after,
+        json=None,
+        options=options,
     )
 
 
@@ -416,33 +439,22 @@ def put_json(
     ``Upgrade-Insecure-Requests``.  Sending the navigation headers used by
     :func:`get_page` would be a self-inflicted fingerprint mismatch.
     """
-    options = options or RequestOptions()
-    return request(
-        "PUT",
-        url,
-        headers={
-            **build_headers(
-                options.impersonate,
-                accept=_JSON_ACCEPT,
-                navigation=False,
-                fetch_dest="empty",
-                fetch_mode="cors",
-                fetch_site="same-site",
-                user_initiated=False,
-            ),
-            "Content-Type": "application/json",
-            "Origin": ZILLOW_HOME,
-            "Referer": f"{ZILLOW_HOME}/",
-        },
-        proxy_url=options.proxy_url,
-        impersonate=options.impersonate,
-        timeout=options.timeout,
-        max_retries=options.max_retries,
-        json=payload,
-        session=options.session,
-        limiter=options.limiter,
-        max_retry_after=options.max_retry_after,
-    )
+    options = options or build_request_options()
+    headers = {
+        **build_headers(
+            options.impersonate,
+            accept=_JSON_ACCEPT,
+            navigation=False,
+            fetch_dest="empty",
+            fetch_mode="cors",
+            fetch_site="same-site",
+            user_initiated=False,
+        ),
+        "Content-Type": "application/json",
+        "Origin": ZILLOW_HOME,
+        "Referer": f"{ZILLOW_HOME}/",
+    }
+    return _send("PUT", url, headers=headers, json=payload, options=options)
 
 
 def request(  # noqa: PLR0913 - central request primitive
@@ -481,24 +493,39 @@ def request(  # noqa: PLR0913 - central request primitive
     Raises:
         ZillowError: If the response status is not 2xx.
     """
-    options = RequestOptions(
-        proxy_url,
-        impersonate,
-        timeout,
-        max_retries,
+    options = build_request_options(
+        proxy_url=proxy_url,
+        impersonate=impersonate,
+        timeout=timeout,
+        max_retries=max_retries,
         max_retry_after=max_retry_after,
+        session=session,
+        limiter=limiter,
     )
+    return _send(method, url, headers=headers, json=json, options=options)
+
+
+def _send(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str],
+    json: Any,
+    options: RequestOptions,
+) -> Response:
+    """Send one request with the given transport options, retrying failures.
+
+    This is the retry loop; :func:`request` is the public wrapper that builds
+    the options for it.
+    """
     proxies = build_proxies(options.proxy_url)
+    session = options.session if options.session is not None else default_session()
+    limiter = options.limiter if options.limiter is not None else default_limiter()
     # The retry loop always returns or raises; this typed fallback only
     # covers the "loop body never ran" case, and keeps the raised type a
     # ZillowError rather than a bare RuntimeError.
     last_exception: ZillowError = ZillowNetworkError(url)
     retry_delay = 0.0
-
-    if session is None:
-        session = default_session()
-    if limiter is None:
-        limiter = default_limiter()
 
     for attempt in range(options.max_retries + 1):
         limiter.wait(retry_delay)
