@@ -254,12 +254,16 @@ def read_input(source: str) -> str:
 
 
 def read_json(source: str) -> Any:
-    """Read JSON from a file path or stdin ('-'), failing cleanly on bad input."""
+    """Read JSON from a file path or stdin ('-'), failing cleanly on bad input.
+
+    A file that is not valid JSON is a usage error, the same as a file that
+    is not there: the input is the caller's, not the tool's.
+    """
     text = read_input(source)
     try:
         return json.loads(text)
     except json.JSONDecodeError as e:
-        error(f"Invalid JSON input: {e}", code=1)
+        error(f"Invalid JSON input: {e}", code=_USAGE_EXIT_CODE)
 
 
 def emit(content: str, output: str | None) -> None:

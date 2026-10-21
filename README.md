@@ -293,7 +293,10 @@ pyzill db history 32463997
 `db history` accepts `--format json|jsonl|csv|table`. `db stats` accepts
 `--format json`; it uses human-readable text on a terminal and JSON when
 stdout is redirected. `db sync` and `db import` accept `--format json` to emit
-their count summary to stdout instead of the human summary on stderr.
+their count summary to stdout instead of the human summary on stderr. That
+summary names the run (`run_id`) and says whether the run was complete
+(`truncated`), so a script can tell a complete run from a partial one without
+reading the warnings on stderr.
 
 `db query` always writes valid JSON to stdout in `--format json`, including an
 empty array (`[]`) when nothing matches, so its output can be parsed without

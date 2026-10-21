@@ -19,6 +19,7 @@ from pyzill.cli.console import (
     context,
     emit,
     error,
+    network_errors,
     progress,
     read_json,
     report_notices,
@@ -69,7 +70,7 @@ from pyzill.db import (
     resolve_db_path,
     utc_now,
 )
-from pyzill.workflows import fetch_listings, import_rows, prepare_import, sync_to_db
+from pyzill.workflows import SyncResult, fetch_listings, import_rows, prepare_import, sync_to_db
 
 db_app = typer.Typer(name="db", help="Local SQLite database for tracking listings")
 
@@ -129,7 +130,25 @@ def _db_session(
         error(f"Database operation failed: {e}", code=1)
 
 
-def _report_sync_stats(stats: SyncStats, verb: str, output_format: OutputFormat | None) -> None:
+def _require_json_summary(output_format: OutputFormat | None) -> None:
+    """Reject a format the sync/import summary cannot render.
+
+    The check runs before the work, not after it: an empty result used to
+    skip it, so the same invalid flag exited 0 on an empty file and 2 on a
+    file with rows.
+    """
+    if output_format is not None and output_format is not OutputFormat.json:
+        error("db sync/import summaries only support --format json", code=2)
+
+
+def _report_sync_stats(result: SyncResult, verb: str, output_format: OutputFormat | None) -> None:
+    """Print the summary of a sync or an import.
+
+    The JSON summary carries the run's id and whether the run was truncated,
+    so a script can tell a complete run from a partial one without reading
+    the human-readable warnings on stderr.
+    """
+    stats = result.stats
     total = stats.added + stats.updated
     if output_format is OutputFormat.json:
         emit(
@@ -141,13 +160,13 @@ def _report_sync_stats(stats: SyncStats, verb: str, output_format: OutputFormat 
                     "updated": stats.updated,
                     "price_changes": stats.price_changes,
                     "skipped": stats.skipped,
+                    "run_id": result.run_id,
+                    "truncated": result.truncated,
                 }
             ),
             None,
         )
         return
-    if output_format is not None:
-        error("db sync/import summaries only support --format json", code=2)
     stderr_line(
         "green",
         f"{verb} {total} listings:",
@@ -189,15 +208,17 @@ def db_sync(  # noqa: PLR0913
         # when it records one; an empty query would make the run look like a
         # file import to change detection.
         error("Query must not be empty", code=2)
+    _require_json_summary(output_format)
 
     request = search_options_from_args(locals())
     viewport = prepare_search(request)
-    result = fetch_listings(
-        as_kind(kind),
-        request,
-        bbox=viewport.bbox,
-        on_progress=lambda used, total: progress(f"tile {used}:", f"{total} listings so far"),
-    )
+    with network_errors("Search failed"):
+        result = fetch_listings(
+            as_kind(kind),
+            request,
+            bbox=viewport.bbox,
+            on_progress=lambda used, total: progress(f"tile {used}:", f"{total} listings so far"),
+        )
     with _db_session(db_path) as conn:
         sync_result = sync_to_db(
             conn,
@@ -211,7 +232,7 @@ def db_sync(  # noqa: PLR0913
     if not sync_result.rows and output_format is not OutputFormat.json:
         warn("No listings found")
         return
-    _report_sync_stats(sync_result.stats, "Synced", output_format)
+    _report_sync_stats(sync_result, "Synced", output_format)
 
 
 @db_app.command("import")
@@ -229,16 +250,24 @@ def db_import(
     output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
 ) -> None:
     """Import listings from a saved JSON file (raw response or normalized array)."""
+    _require_json_summary(output_format)
     data = read_json(input_or_dash)
 
     # Detect input shape: raw rows (camelCase / response keys) get normalized,
     # rows that already use normalized field names are kept as-is so a re-import
     # of `db query` output doesn't null out street/city/etc.
-    rows, raw_rows = prepare_import(data)
+    try:
+        rows, raw_rows = prepare_import(data)
+    except ValueError as exc:
+        error(str(exc), code=2)
 
     if not rows:
         if output_format is OutputFormat.json:
-            _report_sync_stats(SyncStats(added=0, updated=0, price_changes=0, skipped=0), "Imported", output_format)
+            _report_sync_stats(
+                SyncResult(stats=SyncStats(added=0, updated=0, price_changes=0, skipped=0)),
+                "Imported",
+                output_format,
+            )
         else:
             warn("No listings to import")
         return
@@ -248,7 +277,7 @@ def db_import(
 
     with _db_session(db_path) as conn:
         result = import_rows(conn, rows, raw_rows, kind=as_kind(kind), seen_utc=fetched_at)
-    _report_sync_stats(result.stats, "Imported", output_format)
+    _report_sync_stats(result, "Imported", output_format)
 
 
 @db_app.command("query")

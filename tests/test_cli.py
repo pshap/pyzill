@@ -552,7 +552,7 @@ class TestNormalizeCommand:
         input_file.write_text("not json")
 
         result = runner.invoke(app, ["normalize", str(input_file)])
-        assert result.exit_code == 1
+        assert result.exit_code == 2
         assert "Invalid JSON" in result.stderr
 
     def test_normalize_rejects_missing_file(self):
@@ -1449,6 +1449,8 @@ class TestDatabaseCommands:
             "updated": 0,
             "price_changes": 0,
             "skipped": 0,
+            "run_id": 1,
+            "truncated": False,
         }
 
     def test_db_import_json_summary(self, tmp_path):
@@ -1468,7 +1470,83 @@ class TestDatabaseCommands:
             "updated": 0,
             "price_changes": 0,
             "skipped": 0,
+            "run_id": 1,
+            "truncated": False,
         }
+
+    def test_db_import_rejects_a_payload_that_is_not_a_listing_array(self, tmp_path):
+        """A payload that is not an object or an array is a usage error."""
+        input_file = tmp_path / "scalar.json"
+        input_file.write_text('"hello"')
+
+        result = runner.invoke(
+            app,
+            ["db", "import", str(input_file), "--db", str(tmp_path / "test.db")],
+        )
+
+        assert result.exit_code == 2
+        assert "Traceback" not in result.stderr
+
+    def test_db_sync_blocked_request_reports_the_error_not_a_traceback(self, fake_http, tmp_path):
+        """A blocked request must be a stable exit code, not an unhandled error.
+
+        A script has to be able to tell "Zillow blocked us" from "the tool
+        has a bug", so the sync command reports the library failures the
+        same way the search command does.
+        """
+        fake_http.install("PUT", status_code=403, text="blocked")
+
+        result = runner.invoke(
+            app,
+            ["--json-errors", "db", "sync", "sale", "12305", "--db", str(tmp_path / "blocked.db")],
+        )
+
+        assert result.exit_code == 3
+        payload = json.loads(result.stderr)
+        assert payload["error"]["code"] == "blocked"
+        assert payload["error"]["status_code"] == 403
+
+    def test_db_sync_rejects_a_format_it_cannot_render_before_it_searches(self, fake_http, tmp_path):
+        """The format check must not depend on whether the search found rows."""
+        fake_http.install("PUT", status_code=403, text="blocked")
+
+        result = runner.invoke(
+            app,
+            ["db", "sync", "sale", "12305", "--format", "csv", "--db", str(tmp_path / "test.db")],
+        )
+
+        assert result.exit_code == 2
+
+    def test_db_import_rejects_a_format_it_cannot_render_on_an_empty_file(self, tmp_path):
+        """An empty file must not skip the format check a full file gets."""
+        rows_file = tmp_path / "empty.json"
+        rows_file.write_text("[]")
+
+        result = runner.invoke(
+            app,
+            ["db", "import", str(rows_file), "--format", "csv", "--db", str(tmp_path / "test.db")],
+        )
+
+        assert result.exit_code == 2
+
+    def test_db_sync_json_summary_reports_a_truncated_run(self, fake_http, search_success_body, tmp_path):
+        """A script must be able to tell a complete run from a partial one."""
+        db_path = tmp_path / "truncated.db"
+        fake_http.install("PUT", json_data=search_success_body)
+        first = runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+        assert first.exit_code == 0
+
+        # Same query/bbox/filters, now empty: a soft block, not a real clear-out.
+        fake_http.install("PUT", json_data={"cat1": {"searchResults": {"mapResults": []}}})
+        result = runner.invoke(
+            app,
+            ["db", "sync", "sale", "12305", "--format", "json", "--db", str(db_path)],
+        )
+
+        assert result.exit_code == 0
+        summary = json.loads(result.stdout)
+        assert summary["truncated"] is True
+        assert summary["run_id"] > 0
 
     def test_db_sync_empty_results_warns(self, fake_http, tmp_path):
         fake_http.install("PUT", json_data={"cat1": {"searchResults": {"mapResults": []}}})

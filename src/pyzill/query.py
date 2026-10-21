@@ -53,6 +53,25 @@ class Condition:
     value: Any
 
 
+def _unquote(text: str) -> str:
+    """Return the literal inside a quoted value, or the value itself."""
+    literal = text.strip()
+    if len(literal) >= _QUOTED_LITERAL_LENGTH and literal[0] in "'\"" and literal[-1] == literal[0]:
+        return literal[1:-1]
+    return literal
+
+
+def _parse_number(literal: str) -> int | float | None:
+    """Parse a numeric literal, honoring the ``k`` and ``m`` suffixes."""
+    match = _NUMBER_RE.fullmatch(literal)
+    if match is None:
+        return None
+    suffix = (match.group(1) or "").lower()
+    number = float(literal.replace("$", "").replace(",", "").removesuffix(match.group(1) or ""))
+    number *= _NUMBER_SUFFIXES.get(suffix, 1)
+    return int(number) if number.is_integer() else number
+
+
 def coerce_value(text: str, field: str | None = None) -> Any:
     """Convert a query literal to a finite-format number, null, or string.
 
@@ -70,15 +89,12 @@ def coerce_value(text: str, field: str | None = None) -> Any:
         return value
     if quoted:
         return value
-    match = _NUMBER_RE.fullmatch(value)
-    if match is None:
+    number = _parse_number(value)
+    if number is None:
         if field is None:
             return value
         raise QueryValidationError(f"Field {field!r} is numeric; {text!r} is not a number")
-    suffix = (match.group(1) or "").lower()
-    number = float(value.replace("$", "").replace(",", "").removesuffix(match.group(1) or ""))
-    number *= _NUMBER_SUFFIXES.get(suffix, 1)
-    return int(number) if number.is_integer() else number
+    return number
 
 
 def _validate_condition(condition: Condition) -> None:
@@ -168,6 +184,41 @@ def _sql_column(field: str) -> str:
     return f"CAST({column} AS REAL)" if field in _NUMERIC_FIELDS else f"CAST({column} AS TEXT)"
 
 
+def _numeric_value(field: str, value: Any) -> int | float:
+    """Return the number a comparison against a numeric field compares with.
+
+    A quoted number is compared as a number, so ``price=='250000'`` finds the
+    rows that ``price==250000`` finds. A value that is not a number at all is
+    a usage error rather than a comparison that silently matches nothing.
+    """
+    if isinstance(value, bool):
+        raise QueryValidationError(f"Field {field!r} is numeric; {value!r} is not a number")
+    if isinstance(value, int | float):
+        return value
+    if isinstance(value, str):
+        number = _parse_number(_unquote(value))
+        if number is not None:
+            return number
+    raise QueryValidationError(f"Field {field!r} is numeric; {value!r} is not a number")
+
+
+def _sql_equality(field: str, column: str, operator: str, value: Any) -> tuple[str, list[Any]]:
+    """Compile an equality comparison with the value's type and the column's in step.
+
+    A number compared with a text column used to compile to a comparison
+    that could never be true, because the column was cast to text and then
+    compared with the number itself: ``zipcode==12305`` matched nothing even
+    though the column holds ``'12305'``. A quoted number compared with a
+    numeric column had the same problem in the other direction -- the column
+    was rendered as ``'250000.0'`` and compared with the text ``'250000'``.
+    """
+    sql_operator = "<>" if operator == "!=" else "="
+    if field in _NUMERIC_FIELDS:
+        return f"{column} {sql_operator} ?", [_numeric_value(field, value)]
+    text = value if isinstance(value, str) else str(value)
+    return f"lower({column}) {sql_operator} lower(?)", [text]
+
+
 def _sql_condition(condition: Condition) -> tuple[str, list[Any]]:
     field, operator, value = condition.field, condition.operator, condition.value
     column = _sql_column(field)
@@ -175,10 +226,24 @@ def _sql_condition(condition: Condition) -> tuple[str, list[Any]]:
         return f"{column} IS {'NOT ' if operator == '!=' else ''}NULL", []
     if operator == "~":
         return f"instr(lower(CAST({column} AS TEXT)), lower(?)) > 0", [str(value)]
-    if operator in _STRING_OPS and isinstance(value, str):
-        string_column = f"lower(CAST({column} AS TEXT))"
-        return f"{string_column} {'<>' if operator == '!=' else '='} lower(?)", [value]
+    if operator in _STRING_OPS:
+        return _sql_equality(field, column, operator, value)
     return f"{column} {'=' if operator == '==' else operator} ?", [value]
+
+
+def _projection_column(field: str) -> str:
+    """The SQL expression that yields a field's projected value.
+
+    ``ppsf`` is computed rather than stored, so the projection computes it in
+    SQL, with the same rounding and the same "unknown" rule the in-memory
+    projection uses.
+    """
+    if field == "ppsf":
+        return (
+            "(CASE WHEN price IS NOT NULL AND area IS NOT NULL AND price != 0 AND area != 0 "
+            'THEN ROUND(CAST(price AS REAL) / area, 2) END) AS "ppsf"'
+        )
+    return f'"{field}"'
 
 
 def _run_query(  # noqa: PLR0913
@@ -192,6 +257,7 @@ def _run_query(  # noqa: PLR0913
     limit: int | None,
     valid_fields: frozenset[str],
     default_order: str,
+    payload_column: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[str] | None]:
     conditions = _parse_conditions(where, where_json, valid_fields)
     for condition in conditions:
@@ -210,7 +276,17 @@ def _run_query(  # noqa: PLR0913
         column = _sql_column(field)
         order_clause = f'({column}) IS NULL ASC, {column} {direction.upper()}, "zpid" ASC'
 
-    sql = f'SELECT * FROM "{table}"'  # noqa: S608 - table names are internal constants
+    if payload_column is not None:
+        # A saved row is its payload; the table columns exist to filter and
+        # sort on, so they are not selected.
+        select_clause = f'"{payload_column}"'
+    elif selected:
+        # Projecting in SQL keeps the columns that were not asked for out of
+        # the result, so a narrow query does not read the whole table.
+        select_clause = ", ".join(_projection_column(column) for column in selected)
+    else:
+        select_clause = "*"
+    sql = f'SELECT {select_clause} FROM "{table}"'  # noqa: S608 - table names are internal constants
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY " + order_clause
@@ -222,8 +298,11 @@ def _run_query(  # noqa: PLR0913
     rows: list[dict[str, Any]] = []
     for record in cursor.fetchall():
         row = dict(zip(names, record, strict=True))
-        payload = json.loads(row.pop("__payload")) if "__payload" in row else row
-        rows.append({column: _field_value(payload, column) for column in selected} if selected else payload)
+        if payload_column is not None:
+            payload = json.loads(row[payload_column])
+            rows.append({column: _field_value(payload, column) for column in selected} if selected else payload)
+        else:
+            rows.append(row)
     return rows, selected
 
 
@@ -264,6 +343,7 @@ def query_rows(  # noqa: PLR0913
             limit=limit,
             valid_fields=valid_fields,
             default_order="rowid ASC",
+            payload_column="__payload",
         )
     finally:
         conn.close()

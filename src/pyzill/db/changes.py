@@ -4,9 +4,19 @@ import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
-from pyzill.db.queries import load_listings
-
 __all__ = ["get_changes"]
+
+
+def _observed_days(first_seen: str, now: datetime) -> int:
+    """Return how many days ago a listing was first seen.
+
+    A stored timestamp without a timezone is read as UTC, so a timestamp
+    written by hand cannot make the whole report fail.
+    """
+    first = datetime.fromisoformat(first_seen)
+    if first.tzinfo is None:
+        first = first.replace(tzinfo=UTC)
+    return max(0, (now - first).days)
 
 
 def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
@@ -17,55 +27,69 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
     order they occurred.
     """
     events: list[dict[str, Any]] = []
-    listings = {(row["zpid"], row["kind"]): row for row in load_listings(conn)}
+    now = datetime.now(UTC)
+
+    # Only the two columns the events need are read: the report is about
+    # changes, and loading every column of every listing made the cost of a
+    # report grow with the size of the database rather than with the size of
+    # the change.
+    listings = {
+        (zpid, kind): (price, first_seen)
+        for zpid, kind, price, first_seen in conn.execute("SELECT zpid, kind, price, first_seen_utc FROM listings")
+    }
 
     def observed_days(key: tuple[int, str]) -> int:
-        first_seen = listings[key]["first_seen_utc"]
-        first = datetime.fromisoformat(first_seen)
-        return max(0, (datetime.now(UTC) - first).days)
+        return _observed_days(listings[key][1], now)
 
-    for key, listing in listings.items():
-        if listing["first_seen_utc"] >= since:
+    for key, (price, first_seen) in listings.items():
+        if first_seen >= since:
             events.append(
                 {
                     "event": "new",
                     "zpid": key[0],
                     "kind": key[1],
-                    "price": listing["price"],
+                    "price": price,
                     # The listing was first seen when it first appeared; that
                     # is when the event happened, and it is what orders it
                     # against the price and status events below.
-                    "seen_utc": listing["first_seen_utc"],
+                    "seen_utc": first_seen,
                     "days_observed": observed_days(key),
                 }
             )
 
-    history = conn.execute(
-        "SELECT zpid, kind, price, seen_utc FROM price_history ORDER BY zpid, kind, seen_utc"
-    ).fetchall()
-    latest: dict[tuple[int, str], int] = {}
-    for zpid, kind, price, seen_utc in history:
+    # The previous price of a listing is the price of the row before it, so
+    # it is found in the database with a window function rather than by
+    # reading the whole history into memory. The window is computed over
+    # every row, so a price that moved before ``since`` is still the
+    # baseline the change is measured against.
+    for zpid, kind, price, seen_utc, previous in conn.execute(
+        "SELECT zpid, kind, price, seen_utc, previous_price FROM ("
+        "SELECT zpid, kind, price, seen_utc, "
+        "LAG(price) OVER (PARTITION BY zpid, kind ORDER BY seen_utc) AS previous_price "
+        "FROM price_history) WHERE seen_utc >= ?",
+        (since,),
+    ):
+        if previous is None or previous == price:
+            continue
         key = (zpid, kind)
-        previous = latest.get(key)
-        if seen_utc >= since and previous is not None and previous != price:
-            events.append(
-                {
-                    "event": "price_drop" if price < previous else "price_increase",
-                    "zpid": zpid,
-                    "kind": kind,
-                    "old_price": previous,
-                    "price": price,
-                    "seen_utc": seen_utc,
-                    "days_observed": observed_days(key) if key in listings else None,
-                }
-            )
-        latest[key] = price
+        events.append(
+            {
+                "event": "price_drop" if price < previous else "price_increase",
+                "zpid": zpid,
+                "kind": kind,
+                "old_price": previous,
+                "price": price,
+                "seen_utc": seen_utc,
+                "days_observed": observed_days(key) if key in listings else None,
+            }
+        )
 
     for zpid, kind, status, first_seen_utc in conn.execute(
         "SELECT zpid, kind, status, first_seen_utc FROM status_history "
         "WHERE first_seen_utc >= ? ORDER BY first_seen_utc",
         (since,),
     ):
+        key = (zpid, kind)
         events.append(
             {
                 "event": "status_change",
@@ -73,7 +97,7 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
                 "kind": kind,
                 "status": status,
                 "seen_utc": first_seen_utc,
-                "days_observed": observed_days((zpid, kind)) if (zpid, kind) in listings else None,
+                "days_observed": observed_days(key) if key in listings else None,
             }
         )
 
@@ -93,6 +117,10 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
         comparable.setdefault((kind, query, bbox_json, filters_json), []).append((run_id, started_utc))
     for run_list in comparable.values():
         prior_sets: list[set[tuple[int, str]]] = []
+        # Every listing any earlier run of this group saw. It is accumulated
+        # as the runs are walked, so the report costs one pass over the
+        # sightings rather than a union of all of them for every run.
+        all_prior: set[tuple[int, str]] = set()
         for run_id, started_utc in run_list:
             present = {
                 (zpid, kind)
@@ -110,7 +138,6 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
                     }
                     for key in sorted(prev_set - present)
                 )
-                all_prior = set().union(*prior_sets)
                 events.extend(
                     {
                         "event": "relisted",
@@ -121,6 +148,8 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
                     }
                     for key in sorted((present - prev_set) & all_prior)
                 )
+            prior_sets.append(present)
+            all_prior |= present
             prior_sets.append(present)
 
     return sorted(events, key=lambda event: (event["seen_utc"], event["zpid"], event["event"]))

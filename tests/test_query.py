@@ -153,3 +153,58 @@ def test_null_equality_tests_for_a_null_value() -> None:
 def test_null_rejected_in_where_json_conditions() -> None:
     with pytest.raises(QueryValidationError, match="cannot be compared with null"):
         query_rows([{"price": 100}], where_json='[{"field": "price", "op": ">", "value": null}]')
+
+
+class TestValueTypes:
+    """A comparison must keep the value's type and the column's in step."""
+
+    def _sources(self, rows: list[dict[str, Any]]):
+        connection = connect(":memory:")
+        upsert_listings(connection, rows, kind="sale", seen_utc="2026-10-01T00:00:00Z")
+        return connection
+
+    def test_a_quoted_number_matches_the_same_rows_as_a_bare_one(self) -> None:
+        """``price=='250000'`` must find what ``price==250000`` finds."""
+        rows = [{"zpid": 1, "price": 250000}, {"zpid": 2, "price": 300000}]
+        connection = self._sources(rows)
+        try:
+            for expression in ("price==250000", "price=='250000'"):
+                result, _ = query_rows(rows, where=[expression])
+                database_result, _ = query_database(connection, where=[expression])
+                assert [row["zpid"] for row in result] == [1], expression
+                assert [row["zpid"] for row in database_result] == [1], expression
+        finally:
+            connection.close()
+
+    def test_a_number_matches_a_text_column_that_holds_it(self) -> None:
+        """``zipcode==12305`` must find the row whose zipcode is ``'12305'``."""
+        rows = [{"zpid": 1, "zipcode": "12305"}, {"zpid": 2, "zipcode": "02134"}]
+        connection = self._sources(rows)
+        try:
+            for expression in ("zipcode==12305", "zipcode=='12305'"):
+                result, _ = query_rows(rows, where=[expression])
+                database_result, _ = query_database(connection, where=[expression])
+                assert [row["zpid"] for row in result] == [1], expression
+                assert [row["zpid"] for row in database_result] == [1], expression
+        finally:
+            connection.close()
+
+    def test_a_text_value_against_a_numeric_field_is_a_usage_error(self) -> None:
+        """A value that is not a number must not silently match nothing."""
+        with pytest.raises(QueryValidationError, match="is numeric"):
+            query_rows([{"price": 100}], where=["price=='not a number'"])
+
+    def test_a_text_value_against_a_numeric_field_is_a_usage_error_in_json(self) -> None:
+        with pytest.raises(QueryValidationError, match="is numeric"):
+            query_rows([{"price": 100}], where_json='[{"field": "price", "op": "==", "value": "abc"}]')
+
+    def test_a_projected_computed_column_has_the_same_value_in_both_sources(self) -> None:
+        """``ppsf`` is computed, not stored, and must read the same in both."""
+        rows = [{"zpid": 1, "price": 250000, "area": 1500}]
+        connection = self._sources(rows)
+        try:
+            file_result, _ = query_rows(rows, cols="zpid,ppsf")
+            database_result, _ = query_database(connection, cols="zpid,ppsf")
+            assert file_result == database_result == [{"zpid": 1, "ppsf": 166.67}]
+        finally:
+            connection.close()

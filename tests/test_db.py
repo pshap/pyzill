@@ -322,6 +322,62 @@ def test_get_changes_reports_price_status_and_comparable_delisting(tmp_path: Pat
     conn.close()
 
 
+def test_get_changes_survives_a_timestamp_without_a_timezone(tmp_path: Path):
+    """A hand-written timestamp must not take the whole report down."""
+    conn = connect(tmp_path / "naive.db")
+    conn.execute(
+        "INSERT INTO listings (zpid, kind, first_seen_utc, last_seen_utc) "
+        "VALUES (1, 'sale', '2026-10-01T00:00:00', '2026-10-01T00:00:00')"
+    )
+    conn.commit()
+
+    changes = get_changes(conn, "2026-10-01")
+
+    assert [(change["event"], change["zpid"]) for change in changes] == [("new", 1)]
+    conn.close()
+
+
+def test_get_changes_reads_only_what_the_events_need(tmp_path: Path):
+    """The report must not load every column of every listing.
+
+    A database that holds a hundred thousand listings must not cost a
+    hundred thousand rows of memory to answer "what changed since Friday".
+    """
+    conn = connect(tmp_path / "sized.db")
+    upsert_listings(
+        conn,
+        [{"zpid": index, "price": 100_000 + index} for index in range(2000)],
+        kind="sale",
+        seen_utc="2026-10-01T00:00:00Z",
+    )
+
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+    try:
+        get_changes(conn, "2026-10-01T00:00:00Z")
+    finally:
+        conn.set_trace_callback(None)
+
+    assert any("first_seen_utc" in statement and "FROM listings" in statement for statement in statements)
+    assert not any("SELECT * FROM listings" in statement for statement in statements)
+    conn.close()
+
+
+def test_get_changes_finds_a_price_move_whose_baseline_predates_the_window(tmp_path: Path):
+    """The previous price is found even when it was recorded before the window."""
+    conn = connect(tmp_path / "baseline.db")
+    upsert_listings(conn, [{"zpid": 1, "price": 300000}], kind="sale", seen_utc="2026-10-01T00:00:00Z")
+    upsert_listings(conn, [{"zpid": 1, "price": 250000}], kind="sale", seen_utc="2026-10-05T00:00:00Z")
+
+    changes = get_changes(conn, "2026-10-02T00:00:00Z")
+
+    price_events = [change for change in changes if change["event"].startswith("price_")]
+    assert [(event["event"], event["old_price"], event["price"]) for event in price_events] == [
+        ("price_drop", 300000, 250000)
+    ]
+    conn.close()
+
+
 def test_upsert_listings_persists_truncated_flag(tmp_path: Path):
     db_path = tmp_path / "truncated.db"
     conn = connect(db_path)

@@ -89,6 +89,45 @@ All notable changes to this project are documented here.
   normalizer read only the top-level `zpid`, so a listing that carried only
   the nested zpid was kept by one rule and dropped by the other. Both now
   read the zpid through one function, so they cannot disagree.
+- `db sync` reported a blocked request as an unexpected error. The command
+  did not translate the library's failures, so a 403 exited 1 with a
+  traceback instead of 3 with `{"error":{"code":"blocked"}}`; a schema drift
+  exited 1 instead of 5, and a transient failure exited 1 instead of 6. A
+  script could not tell "Zillow blocked us" from "the tool has a bug". The
+  command now reports the failures the way the search command does.
+- The sync and import summary did not say whether the run was complete. The
+  JSON summary carried the counts but not the run's id or whether it was
+  truncated, and the truncation warning was prose on stderr, so a script
+  could not tell a complete run from a partial one. The summary now carries
+  `run_id` and `truncated`.
+- A rejected `--format` was only rejected when the command found something.
+  `db import` on an empty file exited 0 with `--format csv`, while the same
+  flag on a file with rows exited 2. The check now runs before the work.
+- A comparison whose value did not match the column's type matched nothing.
+  `price=='250000'` compared the text `'250000'` with a REAL column rendered
+  as `'250000.0'`, and `zipcode==12305` compared the number 12305 with a
+  TEXT column, so both returned no rows. A value now keeps its type through
+  the comparison: a quoted number against a numeric field is compared as a
+  number, and a number against a text field is compared as the text it
+  renders to. A value that is not a number at all, compared with a numeric
+  field, is now a usage error instead of a comparison that silently matched
+  nothing.
+- `--cols` did not reduce what a query read. The projection happened in
+  Python after the query had fetched every column of every row, so a narrow
+  query still read the whole table. The projection is now part of the query.
+- The change report read the whole database. It loaded every column of
+  every listing and the whole price history, so the cost of "what changed
+  since Friday" grew with the size of the database: 50,000 listings took
+  6.8 seconds and 143 MB. The report now reads the two listing columns the
+  events need, finds the previous price with a window function in the
+  database, and accumulates the listings an earlier run saw in one pass.
+  The same report over 50,000 listings now takes 0.8 seconds and 17 MB.
+- A stored timestamp without a timezone took the whole change report down
+  with a `TypeError`. It is now read as UTC.
+- A file that is not valid JSON exited 1, the same as a file that is not
+  there exited 2. The input is the caller's, so a malformed file is now a
+  usage error, and `db import` reports a payload that is not a listing
+  array the way `pyzill normalize` does.
 
 ### Changed
 
