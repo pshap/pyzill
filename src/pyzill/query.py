@@ -10,6 +10,7 @@ do about it.
 import json
 import re
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -125,10 +126,12 @@ def _parse_conditions(
     where: list[str] | None,
     where_json: str | None,
     valid_fields: frozenset[str],
+    conditions: Sequence[Condition] | None = None,
 ) -> list[Condition]:
-    conditions = [_parse_where(expression, valid_fields) for expression in (where or [])]
+    parsed = [_parse_where(expression, valid_fields) for expression in (where or [])]
+    parsed.extend(_validated_conditions(conditions or [], valid_fields))
     if where_json is None:
-        return conditions
+        return parsed
     try:
         raw_conditions = json.loads(where_json)
     except json.JSONDecodeError as exc:
@@ -145,8 +148,26 @@ def _parse_conditions(
             raise QueryValidationError(f"Unknown operator {operator!r} in --where-json")
         if not isinstance(value, (str, int, float, bool, type(None))):
             raise QueryValidationError("--where-json values must be strings, numbers, booleans, or null")
-        conditions.append(Condition(field, operator, value))
-    return conditions
+        parsed.append(Condition(field, operator, value))
+    return parsed
+
+
+def _validated_conditions(
+    conditions: Sequence[Condition],
+    valid_fields: frozenset[str],
+) -> list[Condition]:
+    """Check structured conditions against the fields the query can read.
+
+    A condition that names a field the table does not have would compile to
+    SQL against a column that is not there, so it is rejected here with the
+    same error the expression form raises.
+    """
+    validated: list[Condition] = []
+    for condition in conditions:
+        if condition.field not in valid_fields:
+            raise QueryValidationError(f"Unknown field {condition.field!r}. Fields: {', '.join(sorted(valid_fields))}")
+        validated.append(condition)
+    return validated
 
 
 def _field_value(row: dict[str, Any], field: str) -> Any:
@@ -258,14 +279,15 @@ def _run_query(  # noqa: PLR0913
     valid_fields: frozenset[str],
     default_order: str,
     payload_column: str | None = None,
+    conditions: Sequence[Condition] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str] | None]:
-    conditions = _parse_conditions(where, where_json, valid_fields)
-    for condition in conditions:
+    parsed = _parse_conditions(where, where_json, valid_fields, conditions)
+    for condition in parsed:
         _validate_condition(condition)
     selected = _selected_columns(cols, valid_fields)
     clauses: list[str] = []
     parameters: list[Any] = []
-    for condition in conditions:
+    for condition in parsed:
         clause, values = _sql_condition(condition)
         clauses.append(clause)
         parameters.extend(values)
@@ -357,8 +379,14 @@ def query_database(  # noqa: PLR0913
     sort: str | None = None,
     cols: str | None = None,
     limit: int | None = None,
+    conditions: Sequence[Condition] | None = None,
 ) -> tuple[list[dict[str, Any]], list[str] | None]:
-    """Filter and sort the listings stored in the local database."""
+    """Filter and sort the listings stored in the local database.
+
+    The conditions may be given as expressions (``--where``), as JSON
+    (``--where-json``), or as structured :class:`Condition` objects. All
+    three go through the same engine, so they mean the same thing.
+    """
     return _run_query(
         conn,
         table="listings",
@@ -368,5 +396,6 @@ def query_database(  # noqa: PLR0913
         cols=cols,
         limit=limit,
         valid_fields=_DB_QUERY_FIELDS,
-        default_order='"last_seen_utc" DESC, "zpid" DESC',
+        default_order='"last_seen_utc" DESC, "zpid" DESC, "kind" ASC',
+        conditions=conditions,
     )

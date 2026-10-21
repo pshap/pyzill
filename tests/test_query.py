@@ -6,7 +6,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from pyzill.cli.query import QueryValidationError, query_database, query_rows
-from pyzill.db import connect, upsert_listings
+from pyzill.db import connect, load_listings, upsert_listings
 
 
 @st.composite
@@ -118,6 +118,64 @@ def test_kind_is_a_queryable_database_field() -> None:
         assert selected is None
         projected, _ = query_database(connection, cols="zpid,kind")
         assert {row["kind"] for row in projected} == {"sale", "rent"}
+    finally:
+        connection.close()
+
+
+def test_load_listings_and_the_query_engine_agree() -> None:
+    """The library read helper and the CLI query must answer the same question alike.
+
+    ``load_listings`` used to run its own SQL: a case-sensitive equality
+    filter, and an order that did not match the engine's. The same filter now
+    means the same thing wherever it is asked.
+    """
+    rows = [
+        {"zpid": 1, "price": 250000, "city": "Albany"},
+        {"zpid": 2, "price": 100000, "city": "Schenectady"},
+        {"zpid": 3, "price": 900000, "city": "albany"},
+    ]
+    connection = connect(":memory:")
+    try:
+        upsert_listings(connection, rows, seen_utc="2026-10-01T00:00:00Z")
+
+        assert (
+            load_listings(connection, filters={"city": "albany"})
+            == query_database(connection, where=["city==albany"])[0]
+        )
+        assert (
+            load_listings(connection, filters={"price": 250000})
+            == query_database(connection, where=["price==250000"])[0]
+        )
+        # A null value matches a null column in both.
+        assert load_listings(connection, filters={"city": None}) == query_database(connection, where=["city==null"])[0]
+        # And the row order is the same.
+        assert [row["zpid"] for row in load_listings(connection)] == [
+            row["zpid"] for row in query_database(connection)[0]
+        ]
+    finally:
+        connection.close()
+
+
+def test_load_listings_rejects_an_unknown_filter() -> None:
+    connection = connect(":memory:")
+    try:
+        with pytest.raises(ValueError, match="Unknown listing filter"):
+            load_listings(connection, filters={"not_a_column": 1})
+    finally:
+        connection.close()
+
+
+def test_load_listings_rejects_a_non_numeric_value_for_a_numeric_column() -> None:
+    """A numeric column compared with a value that is not a number is an error.
+
+    The engine raises rather than compiling a comparison that could never be
+    true, so the library helper raises too instead of matching nothing.
+    """
+    connection = connect(":memory:")
+    try:
+        upsert_listings(connection, [{"zpid": 1, "price": 250000}], seen_utc="2026-10-01T00:00:00Z")
+        with pytest.raises(ValueError, match="is not a number"):
+            load_listings(connection, filters={"price": "not a price"})
     finally:
         connection.close()
 
