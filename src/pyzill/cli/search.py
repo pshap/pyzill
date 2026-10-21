@@ -49,7 +49,7 @@ from pyzill.cli.options import (
 )
 from pyzill.cli.output import OutputFormat
 from pyzill.geocode import geocode
-from pyzill.tiling import _RESULT_CAP, tiled_search
+from pyzill.tiling import RESULT_CAP, tiled_search
 
 search_app = typer.Typer(name="search", help="Search Zillow listings")
 _ZIPCODE_LENGTH = 5
@@ -314,7 +314,7 @@ def fetch_and_normalize(
         nonlocal capped_at_depth
         capped_at_depth = True
         warn(
-            f"A tile still returned {_RESULT_CAP} listings at --max-depth {filters.max_depth}; results may be truncated"
+            f"A tile still returned {RESULT_CAP} listings at --max-depth {filters.max_depth}; results may be truncated"
         )
 
     with network_errors("Search failed"):
@@ -334,17 +334,17 @@ def fetch_and_normalize(
             )
         else:
             result = search_fn(bbox=bbox, **search_kwargs)
-            if len(result.get("mapResults", []) or []) >= _RESULT_CAP:
+            if len(result.get("mapResults", []) or []) >= RESULT_CAP:
                 warn(
-                    f"Zillow returned {_RESULT_CAP} listings, its per-search cap; "
+                    f"Zillow returned {RESULT_CAP} listings, its per-search cap; "
                     "use --tile to subdivide the bounding box"
                 )
 
     result["truncated"] = bool(
         capped_at_depth
         or result.get("budget_exhausted")
-        or len(result.get("mapResults", []) or []) >= _RESULT_CAP
-        or len(result.get("listResults", []) or []) >= _RESULT_CAP
+        or len(result.get("mapResults", []) or []) >= RESULT_CAP
+        or len(result.get("listResults", []) or []) >= RESULT_CAP
     )
     if raw:
         return result

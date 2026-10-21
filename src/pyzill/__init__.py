@@ -1,4 +1,18 @@
-import pyzill.details as _details
+from pyzill.api import (
+    for_rent,
+    for_sale,
+    get_from_apartment_id,
+    get_from_apartment_url,
+    get_from_department_id,
+    get_from_department_url,
+    get_from_home_id,
+    get_from_home_url,
+    iter_rent,
+    iter_sale,
+    iter_search,
+    iter_sold,
+    sold,
+)
 from pyzill.bbox import CONTINENTAL_US, BBox
 from pyzill.client import ZillowClient
 from pyzill.db import (
@@ -11,12 +25,6 @@ from pyzill.db import (
     load_listings,
     upsert_listings,
     utc_now,
-)
-from pyzill.details import (
-    get_from_apartment_id,
-    get_from_apartment_url,
-    get_from_home_id,
-    get_from_home_url,
 )
 from pyzill.exceptions import (
     ZillowBlockedError,
@@ -41,21 +49,8 @@ from pyzill.normalize import (
     parse_price,
 )
 from pyzill.ratelimit import get_min_interval, set_min_interval
-from pyzill.search import (
-    for_rent,
-    for_sale,
-    iter_rent,
-    iter_sale,
-    iter_search,
-    iter_sold,
-    sold,
-    split_bbox,
-    tiled_search,
-)
+from pyzill.tiling import split_bbox, tiled_search
 from pyzill.utils import parse_proxy, resolve_proxy
-
-get_from_department_id = _details.get_from_department_id
-get_from_department_url = _details.get_from_department_url
 
 __all__ = [
     "CONTINENTAL_US",

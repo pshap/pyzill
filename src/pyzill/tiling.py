@@ -8,10 +8,15 @@ from typing import Any
 
 from pyzill.bbox import CONTINENTAL_US, BBox
 
-__all__ = ["split_bbox", "tiled_search"]
+__all__ = ["RESULT_CAP", "split_bbox", "tiled_search"]
 
-_RESULT_CAP = 500
+# Zillow's per-search result cap. A search that returns this many rows was
+# truncated by Zillow, which is why tiling subdivides the viewport.
+RESULT_CAP = 500
 _DEFAULT_MAX_REQUESTS = 50
+
+# Compatibility alias for the historical private name.
+_RESULT_CAP = RESULT_CAP
 
 
 def _listing_identity(listing: Mapping[str, Any]) -> str:

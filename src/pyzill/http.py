@@ -8,9 +8,10 @@ import random
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from functools import cache
 from typing import Any, Literal, cast
 
-from curl_cffi.requests import ProxySpec, Response
+from curl_cffi.requests import ProxySpec, Response, Session
 from curl_cffi.requests.exceptions import RequestException
 
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, ZILLOW_HOME
@@ -21,7 +22,7 @@ from pyzill.exceptions import (
     ZillowNotFoundError,
     ZillowServerError,
 )
-from pyzill.ratelimit import RateLimiter
+from pyzill.ratelimit import RateLimiter, default_limiter
 from pyzill.utils import resolve_proxy
 
 __all__ = [
@@ -76,6 +77,16 @@ _RETRY_DELAY = 1.0
 # `scripts.perimeterx` tag for bot mitigation, so the bare word appears on
 # legitimate detail HTML. The markers below are challenge-specific.
 _BLOCK_MARKERS = ("px-captcha", "captcha-delivery")
+
+
+@cache
+def default_session() -> Any:
+    """Return the fallback session used when a request carries no session.
+
+    Callers that own a session (every :class:`~pyzill.client.ZillowClient`)
+    pass one in; this is the session for direct, one-off requests.
+    """
+    return Session()
 
 
 def json_body(response: Response) -> Any:
@@ -484,14 +495,10 @@ def request(  # noqa: PLR0913 - central request primitive
     last_exception: ZillowError = ZillowNetworkError(url)
     retry_delay = 0.0
 
-    if session is None or limiter is None:
-        # Imported here, not at module scope: pyzill.client imports this
-        # module, so a top-level import would be a cycle.
-        from pyzill.client import get_default_client
-
-        default_client = get_default_client()
-        session = session if session is not None else default_client.session
-        limiter = limiter if limiter is not None else default_client.limiter
+    if session is None:
+        session = default_session()
+    if limiter is None:
+        limiter = default_limiter()
 
     for attempt in range(options.max_retries + 1):
         limiter.wait(retry_delay)

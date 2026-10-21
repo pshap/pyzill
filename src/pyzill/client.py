@@ -1,23 +1,29 @@
-"""Stateful client for Zillow search and detail requests."""
+"""Stateful client for Zillow search and detail requests.
+
+The client is the composition root: it owns the HTTP session (one per proxy
+URL), the rate limiter, and the proxy rotation. It delegates the actual
+requests to the pure request/response modules (:mod:`pyzill.search_request`
+and :mod:`pyzill.detail_request`), so nothing below it has to know how a
+client works.
+"""
 
 from __future__ import annotations
 
-import re
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from functools import cache
 from typing import Any, TypeVar
-from urllib.parse import quote
 
 from curl_cffi import requests
 
-from pyzill import details, search
 from pyzill._kinds import Kind
+from pyzill.detail_request import apartment_target, fetch_apartment, fetch_home, home_target
 from pyzill.exceptions import ZillowBlockedError
-from pyzill.http import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, ZILLOW_HOME, RequestOptions
-from pyzill.parse import parse_body_departments, parse_body_home
-from pyzill.ratelimit import RateLimiter, _limiter, _SharedBudgetLimiter
+from pyzill.http import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, RequestOptions
+from pyzill.ratelimit import RateLimiter, SharedBudgetLimiter, default_limiter
+from pyzill.search_request import build_custom_params, build_kind_params, search_request
+from pyzill.tiling import tiled_search
 from pyzill.utils import resolve_proxy
 
 _HTTP_FORBIDDEN = 403
@@ -37,10 +43,10 @@ def _resolve_limiter(rate_limit: float | None, limiter_instance: RateLimiter | N
     if limiter_instance is not None:
         return limiter_instance
     if rate_limit is None:
-        return _limiter
+        return default_limiter()
     if rate_limit <= 0:
         return RateLimiter(min_interval=0.0)
-    return _SharedBudgetLimiter(_limiter, min_interval=rate_limit)
+    return SharedBudgetLimiter(default_limiter(), min_interval=rate_limit)
 
 
 class ZillowClient:
@@ -111,7 +117,7 @@ class ZillowClient:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def _options_for(self, kwargs: dict[str, Any]) -> tuple[RequestOptions, bool]:
+    def _options_for(self, kwargs: Mapping[str, Any]) -> tuple[RequestOptions, bool]:
         """Build the per-call options and report whether the proxy is pinned.
 
         A caller-supplied ``proxy_url`` pins the transport for that call: the
@@ -159,34 +165,40 @@ class ZillowClient:
             retry_options = replace(options, proxy_url=proxy_url, session=session)
             return call(retry_options)
 
-    def search_sale(self, **kwargs: Any) -> dict[str, Any]:
+    def _search(
+        self,
+        kind: Kind,
+        kwargs: Mapping[str, Any],
+        *,
+        is_room: bool = False,
+        is_entire_place: bool = False,
+    ) -> dict[str, Any]:
+        """Run one of the built-in search variants through this client."""
         options, pinned_proxy = self._options_for(kwargs)
+        params = build_kind_params(kind, kwargs, is_room=is_room, is_entire_place=is_entire_place)
         return self._invoke(
-            lambda request_options: search._for_sale_impl(**kwargs, options=request_options),
+            lambda request_options: search_request(params, request_options),
             options,
             pinned_proxy=pinned_proxy,
         )
+
+    def search_sale(self, **kwargs: Any) -> dict[str, Any]:
+        return self._search("sale", kwargs)
 
     def search_rent(self, **kwargs: Any) -> dict[str, Any]:
-        options, pinned_proxy = self._options_for(kwargs)
-        return self._invoke(
-            lambda request_options: search._for_rent_impl(**kwargs, options=request_options),
-            options,
-            pinned_proxy=pinned_proxy,
-        )
+        is_room = bool(kwargs.pop("is_room", False))
+        is_entire_place = bool(kwargs.pop("is_entire_place", False))
+        return self._search("rent", kwargs, is_room=is_room, is_entire_place=is_entire_place)
 
     def search_sold(self, **kwargs: Any) -> dict[str, Any]:
-        options, pinned_proxy = self._options_for(kwargs)
-        return self._invoke(
-            lambda request_options: search._sold_impl(**kwargs, options=request_options),
-            options,
-            pinned_proxy=pinned_proxy,
-        )
+        return self._search("sold", kwargs)
 
     def search(self, **kwargs: Any) -> dict[str, Any]:
+        """Run a raw search with a custom filter_state."""
         options, pinned_proxy = self._options_for(kwargs)
+        params = build_custom_params(kwargs)
         return self._invoke(
-            lambda request_options: search._search_impl(**kwargs, options=request_options),
+            lambda request_options: search_request(params, request_options),
             options,
             pinned_proxy=pinned_proxy,
         )
@@ -196,8 +208,13 @@ class ZillowClient:
         kind: Kind,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        search_fn = {"sale": self.search_sale, "rent": self.search_rent, "sold": self.search_sold}[kind]
-        return search.tiled_search(search_fn, **kwargs)
+        is_room = bool(kwargs.pop("is_room", False))
+        is_entire_place = bool(kwargs.pop("is_entire_place", False))
+
+        def search_fn(**tile_kwargs: Any) -> dict[str, Any]:
+            return self._search(kind, tile_kwargs, is_room=is_room, is_entire_place=is_entire_place)
+
+        return tiled_search(search_fn, **kwargs)
 
     def home(self, zpid_or_url: int | str, *, options: RequestOptions | None = None) -> dict[str, Any]:
         base = options or self.options
@@ -205,19 +222,10 @@ class ZillowClient:
         # A caller-provided proxy pins this request; the client's own pool is
         # only rotated through when the caller did not choose a transport.
         pinned_proxy = options is not None and base.proxy_url is not None
-        if isinstance(zpid_or_url, str) and zpid_or_url.startswith("https://"):
-            match = re.search(r"(\d+)_zpid", zpid_or_url)
-            requested_zpid = match.group(1) if match else None
-            url = zpid_or_url
-        else:
-            requested_zpid = int(zpid_or_url)
-            url = f"{ZILLOW_HOME}/homedetails/any-title/{requested_zpid}_zpid/"
-
-        def parser(body: bytes) -> dict[str, Any]:
-            return parse_body_home(body, requested_zpid)
+        url, requested_zpid = home_target(zpid_or_url)
 
         def call(selected: RequestOptions) -> dict[str, Any]:
-            return details._fetch(url, parser, selected)
+            return fetch_home(url, requested_zpid, selected)
 
         return self._invoke(call, request_options, pinned_proxy=pinned_proxy)
 
@@ -225,13 +233,10 @@ class ZillowClient:
         base = options or self.options
         request_options = replace(base, session=self._session_for(base.proxy_url), limiter=self.limiter)
         pinned_proxy = options is not None and base.proxy_url is not None
-        if apartment_id_or_url.startswith("https://"):
-            url = apartment_id_or_url
-        else:
-            url = f"{ZILLOW_HOME}/apartments/{quote(apartment_id_or_url.strip(), safe='')}/"
+        url = apartment_target(apartment_id_or_url)
 
         def call(selected: RequestOptions) -> dict[str, Any]:
-            return details._fetch(url, parse_body_departments, selected)
+            return fetch_apartment(url, selected)
 
         return self._invoke(call, request_options, pinned_proxy=pinned_proxy)
 
@@ -239,4 +244,4 @@ class ZillowClient:
 @cache
 def get_default_client() -> ZillowClient:
     """Return the lazily initialized module-level client."""
-    return ZillowClient(_limiter_instance=_limiter)
+    return ZillowClient(_limiter_instance=default_limiter())

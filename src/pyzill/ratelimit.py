@@ -49,7 +49,7 @@ class RateLimiter:
         self.min_interval = max(0.0, min_interval)
 
 
-class _SharedBudgetLimiter(RateLimiter):
+class SharedBudgetLimiter(RateLimiter):
     """Throttle against the process-wide request budget and a client interval.
 
     Every pyzill client in a process shares one request budget for Zillow, so
@@ -102,6 +102,19 @@ def _read_min_interval() -> float:
 # Shared limiter used by both search and detail requests so that all traffic
 # to Zillow is throttled together.
 _limiter = RateLimiter(min_interval=_read_min_interval())
+
+# Compatibility alias: the class used to be private.
+_SharedBudgetLimiter = SharedBudgetLimiter
+
+
+def default_limiter() -> RateLimiter:
+    """Return the process-wide request-budget limiter.
+
+    Every client in a process shares this budget unless it opts out with an
+    explicit ``rate_limit``, so it is the limiter used whenever no other one
+    is supplied.
+    """
+    return _limiter
 
 
 def set_min_interval(min_interval: float) -> None:

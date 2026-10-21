@@ -59,6 +59,21 @@ All notable changes to this project are documented here.
   dev dependency for coverage runs.
 
 ### Changed
+- The import cycles between the transport, request, and client layers are
+  gone. `pyzill.http` no longer reaches up into `pyzill.client` for a default
+  session (it owns a fallback session and the process-wide limiter itself),
+  and no module imports another lazily any more. The module-level entry
+  points (`for_sale`, `for_rent`, `sold`, `search`, the `iter_*` helpers, and
+  the `get_from_*` detail fetchers) now live in one module above the client,
+  `pyzill.api`; `pyzill.search` and `pyzill.details` remain as
+  compatibility re-exports, so every documented import path still works.
+  The request building moved into the pure `pyzill.search_request` and
+  `pyzill.detail_request` modules, and `pyzill.client` is now only the
+  composition root (sessions, rate limiting, proxy rotation). Search
+  keywords are split into query fields and transport fields. Behavior,
+  signatures, and results are unchanged.
+- The Zillow per-search result cap is now a public constant
+  (`pyzill.tiling.RESULT_CAP`) instead of a private one.
 - Core knowledge was deduplicated: the Zillow origin constant now lives in
   `pyzill.config` (re-exported from `pyzill.http` for compatibility), the
   "is this an HTTPS zillow.com URL?" rule now lives in the new `pyzill.urls`
