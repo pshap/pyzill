@@ -143,9 +143,7 @@ class TestUsableListings:
 
     def test_each_row_is_normalized_once(self, monkeypatch):
         """Selecting the result list and filtering it share one normalization."""
-        client = FakeClient(
-            {"mapResults": [_listing(1), _listing(2)], "listResults": [_listing(3)]}
-        )
+        client = FakeClient({"mapResults": [_listing(1), _listing(2)], "listResults": [_listing(3)]})
         monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         calls: list[Any] = []
@@ -163,9 +161,7 @@ class TestUsableListings:
 
     def test_a_numeric_zipcode_still_matches_the_searched_zipcode(self, monkeypatch):
         """Zillow sometimes sends the zipcode as a number."""
-        client = FakeClient(
-            {"mapResults": [{"zpid": 1, "price": 100, "addressZipcode": 12305}], "listResults": []}
-        )
+        client = FakeClient({"mapResults": [{"zpid": 1, "price": 100, "addressZipcode": 12305}], "listResults": []})
         monkeypatch.setattr("pyzill.workflows.search.get_default_client", lambda: client)
 
         result = fetch_listings("sale", SearchRequest(query="12305"), bbox=BBOX)

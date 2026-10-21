@@ -33,9 +33,7 @@ def usable_row_count(rows: list[Any], *, zipcode: str | None = None) -> int:
     return len(_usable_listings(rows, zipcode=zipcode))
 
 
-def _usable_listings(
-    rows: list[Any], *, zipcode: str | None = None
-) -> list[tuple[Mapping[str, Any], Listing]]:
+def _usable_listings(rows: list[Any], *, zipcode: str | None = None) -> list[tuple[Mapping[str, Any], Listing]]:
     """Return the (raw, normalized) pairs of the rows that are real listings.
 
     A row counts as a listing when it is a dict, is not a building-only
