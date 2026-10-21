@@ -139,7 +139,8 @@ pyzill search sale "Schenectady NY" --max-price 400000 --min-beds 3
 - Results are cached on disk (`~/.cache/pyzill/geocode.json`, override with
   `XDG_CACHE_HOME`) so repeated searches for the same place are instant. The
   cache is updated under a lock, so concurrent processes don't lose each
-  other's entries.
+  other's entries. Entries expire after 30 days, and the cache keeps the
+  1000 most recent places.
 - Pass an explicit bbox to skip geocoding entirely.
 - `--proxy` applies to Zillow requests; Nominatim geocoding is direct by default.
 - If geocoding fails, the CLI exits with code 1 and tells you to pass an
@@ -792,7 +793,7 @@ ruff format .     # format
 mypy              # type-check (strict; config in pyproject.toml)
 ```
 
-The `@pytest.mark.live` smoke checks are skipped by default and in CI. To opt
+The `@pytest.mark.live` smoke checks are skipped by default. To opt
 in, set `PYZILL_LIVE=1`. They hit a fixed Schenectady viewport for
 sale/rent/sold search, resolve a zpid from the sale search for the home-detail
 check, and exercise the live Nominatim geocode path once.
