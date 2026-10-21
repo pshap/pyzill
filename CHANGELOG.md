@@ -5,6 +5,11 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Added
+- A test that enforces the package's layer map (`tests/test_layering.py`):
+  modules may only import modules in their own layer or a lower one, the
+  package facade may not be a dependency of the package's own modules, and
+  no module may import a pyzill module inside a function body. The map is
+  documented in `AGENTS.md`.
 - A workflow layer (`pyzill.workflows`) for library users: `fetch_listings`
   searches and normalizes in one call, `sync_to_db` upserts a search into
   the local database, `import_rows` stores listings you already have, and

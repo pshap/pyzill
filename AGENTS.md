@@ -7,6 +7,32 @@
 - The default test suite is offline. Live requests are opt-in with `PYZILL_LIVE=1 pytest -m live`; never enable them for routine checks.
 - Record user-visible changes in `README.md` and `CHANGELOG.md`.
 
+## Package Layers
+
+Imports may only point downward. The map below is enforced by
+`tests/test_layering.py` (offline, AST-based, no new dependency).
+
+| Layer | Modules | Holds |
+|---|---|---|
+| 0 core | `config`, `exceptions`, `_kinds`, `bbox`, `proxy`, `urls`, `utils` | constants, the exception taxonomy, the listing kinds, the URL and credential rules |
+| 1 transport | `http`, `ratelimit` | the retry loop, the headers, the request budget |
+| 2 data | `parse`, `normalize` | page parsing and the normalized listing shape |
+| 3 request/response | `search_request`, `detail_request`, `geocode`, `tiling` | building requests, checking responses |
+| 4 client | `client` | sessions, proxy rotation, the rate limiter |
+| 5 convenience API | `api` (re-exported by `search` and `details`) | the module-level entry points over the default client |
+| 6 database | `db/*`, `query` | the schema, the write path, the query engine |
+| 7 services | `workflows` | the search/sync/import workflows |
+| 8 CLI | `cli/*` | Typer wiring: flags to request objects, exceptions to exit codes, results to output |
+| 9 facade | `pyzill/__init__.py` | the public names; only the outside world may import it |
+
+Layer rules:
+
+- No function-local imports of pyzill modules: a lazy import is how an import cycle hides.
+- The package facade is not a dependency of the package's own modules.
+- The workflow layer never prints and never exits the process; it returns data and structured notices, and the CLI decides what to report.
+- One listing-kind type (`pyzill._kinds`), one credential redaction helper (`pyzill.proxy.redact_credentials`), one Zillow URL rule (`pyzill.urls`), one listing field list (`pyzill.normalize.Listing`, from which the database columns and the numeric fields are derived).
+- The sync-run lifecycle belongs to `pyzill.db.runs`: the caller creates the run (with the query, viewport, and filters that make two runs comparable) and the write path finishes it.
+
 ## Request Budget and Rate Limits
 
 - Requests are rate-limited per configured minimum interval (default 1.5 seconds); `--rate-limit 0` disables the delay.
