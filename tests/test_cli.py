@@ -13,7 +13,9 @@ from typer.testing import CliRunner
 from pyzill.bbox import BBox
 from pyzill.cli import app, main_entry
 from pyzill.cli.search import extract_listings
+from pyzill.db import connect, upsert_listings
 from pyzill.geocode import GeoResult
+from pyzill.query import query_database
 
 runner = CliRunner()
 
@@ -95,6 +97,48 @@ class TestRootAndHelp:
         assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
         assert schema["$id"].endswith("/listing/1.0.0")
         assert schema["properties"]["zipcode"]["anyOf"][-1] == {"type": "null"}
+
+    def test_db_listing_schema_command_is_versioned_json(self):
+        result = runner.invoke(app, ["schema", "db-listing"])
+
+        assert result.exit_code == 0
+        schema = json.loads(result.stdout)
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert schema["$id"].endswith("/db-listing/1.0.0")
+        assert schema["additionalProperties"] is False
+        # The kind and the two timestamps the database adds are described too.
+        assert schema["properties"]["kind"] == {"type": "string"}
+        assert schema["properties"]["first_seen_utc"] == {"type": "string"}
+        assert schema["properties"]["price"]["anyOf"][-1] == {"type": "null"}
+        # The computed price per square foot is projectable, so it is described.
+        assert schema["properties"]["ppsf"]["anyOf"][0] == {"type": "number"}
+
+    def test_db_listing_schema_covers_every_column_db_query_returns(self, tmp_path):
+        """The published schema must describe what the query command emits."""
+        db_path = tmp_path / "schema.db"
+        conn = connect(db_path)
+        upsert_listings(conn, [{"zpid": 1, "price": 250000, "city": "Albany"}], seen_utc="2026-10-01T00:00:00Z")
+        rows, _ = query_database(conn)
+        conn.close()
+
+        result = runner.invoke(app, ["schema", "db-listing"])
+        schema = json.loads(result.stdout)
+
+        assert set(rows[0]) <= set(schema["properties"])
+        assert set(schema["properties"]) - set(rows[0]) == {"ppsf"}
+
+    def test_detail_schema_command_describes_the_normalized_detail(self):
+        result = runner.invoke(app, ["schema", "detail"])
+
+        assert result.exit_code == 0
+        schema = json.loads(result.stdout)
+        assert schema["$id"].endswith("/detail/1.0.0")
+        # A list-typed field is an array, not an empty (accept-anything) schema.
+        assert schema["properties"]["schools"]["anyOf"][0] == {
+            "type": "array",
+            "items": {"type": "object"},
+        }
+        assert schema["properties"]["description"]["anyOf"][-1] == {"type": "null"}
 
     def test_no_args_shows_help(self):
         result = runner.invoke(app, [])
