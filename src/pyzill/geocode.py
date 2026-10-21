@@ -7,6 +7,11 @@ place cost no network traffic.
 Nominatim's usage policy requires a descriptive User-Agent and at most one
 request per second; the CLI's caller-side throttle plus the on-disk cache keep
 us well under that.
+
+This module talks to Nominatim directly instead of going through
+``pyzill.http``: it is a different host with a different identity (a
+descriptive tool User-Agent, not a browser fingerprint), its own one-request
+per-second policy, and its own cache. The shared transport is for Zillow.
 """
 
 import json

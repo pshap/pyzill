@@ -7,8 +7,11 @@ configurable via --db or PYZILL_DB.
 The implementation is split across submodules: :mod:`pyzill.db.runs` for sync-run
 bookkeeping, :mod:`pyzill.db.schema` for the DDL and migrations,
 :mod:`pyzill.db.connection` for opening the database, :mod:`pyzill.db.upsert`
-for writes, :mod:`pyzill.db.queries` for reads, and :mod:`pyzill.db.stats` for
-summary figures. This package re-exports the public names.
+for writes, :mod:`pyzill.db.queries` for reads, :mod:`pyzill.db.changes` for
+the change events, :mod:`pyzill.db.paths` for the database location,
+:mod:`pyzill.db.timestamps` for the stored timestamps, and
+:mod:`pyzill.db.stats` for summary figures. This package re-exports the
+public names.
 """
 
 from pyzill.db.changes import get_changes
