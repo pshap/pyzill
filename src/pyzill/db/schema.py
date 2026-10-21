@@ -224,6 +224,96 @@ def _addable_definition(definition: str) -> str:
     return definition
 
 
+# The value a column takes when the old table does not have it. The kind
+# falls back to the DDL's default, and the two timestamps to the moment the
+# database was rebuilt; every other column is nullable.
+_NOW_SQL = "strftime('%Y-%m-%dT%H:%M:%SZ','now')"
+_LEGACY_COLUMN_FALLBACKS = {
+    "kind": "'sale'",
+    "first_seen_utc": _NOW_SQL,
+    "last_seen_utc": _NOW_SQL,
+}
+
+
+def _has_listings_table(conn: sqlite3.Connection) -> bool:
+    """True when the database already holds a listings table."""
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'listings'").fetchone()
+    return row is not None
+
+
+def _legacy_column_sql(column: str, old_columns: set[str]) -> str:
+    """Return the SQL that reads one column out of a legacy listings table.
+
+    A column the old table has is read from it. A column it does not have
+    takes the fallback: the kind becomes a sale, the timestamps become the
+    moment of the rebuild, and anything else becomes null.
+    """
+    if column in old_columns:
+        return f'"{column}"'
+    return _LEGACY_COLUMN_FALLBACKS.get(column, "NULL")
+
+
+def _rebuild_legacy_tables(conn: sqlite3.Connection) -> None:
+    """Rebuild a listings database of unknown provenance to the current schema.
+
+    A database that has a ``listings`` table but no schema version predates
+    the versioning, or had its version stamp cleared. Its shape is whatever
+    it was, so the tables are rebuilt from the current DDL: the columns the
+    old table has are carried across, and a column it does not have takes
+    the fallback above. A price history row for a listing that is not in the
+    table is dropped, because the rebuilt history references the listings.
+    """
+    old_columns = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
+    has_history = (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'price_history'").fetchone()
+        is not None
+    )
+    history_columns: set[str] = set()
+    if has_history:
+        history_columns = {row[1] for row in conn.execute("PRAGMA table_info(price_history)")}
+
+    conn.execute("DROP TABLE IF EXISTS listings_legacy_staging")
+    conn.execute("CREATE TABLE listings_legacy_staging AS SELECT * FROM listings")
+    if has_history:
+        conn.execute("DROP TABLE IF EXISTS price_history_legacy_staging")
+        conn.execute("CREATE TABLE price_history_legacy_staging AS SELECT * FROM price_history")
+
+    conn.execute("DROP TABLE IF EXISTS price_history")
+    conn.execute("DROP TABLE IF EXISTS listings")
+    conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
+
+    columns_sql = ", ".join(f'"{column}"' for column in LISTING_TABLE_COLUMNS)
+    values_sql = ", ".join(_legacy_column_sql(column, old_columns) for column in LISTING_TABLE_COLUMNS)
+    # The column list is the fixed LISTING_TABLE_COLUMNS constant, not user input.
+    conn.execute(f"INSERT INTO listings ({columns_sql}) SELECT {values_sql} FROM listings_legacy_staging")  # noqa: S608
+    conn.execute("DROP TABLE listings_legacy_staging")
+
+    conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
+    if has_history:
+        # A history row keeps the kind it had; a history table that has no
+        # kind column holds sale prices.
+        if "kind" in history_columns:
+            kind_select = 'h."kind"'
+            kind_match = 'h."kind"'
+        else:
+            kind_select = "'sale'"
+            kind_match = "'sale'"
+        zpid_select = 'h."zpid"' if "zpid" in history_columns else "NULL"
+        price_select = 'h."price"' if "price" in history_columns else "NULL"
+        seen_select = 'h."seen_utc"' if "seen_utc" in history_columns else _NOW_SQL
+        # The column names come from the fixed schema constants, not user input.
+        conn.execute(
+            "INSERT INTO price_history (zpid, kind, price, seen_utc) "  # noqa: S608
+            f"SELECT {zpid_select}, {kind_select}, {price_select}, {seen_select} "
+            "FROM price_history_legacy_staging h "
+            f"WHERE EXISTS (SELECT 1 FROM listings l WHERE l.zpid = h.zpid AND l.kind = {kind_match})"
+        )
+        conn.execute("DROP TABLE price_history_legacy_staging")
+
+    for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
+        conn.execute(statement)
+
+
 def _backfill_listing_columns(conn: sqlite3.Connection) -> None:
     """Add any ``LISTING_TABLE_COLUMNS`` column missing from ``listings``.
 
@@ -263,10 +353,17 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         )
     if version < SCHEMA_VERSION:
         if version == 0:
-            conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
-            conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
-            for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
-                conn.execute(statement)
+            if _has_listings_table(conn):
+                # A listings table with no version stamp is a database of
+                # unknown provenance, not a fresh file. Assuming it is fresh
+                # would leave the old table in place and then fail to build
+                # an index over a column it does not have, so it is rebuilt.
+                _rebuild_legacy_tables(conn)
+            else:
+                conn.execute(_CREATE_LISTINGS_SQL.format(name="listings"))
+                conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
+                for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
+                    conn.execute(statement)
             version = SCHEMA_VERSION
         while version < SCHEMA_VERSION:
             migration = _MIGRATIONS.get(version)

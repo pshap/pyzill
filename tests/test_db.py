@@ -1260,6 +1260,66 @@ def test_v1_database_migrates_kind_columns_and_history(tmp_path: Path):
     fresh.close()
 
 
+def test_unversioned_database_with_a_listings_table_is_rebuilt(tmp_path: Path):
+    """A listings table with no version stamp is rebuilt, not treated as fresh.
+
+    Assuming such a database was fresh left the old table in place and then
+    failed to build an index over a column it did not have, so the database
+    could not be opened at all.
+    """
+    db_path = tmp_path / "unversioned.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(
+        """
+        CREATE TABLE listings (
+            zpid INTEGER PRIMARY KEY,
+            price INTEGER,
+            city TEXT,
+            first_seen_utc TEXT NOT NULL,
+            last_seen_utc TEXT NOT NULL
+        );
+        CREATE TABLE price_history (
+            zpid INTEGER NOT NULL REFERENCES listings(zpid) ON DELETE CASCADE,
+            price INTEGER NOT NULL,
+            seen_utc TEXT NOT NULL,
+            PRIMARY KEY (zpid, seen_utc)
+        );
+        INSERT INTO listings VALUES (1, 100, 'Albany', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+        INSERT INTO listings VALUES (2, 200, 'Troy', '2026-01-02T00:00:00Z', '2026-01-02T00:00:00Z');
+        INSERT INTO price_history VALUES (1, 100, '2026-01-01T00:00:00Z');
+        INSERT INTO price_history VALUES (2, 200, '2026-01-02T00:00:00Z');
+        -- A history row for a listing that is not there cannot be carried
+        -- across: the rebuilt history references the listings table.
+        INSERT INTO price_history VALUES (99, 999, '2026-01-03T00:00:00Z');
+        """
+    )
+    legacy.close()
+
+    conn = connect(db_path)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    # The rows are kept, and the kind the old table did not have is filled in.
+    assert conn.execute("SELECT zpid, kind, price, city FROM listings ORDER BY zpid").fetchall() == [
+        (1, "sale", 100, "Albany"),
+        (2, "sale", 200, "Troy"),
+    ]
+    assert conn.execute("SELECT zpid, kind FROM price_history ORDER BY zpid").fetchall() == [
+        (1, "sale"),
+        (2, "sale"),
+    ]
+    # The rebuilt table has the current primary key and the current indexes.
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'listings'").fetchone()[0]
+    assert "PRIMARY KEY (zpid, kind)" in ddl
+    indexes = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert "ix_listings_kind_zipcode" in indexes
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    # The rebuilt database is usable.
+    upsert_listings(conn, [{"zpid": 3, "price": 300}], seen_utc="2026-10-01T00:00:00Z")
+    assert load_listings(conn)[0]["zpid"] == 3
+    conn.close()
+
+
 def test_v1_migration_carries_wide_columns_across_rebuild(tmp_path: Path):
     db_path = tmp_path / "wide_v1.db"
     legacy = sqlite3.connect(db_path)
