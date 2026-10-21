@@ -106,6 +106,31 @@ class SearchFilters:
     max_requests: int = 50
 
 
+# How each search filter reaches the search request: the filter's name in
+# :class:`SearchFilters` and the query field it fills.  The search request
+# owns the wire names, so this table is the only place the two vocabularies
+# meet.  Every filter is either listed here, is a viewport bound, or is a
+# tiling knob; a test keeps that true.
+_FILTER_PARAMS: Mapping[str, str] = {
+    "zoom": "zoom_value",
+    "min_beds": "min_beds",
+    "max_beds": "max_beds",
+    "min_bathrooms": "min_bathrooms",
+    "max_bathrooms": "max_bathrooms",
+    "min_price": "min_price",
+    "max_price": "max_price",
+}
+
+# The filters that describe the searched area.  They resolve to a viewport
+# instead of reaching the search request.
+_VIEWPORT_FILTERS: tuple[str, ...] = ("north", "south", "east", "west")
+
+# The filters that bound the tiling run.  They describe how the run is
+# carried out, not what it searches, so they never reach the search request
+# and are not part of the comparable-filter key.
+_BUDGET_FILTERS: tuple[str, ...] = ("tile", "max_depth", "max_requests")
+
+
 @dataclass(frozen=True, slots=True)
 class SearchRequest:
     """One search: the query, its filters, and the transport to use."""
@@ -164,22 +189,39 @@ def usable_row_count(rows: list[Any], *, zipcode: str | None = None) -> int:
     ``"47.61503--122.34274"``), so the check is on the normalized zpid
     rather than the flag alone.
     """
-    count = 0
+    return len(_usable_listings(rows, zipcode=zipcode))
+
+
+def _usable_listings(
+    rows: list[Any], *, zipcode: str | None = None
+) -> list[tuple[Mapping[str, Any], Listing]]:
+    """Return the (raw, normalized) pairs of the rows that are real listings.
+
+    A row counts as a listing when it is a dict, is not a building-only
+    card, and normalizes to a listing with an integer zpid.  Rows whose
+    zipcode is not the one searched for are dropped as well.
+
+    Every caller that needs "the real listings in these rows" goes through
+    this function, so the rule that picks between ``mapResults`` and
+    ``listResults`` and the filter that follows it can never disagree.
+    """
+    usable: list[tuple[Mapping[str, Any], Listing]] = []
     for row in rows:
         if not isinstance(row, dict) or is_building_result(row):
             continue
         normalized = normalize_listing(row)
-        if (
-            normalized is not None
-            and isinstance(normalized["zpid"], int)
-            and (zipcode is None or normalized["zipcode"] == zipcode)
-        ):
-            count += 1
-    return count
+        if normalized is None or normalized["zpid"] is None:
+            continue
+        if zipcode is not None and normalized["zipcode"] != zipcode:
+            continue
+        usable.append((row, normalized))
+    return usable
 
 
-def extract_listings(data: Any, *, wrap_single: bool = False, zipcode: str | None = None) -> list[Any]:
-    """Pull the listing list out of a Zillow response (or a bare list).
+def _select_listings(
+    data: Any, *, wrap_single: bool, zipcode: str | None
+) -> tuple[list[Any], list[tuple[Mapping[str, Any], Listing]]]:
+    """Return a response's listing list and the real listings in it.
 
     Digs through nested response containers (``cat1`` / ``cat2`` /
     ``searchResults``) so a full saved search body works, not just the
@@ -196,18 +238,42 @@ def extract_listings(data: Any, *, wrap_single: bool = False, zipcode: str | Non
         ValueError: If the payload is neither an object nor an array.
     """
     if isinstance(data, list):
-        return data
+        return data, _usable_listings(data, zipcode=zipcode)
     if isinstance(data, dict):
-        candidates = [data[key] or [] for key in ("mapResults", "listResults") if key in data]
+        candidates: list[list[Any]] = []
+        for key in ("mapResults", "listResults"):
+            if key not in data:
+                continue
+            value = data[key]
+            candidates.append(value if isinstance(value, list) else [])
         if candidates:
-            return max(candidates, key=lambda rows: usable_row_count(rows, zipcode=zipcode))
+            # Each candidate is normalized once, and the winner's result is
+            # reused, so no row is normalized twice.
+            scored = [(_usable_listings(rows, zipcode=zipcode), rows) for rows in candidates]
+            usable, rows = max(scored, key=lambda candidate: len(candidate[0]))
+            return rows, usable
         for key in ("cat1", "cat2", "searchResults"):
             if key in data:
                 # It's a response envelope: honor its (possibly empty) contents
                 # rather than treating the envelope itself as a listing.
-                return extract_listings(data[key], zipcode=zipcode)
-        return [data] if wrap_single else []
+                return _select_listings(data[key], wrap_single=wrap_single, zipcode=zipcode)
+        if wrap_single:
+            return [data], _usable_listings([data], zipcode=zipcode)
+        return [], []
     raise ValueError("Input must be a JSON object or array")
+
+
+def extract_listings(data: Any, *, wrap_single: bool = False, zipcode: str | None = None) -> list[Any]:
+    """Pull the listing list out of a Zillow response (or a bare list).
+
+    The list is returned as Zillow sent it, building cards included; use
+    :func:`normalize_listings` to drop those.
+
+    Raises:
+        ValueError: If the payload is neither an object nor an array.
+    """
+    rows, _ = _select_listings(data, wrap_single=wrap_single, zipcode=zipcode)
+    return rows
 
 
 def check_range(name: str, low: int | None, high: int | None) -> None:
@@ -220,6 +286,21 @@ def check_range(name: str, low: int | None, high: int | None) -> None:
         raise RangeError(name, low, high)
 
 
+def _search_kwargs(request: SearchRequest) -> dict[str, Any]:
+    """Build the keyword arguments of one search call.
+
+    The arguments are derived from the request's filters through
+    :data:`_FILTER_PARAMS`, so a new filter reaches the search request by
+    adding it to that table alone.
+    """
+    filters = asdict(request.filters)
+    kwargs: dict[str, Any] = {"search_value": request.query}
+    for filter_name, param_name in _FILTER_PARAMS.items():
+        kwargs[param_name] = filters[filter_name]
+    kwargs.update(request.transport)
+    return kwargs
+
+
 def build_viewport(filters: SearchFilters) -> BBox | None:
     """Return the viewport named by the four bounds, or None if none were given.
 
@@ -227,12 +308,7 @@ def build_viewport(filters: SearchFilters) -> BBox | None:
         BoundingBoxError: If only some of the bounds were given, or if the
             bounds do not describe a valid viewport.
     """
-    values = {
-        "north": filters.north,
-        "south": filters.south,
-        "east": filters.east,
-        "west": filters.west,
-    }
+    values = {name: getattr(filters, name) for name in _VIEWPORT_FILTERS}
     missing = [name for name, value in values.items() if value is None]
     if len(missing) == len(values):
         return None
@@ -315,17 +391,7 @@ def fetch_listings(  # noqa: PLR0913 - one search entry point with its inputs
         bbox = viewport.bbox
         notices.extend(viewport.notices)
 
-    search_kwargs: dict[str, Any] = {
-        "search_value": request.query,
-        "zoom_value": request.filters.zoom,
-        "min_beds": request.filters.min_beds,
-        "max_beds": request.filters.max_beds,
-        "min_bathrooms": request.filters.min_bathrooms,
-        "max_bathrooms": request.filters.max_bathrooms,
-        "min_price": request.filters.min_price,
-        "max_price": request.filters.max_price,
-        **dict(request.transport),
-    }
+    search_kwargs = _search_kwargs(request)
     if kind == "rent":
         search_kwargs["is_room"] = request.is_room
         search_kwargs["is_entire_place"] = request.is_entire_place
@@ -367,18 +433,9 @@ def fetch_listings(  # noqa: PLR0913 - one search entry point with its inputs
     )
 
     zipcode = query_zipcode(request.query)
-    listings: list[Listing] = []
-    raw_listings: list[Mapping[str, Any]] = []
-    for row in extract_listings(result, zipcode=zipcode):
-        if not isinstance(row, dict) or is_building_result(row):
-            continue
-        normalized = normalize_listing(row)
-        if normalized is None:
-            continue
-        if zipcode is not None and normalized["zipcode"] != zipcode:
-            continue
-        listings.append(normalized)
-        raw_listings.append(row)
+    _, usable = _select_listings(result, wrap_single=False, zipcode=zipcode)
+    listings: list[Listing] = [normalized for _, normalized in usable]
+    raw_listings: list[Mapping[str, Any]] = [row for row, _ in usable]
 
     return SearchResult(
         raw=result,
@@ -389,6 +446,26 @@ def fetch_listings(  # noqa: PLR0913 - one search entry point with its inputs
         zipcode=zipcode,
         notices=notices,
     )
+
+
+def _comparable_filters(request: SearchRequest) -> dict[str, Any]:
+    """Return the filter values that make two sync runs comparable.
+
+    Two runs are comparable when they searched the same thing: the same
+    query, the same viewport (recorded beside the filters as the run's
+    bbox), and the same search filters.  The viewport bounds and the
+    tiling knobs are not part of that -- the bounds are already the
+    run's viewport, and the tiling knobs describe how the run was carried
+    out rather than what it searched.  A request budget, in particular,
+    only truncates a run, and a truncated run is recorded as such and
+    never compared.
+    """
+    values = asdict(request.filters)
+    for name in (*_VIEWPORT_FILTERS, *_BUDGET_FILTERS):
+        values.pop(name, None)
+    values["is_room"] = request.is_room
+    values["is_entire_place"] = request.is_entire_place
+    return values
 
 
 def sync_to_db(  # noqa: PLR0913
@@ -433,8 +510,7 @@ def sync_to_db(  # noqa: PLR0913
     notices = list(result.notices)
     truncated = result.truncated
     started_utc = utc_now()
-    filter_values = asdict(request.filters)
-    filter_values.update(is_room=request.is_room, is_entire_place=request.is_entire_place)
+    filter_values = _comparable_filters(request)
     bbox_bounds = result.bbox.to_map_bounds()
     if (
         not result.listings
@@ -488,6 +564,11 @@ def prepare_import(data: Any) -> tuple[list[Mapping[str, Any]], list[Mapping[str
     re-import of ``db query`` output does not null out street/city/etc.;
     raw rows are normalized. Building cards and rows without a zpid are
     dropped.
+
+    An imported row only has to carry a zpid, not an integer one: the
+    write path coerces the zpid and counts the rows it cannot store.  A
+    search is stricter, because a card without a usable zpid is not a
+    listing there either.
     """
     rows = extract_listings(data, wrap_single=True)
     imported: list[Mapping[str, Any]] = []
@@ -510,14 +591,22 @@ def import_rows(
     kind: Kind,
     seen_utc: str | None = None,
 ) -> SyncResult:
-    """Upsert prepared import rows and report the statistics."""
+    """Upsert prepared import rows and report the statistics.
+
+    The import is recorded as a run of its own, so the result can name it.
+    The run carries no query text: an import says nothing about which
+    listings exist, so its absences never count as delistings.
+    """
     if not rows:
         return SyncResult(stats=SyncStats(added=0, updated=0, price_changes=0, skipped=0))
+    seen_utc = seen_utc or utc_now()
+    run_id = begin_sync_run(conn, kind=kind, started_utc=seen_utc)
     stats = upsert_listings(
         conn,
         rows,
         seen_utc=seen_utc,
         kind=kind,
         raw_rows=raw_rows,
+        run_id=run_id,
     )
-    return SyncResult(stats=stats, rows=list(rows))
+    return SyncResult(stats=stats, rows=list(rows), run_id=run_id)

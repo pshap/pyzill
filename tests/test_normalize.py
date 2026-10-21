@@ -1,11 +1,20 @@
+from typing import Any
+
 import pytest
 
 from pyzill import normalize
 from pyzill.normalize import Listing
 
 
+def _normalize(raw: Any) -> Listing:
+    """Normalize a raw listing, failing the test when it did not normalize."""
+    out = normalize.normalize_listing(raw)
+    assert out is not None
+    return out
+
+
 def test_normalize_listing_keys_match_typeddict():
-    out = normalize.normalize_listing({"zpid": "1"})
+    out = _normalize({"zpid": "1"})
     assert set(out) == set(Listing.__annotations__)
 
 
@@ -72,7 +81,7 @@ def test_normalize_listing_full():
             }
         },
     }
-    out = normalize.normalize_listing(raw)
+    out = _normalize(raw)
 
     assert out["zpid"] == 32462766
     assert out["price"] == 329900
@@ -89,7 +98,7 @@ def test_normalize_listing_full():
 
 def test_normalize_listing_missing_fields_are_none():
     raw = {"zpid": "462055986", "address": "somewhere", "baths": 0.0}
-    out = normalize.normalize_listing(raw)
+    out = _normalize(raw)
 
     assert out["price"] is None
     assert out["beds"] is None
@@ -101,17 +110,17 @@ def test_normalize_listing_missing_fields_are_none():
 
 
 def test_normalize_preserves_zero_beds_but_drops_zero_area_and_requires_integer_zpid():
-    out = normalize.normalize_listing({"zpid": "123.0", "beds": 0, "area": 0})
+    out = _normalize({"zpid": "123.0", "beds": 0, "area": 0})
 
     assert out["zpid"] == 123
     assert type(out["zpid"]) is int
     assert out["beds"] == 0
     assert out["area"] is None
-    assert normalize.normalize_listing({"zpid": "123.5"})["zpid"] is None
+    assert _normalize({"zpid": "123.5"})["zpid"] is None
 
 
 def test_normalize_zero_sentinels_fall_back_to_positive_nested_values():
-    out = normalize.normalize_listing(
+    out = _normalize(
         {
             "zpid": "123",
             "beds": 0,
@@ -144,7 +153,7 @@ def test_normalize_listing_falls_back_to_hdp_home_info():
             }
         },
     }
-    out = normalize.normalize_listing(raw)
+    out = _normalize(raw)
 
     assert out["price"] == 425000
     assert out["beds"] == 4
@@ -156,13 +165,13 @@ def test_normalize_listing_falls_back_to_hdp_home_info():
 
 
 def test_normalize_listing_ignores_non_string_detail_url():
-    out = normalize.normalize_listing({"zpid": "1", "detailUrl": {"unexpected": "object"}})
+    out = _normalize({"zpid": "1", "detailUrl": {"unexpected": "object"}})
     assert out["detail_url"] is None
 
 
 def test_normalize_listing_treats_bool_numeric_fields_as_unknown():
     raw = {"zpid": "1", "daysOnZillow": True, "yearBuilt": True, "priceChange": True}
-    out = normalize.normalize_listing(raw)
+    out = _normalize(raw)
     assert out["days_on_zillow"] is None
     assert out["year_built"] is None
     assert out["price_change"] is None
@@ -177,7 +186,7 @@ def test_normalize_listing_falls_back_to_top_level_address_fields():
         "addressState": "NY",
         "addressZipcode": "12305",
     }
-    out = normalize.normalize_listing(raw)
+    out = _normalize(raw)
 
     assert out["street"] == "27 Washington Ave"
     assert out["city"] == "Schenectady"
@@ -193,7 +202,7 @@ def test_normalize_listing_prefers_home_info_address_over_top_level():
         "addressZipcode": "00000",
         "hdpData": {"homeInfo": {"streetAddress": "Nested St", "city": "Nested City", "zipcode": "12305"}},
     }
-    out = normalize.normalize_listing(raw)
+    out = _normalize(raw)
 
     assert out["street"] == "Nested St"
     assert out["city"] == "Nested City"
@@ -201,7 +210,7 @@ def test_normalize_listing_prefers_home_info_address_over_top_level():
 
 
 def test_normalize_listing_coerces_coordinate_strings():
-    out = normalize.normalize_listing({"zpid": "1", "latLong": {"latitude": "42.5", "longitude": "-73.9"}})
+    out = _normalize({"zpid": "1", "latLong": {"latitude": "42.5", "longitude": "-73.9"}})
 
     assert out["latitude"] == 42.5
     assert out["longitude"] == -73.9
@@ -266,6 +275,89 @@ def test_normalize_property_detail_non_mapping_returns_none_fields():
     assert detail["hoa_fee"] is None
     assert detail["hoa_fee_unit"] is None
     assert detail["zpid"] is None
+
+
+def test_normalize_listing_coerces_string_fields_to_str():
+    """Every string field is a string, even when Zillow sends a number."""
+    out = _normalize(
+        {
+            "zpid": "1",
+            "priceLabel": 329900,
+            "statusText": 7,
+            "statusType": 3,
+            "imgSrc": 9,
+            "address": 12,
+            "addressStreet": 5,
+            "addressCity": 6,
+            "addressState": 7,
+            "addressZipcode": 8,
+            "hdpData": {"homeInfo": {"homeType": 4}},
+        }
+    )
+
+    assert out["price_label"] == "329900"
+    assert out["status"] == "7"
+    assert out["status_type"] == "3"
+    assert out["image_url"] == "9"
+    assert out["address"] == "12"
+    assert out["street"] == "5"
+    assert out["city"] == "6"
+    assert out["state"] == "7"
+    assert out["zipcode"] == "8"
+    assert out["home_type"] == "4"
+
+
+def test_normalize_listing_coerces_a_numeric_zipcode():
+    """A numeric zipcode must still match the zipcode a search was made for."""
+    out = _normalize({"zpid": "1", "addressZipcode": 12305})
+
+    assert out["zipcode"] == "12305"
+
+
+def test_normalize_listing_drops_non_scalar_string_fields():
+    """A container is not a string field, so it is dropped rather than rendered."""
+    out = _normalize({"zpid": "1", "priceLabel": {"amount": 1}, "statusText": ["Active"]})
+
+    assert out["price_label"] is None
+    assert out["status"] is None
+
+
+def test_normalize_listing_keeps_string_fields_as_they_are():
+    out = _normalize(
+        {
+            "zpid": "1",
+            "priceLabel": "$330K",
+            "statusText": "Active",
+            "statusType": "FOR_SALE",
+            "imgSrc": "https://photos.zillowstatic.com/fp/x-p_e.jpg",
+            "address": "225 Green Street",
+            "hdpData": {"homeInfo": {"homeType": "MULTI_FAMILY", "zipcode": "12305"}},
+        }
+    )
+
+    assert out["price_label"] == "$330K"
+    assert out["status"] == "Active"
+    assert out["status_type"] == "FOR_SALE"
+    assert out["image_url"] == "https://photos.zillowstatic.com/fp/x-p_e.jpg"
+    assert out["address"] == "225 Green Street"
+    assert out["home_type"] == "MULTI_FAMILY"
+    assert out["zipcode"] == "12305"
+
+
+def test_normalize_property_detail_coerces_string_fields():
+    detail = normalize.normalize_property_detail({"zpid": 1, "homeType": 4, "description": 5})
+
+    assert detail["home_type"] == "4"
+    assert detail["description"] == "5"
+
+
+def test_normalize_property_detail_keeps_string_fields_as_they_are():
+    detail = normalize.normalize_property_detail(
+        {"zpid": 1, "homeType": "SINGLE_FAMILY", "description": "Nice house"}
+    )
+
+    assert detail["home_type"] == "SINGLE_FAMILY"
+    assert detail["description"] == "Nice house"
 
 
 def test_is_building_result_true_for_building_card_with_no_zpid():

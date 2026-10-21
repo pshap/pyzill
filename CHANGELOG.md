@@ -4,6 +4,44 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- Normalized string fields are now always `str` or `None`, as the `Listing`
+  and `PropertyDetail` shapes promise. Zillow sometimes sends a number where
+  a string belongs — a numeric `addressZipcode` became the integer `12305`,
+  which then never matched the zipcode a search was made for, and a search
+  for a zipcode could come back empty. Numeric values are now rendered as
+  strings, and a value that is not a scalar is dropped rather than rendered.
+- One rule now decides what counts as a listing. `fetch_listings` kept
+  cards that have no usable zpid, while the rule that chooses between
+  `mapResults` and `listResults` rejected them, so the list that was chosen
+  was not the list that was kept. A search now returns only listings with an
+  integer zpid. An import is unchanged: it still passes a row with a zpid it
+  cannot coerce to the write path, which counts it as skipped.
+- `extract_listings` no longer loses `wrap_single` when the payload is a
+  response envelope. `pyzill normalize` and `db import` treated a saved
+  response's contents as an empty list.
+- Two sync runs of the same search are comparable again when they differ
+  only in the request budget. The tiling knobs (`--tile`, `--max-depth`,
+  `--max-requests`) are no longer part of the comparability key, so the
+  `suspect_empty` warning fires across a difference in budget rather than
+  silently not firing. Runs recorded before this change carry the old filter
+  shape and are not comparable with newer ones.
+- `import_rows` reports the id of the run it wrote instead of `0`.
+- `normalize_listing` no longer returns `Any` to type checkers. Its
+  overloads made every call ambiguous, so the returned dict was never
+  checked against the `Listing` shape; the honest signature is
+  `normalize_listing(listing: Any) -> Listing | None`, and callers that
+  pass an object now have to narrow the result.
+
+### Changed
+- A search normalizes each row once. Choosing between `mapResults` and
+  `listResults` and filtering the winner shared the same normalization
+  pass, so a 500-row response was normalized 1,000 times.
+- The search request's keyword arguments are derived from the search
+  filters through one table, so a new filter reaches Zillow by being added
+  to that table alone. A test keeps the filter and query vocabularies in
+  step.
+
 ## [1.4.0] - 2026-10
 
 ### Added

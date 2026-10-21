@@ -247,6 +247,10 @@ pyzill db stats
 - Each `(zpid, kind)` pair keeps its own row, so a sale and a sold listing for the same zpid are separate rows with separate price histories
 - Rows without zpid are skipped and counted
 
+A search drops a card without a usable zpid before it reaches the write path,
+so it is not counted there; an import passes such rows through, so the count
+reports them.
+
 **Sync counts** are per listing, not per input row: a zpid that appears twice
 in one batch is one listing, counted once, and a listing whose price changed
 counts one price change however many sightings of it the batch carried. The
@@ -261,9 +265,11 @@ the listing was first seen.
 **Delisting detection** — `db changes` reports a listing as delisted when it
 appeared in one search result set and is missing from a later one. Only search
 runs are compared with each other: two `db sync` runs of the same query,
-viewport, and filters. File imports (`db import`) are never compared, because a
-listing missing from an imported file was never observed as gone — only the
-price and status changes they bring in are reported.
+viewport, and filters. The tiling knobs (`--tile`, `--max-depth`,
+`--max-requests`) are not part of that comparison — they describe how a run was
+carried out, not what it searched. File imports (`db import`) are never
+compared, because a listing missing from an imported file was never observed as
+gone — only the price and status changes they bring in are reported.
 
 **Timestamps** are fixed-width UTC ISO strings (`%Y-%m-%dT%H:%M:%SZ`) — sortable lexicographically, so the existing `--where`/`--sort` machinery works on them unchanged.
 
@@ -583,7 +589,9 @@ fields, falling back to `hdpData.homeInfo` when a top-level field is absent:
 Non-dict entries are skipped by the normalization helpers. Zero beds are
 preserved for studios unless positive nested data is available; zero area is
 treated as unknown and falls back to positive nested data. `zpid` is always an
-integer or `None`.
+integer or `None`. String fields are always `str` or `None`, even when
+Zillow sends a number — a numeric `addressZipcode` becomes `"12305"`, so it
+still matches the zipcode a search was made for.
 
 ```python
 import pyzill
@@ -604,12 +612,15 @@ for home in pyzill.normalize_listings(results["mapResults"]):
 (absolute), `image_url`, `zestimate`, `rent_zestimate`.
 
 The output shape is available as a `TypedDict` for static analysis (no runtime
-dependency):
+dependency). `normalize_listing` returns `None` for an entry that is not an
+object, so narrow the result before using it:
 
 ```python
 from pyzill import Listing
 
-home: Listing = pyzill.normalize_listing(results["mapResults"][0])
+home = pyzill.normalize_listing(results["mapResults"][0])
+if home is not None:
+    listing: Listing = home
 ```
 
 Use `parse_price` on its own to coerce a single value. It handles K/M/B
@@ -757,6 +768,10 @@ with connect(":memory:") as conn:
 
 `import_rows` does the same for listings you already have on disk, and
 `extract_listings` pulls the listings out of a saved Zillow response.
+
+`fetch_listings` returns the real listings of a search: building cards and
+cards without a usable zpid are dropped, and when the query is a zipcode only
+that zipcode's listings are kept.
 
 ## API
 

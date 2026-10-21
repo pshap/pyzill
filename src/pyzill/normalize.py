@@ -9,7 +9,7 @@ into a flat dict of predictable, numeric-or-``None`` values.
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any, TypedDict, get_args, overload
+from typing import Any, TypedDict, get_args
 
 from pyzill.config import ZILLOW_HOME
 from pyzill.utils import get_nested_value
@@ -125,6 +125,25 @@ def _to_number(value: Any) -> int | float | None:
         except ValueError:
             return None
         return int(num) if num.is_integer() else num
+    return None
+
+
+def _as_str(value: Any) -> str | None:
+    """Coerce a Zillow scalar into a string, or None if it is not one.
+
+    Zillow sometimes sends a number where a string belongs (a numeric
+    ``addressZipcode``, a numeric ``priceLabel``).  Rendering those as
+    strings keeps the normalized shape honest: a zipcode that stayed an
+    int would never match the zipcode a search was made for, and the
+    ``Listing`` shape promises ``str`` or ``None`` for every string
+    field.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)):
+        return str(value)
     return None
 
 
@@ -276,21 +295,14 @@ def is_building_result(listing: Any) -> bool:
     return not (isinstance(info, dict) and _integer_zpid(info.get("zpid")) is not None)
 
 
-@overload
-def normalize_listing(listing: dict[str, Any]) -> Listing: ...
-
-
-@overload
-def normalize_listing(listing: Any) -> Listing | None: ...
-
-
 def normalize_listing(listing: Any) -> Listing | None:
     """Flatten a raw Zillow listing into a normalized ``Listing``.
 
     Prefers top-level fields and falls back to ``hdpData.homeInfo`` when a
     field is missing.  Numeric fields are coerced; unknown values become
     ``None`` so callers never have to deal with ``"$0"`` strings or missing
-    keys.
+    keys.  String fields are coerced to ``str``, so the shape matches the
+    :class:`Listing` contract even when Zillow sends a number.
 
     Args:
         listing: A single raw entry from ``mapResults`` / ``listResults``.
@@ -313,9 +325,9 @@ def normalize_listing(listing: Any) -> Listing | None:
         price = parse_price(info.get("price"))
 
     detail_url = listing.get("detailUrl")
-    if isinstance(detail_url, str) and detail_url.startswith("/"):
-        detail_url = _BASE_URL + detail_url
-    elif not isinstance(detail_url, str):
+    if isinstance(detail_url, str):
+        detail_url = _BASE_URL + detail_url if detail_url.startswith("/") else detail_url
+    else:
         detail_url = None
 
     days_on_zillow_raw = (
@@ -349,35 +361,35 @@ def normalize_listing(listing: Any) -> Listing | None:
     return {
         "zpid": _integer_zpid(listing.get("zpid")),
         "price": price,
-        "price_label": listing.get("priceLabel"),
+        "price_label": _as_str(listing.get("priceLabel")),
         "beds": _number_with_zero_fallback(listing.get("beds"), info.get("bedrooms"), preserve_zero=True),
         "baths": _number_with_zero_fallback(listing.get("baths"), info.get("bathrooms"), preserve_zero=True),
         "area": _number_with_zero_fallback(listing.get("area"), info.get("livingArea"), preserve_zero=False),
-        "address": listing.get("address"),
-        "street": _first(info.get("streetAddress"), listing.get("addressStreet")),
-        "city": _first(info.get("city"), listing.get("addressCity")),
-        "state": _first(listing.get("addressState"), info.get("state")),
-        "zipcode": _first(info.get("zipcode"), listing.get("addressZipcode")),
+        "address": _as_str(listing.get("address")),
+        "street": _as_str(_first(info.get("streetAddress"), listing.get("addressStreet"))),
+        "city": _as_str(_first(info.get("city"), listing.get("addressCity"))),
+        "state": _as_str(_first(listing.get("addressState"), info.get("state"))),
+        "zipcode": _as_str(_first(info.get("zipcode"), listing.get("addressZipcode"))),
         "latitude": _first_number(lat_long.get("latitude"), info.get("latitude")),
         "longitude": _first_number(lat_long.get("longitude"), info.get("longitude")),
-        "home_type": info.get("homeType"),
-        "status": _first(listing.get("statusText"), info.get("homeStatus")),
-        "status_type": listing.get("statusType"),
+        "home_type": _as_str(info.get("homeType")),
+        "status": _as_str(_first(listing.get("statusText"), info.get("homeStatus"))),
+        "status_type": _as_str(listing.get("statusType")),
         "detail_url": detail_url,
-        "image_url": listing.get("imgSrc"),
+        "image_url": _as_str(listing.get("imgSrc")),
         "zestimate": parse_price(info.get("zestimate")),
         "rent_zestimate": parse_price(info.get("rentZestimate")),
         "days_on_zillow": days_on_zillow,
         "price_change": price_change,
         "price_change_date": price_change_date,
-        "price_reduction": str(price_reduction) if price_reduction is not None else None,
+        "price_reduction": _as_str(price_reduction),
         "lot_area_value": float(lot_area_val) if lot_area_val is not None else None,
-        "lot_area_unit": str(lot_area_unit) if lot_area_unit is not None else None,
+        "lot_area_unit": _as_str(lot_area_unit),
         "year_built": year_built,
         "tax_assessed_value": tax_assessed,
         "listing_sub_type": listing_sub_type,
-        "unit": str(unit) if unit is not None else None,
-        "broker_name": str(broker_name) if broker_name is not None else None,
+        "unit": _as_str(unit),
+        "broker_name": _as_str(broker_name),
     }
 
 
@@ -468,19 +480,19 @@ def normalize_property_detail(property_data: Mapping[str, Any]) -> PropertyDetai
         "baths": _to_number(property_data.get("bathrooms")),
         "area": _to_number(property_data.get("livingAreaValue") or property_data.get("livingArea")),
         "address": full_address,
-        "street": str(street) if street is not None else None,
-        "city": str(city) if city is not None else None,
-        "state": str(state) if state is not None else None,
-        "zipcode": str(zipcode) if zipcode is not None else None,
+        "street": _as_str(street),
+        "city": _as_str(city),
+        "state": _as_str(state),
+        "zipcode": _as_str(zipcode),
         "latitude": _to_number(property_data.get("latitude")),
         "longitude": _to_number(property_data.get("longitude")),
-        "home_type": property_data.get("homeType"),
+        "home_type": _as_str(property_data.get("homeType")),
         "year_built": year_built,
         "lot_size": lot_size,
         "lot_size_unit": lot_size_unit,
         "hoa_fee": hoa_fee,
         "hoa_fee_unit": hoa_fee_unit,
-        "description": property_data.get("description"),
+        "description": _as_str(property_data.get("description")),
         "photos_count": photos_count,
         "price_history": list(price_hist) if isinstance(price_hist, list) else None,
         "tax_history": list(tax_hist) if isinstance(tax_hist, list) else None,
