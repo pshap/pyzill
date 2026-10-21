@@ -403,6 +403,97 @@ def test_get_changes_skips_truncated_runs(tmp_path: Path):
     conn.close()
 
 
+def test_get_changes_orders_new_events_by_when_they_happened(tmp_path: Path):
+    """A listing first seen later must not be reported before an earlier event."""
+    conn = connect(tmp_path / "order.db")
+
+    upsert_listings(conn, [{"zpid": 1, "price": 100}], seen_utc="2026-10-01T00:00:00Z", kind="sale")
+    upsert_listings(conn, [{"zpid": 1, "price": 150}], seen_utc="2026-10-05T00:00:00Z", kind="sale")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 150}, {"zpid": 2, "price": 200}],
+        seen_utc="2026-10-10T00:00:00Z",
+        kind="sale",
+    )
+
+    events = get_changes(conn, "2026-10-02T00:00:00Z")
+
+    assert [event["event"] for event in events] == ["price_increase", "new"]
+    assert events[0]["seen_utc"] == "2026-10-05T00:00:00Z"
+    # The new listing carries the timestamp it was first seen at.
+    new_event = next(event for event in events if event["event"] == "new")
+    assert new_event["seen_utc"] == "2026-10-10T00:00:00Z"
+    conn.close()
+
+
+def test_get_changes_events_all_carry_a_timestamp(tmp_path: Path):
+    """Every event type reports when it happened."""
+    conn = connect(tmp_path / "timestamps.db")
+    query_args: dict[str, Any] = {"kind": "sale", "query": "Albany", "bbox": {"north": 43, "south": 42}}
+
+    first = begin_sync_run(conn, **query_args, started_utc="2026-10-01T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 300000, "status": "Active"}, {"zpid": 2, "price": 200000}],
+        seen_utc="2026-10-01T00:00:00Z",
+        run_id=first,
+    )
+    finish_sync_run(conn, first, result_count=2, finished_utc="2026-10-01T00:00:00Z")
+
+    second = begin_sync_run(conn, **query_args, started_utc="2026-10-02T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 250000, "status": "Pending"}],
+        seen_utc="2026-10-02T00:00:00Z",
+        run_id=second,
+    )
+    finish_sync_run(conn, second, result_count=1, finished_utc="2026-10-02T00:00:00Z")
+
+    events = get_changes(conn, "2026-10-02T00:00:00Z")
+
+    assert events
+    assert all(event["seen_utc"] for event in events)
+    conn.close()
+
+
+def test_duplicate_zpids_in_one_batch_count_once(tmp_path: Path):
+    """A zpid seen twice in one batch is one listing, counted once."""
+    conn = connect(tmp_path / "dupes.db")
+
+    stats = upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 100}, {"zpid": 1, "price": 120}, {"zpid": 2, "price": 50}],
+        seen_utc="2026-10-01T00:00:00Z",
+        kind="sale",
+    )
+
+    assert stats.added == 2
+    assert stats.updated == 0
+    assert stats.price_changes == 0
+    # The run counted the listings it stored, not the rows it was handed.
+    assert conn.execute("SELECT result_count FROM sync_runs").fetchone() == (2,)
+    assert conn.execute("SELECT COUNT(*) FROM sightings").fetchone() == (2,)
+    conn.close()
+
+
+def test_duplicate_zpids_count_one_price_change(tmp_path: Path):
+    """One listing whose price changed counts one price change, not one per row."""
+    conn = connect(tmp_path / "dupes.db")
+
+    upsert_listings(conn, [{"zpid": 1, "price": 100}], seen_utc="2026-10-01T00:00:00Z", kind="sale")
+
+    stats = upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 150}, {"zpid": 1, "price": 160}],
+        seen_utc="2026-10-02T00:00:00Z",
+        kind="sale",
+    )
+
+    assert stats.updated == 1
+    assert stats.price_changes == 1
+    conn.close()
+
+
 def test_get_changes_ignores_import_runs(tmp_path: Path):
     """Two imports of different files must not look like a delisting.
 

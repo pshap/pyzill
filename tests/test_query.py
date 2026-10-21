@@ -133,3 +133,23 @@ def test_numeric_field_accepts_k_and_m_suffixes() -> None:
     assert [row["price"] for row in result] == [600000]
     result, _ = query_rows([{"price": 1_200_000}], where=["price<=1.5m"])
     assert [row["price"] for row in result] == [1_200_000]
+
+
+@pytest.mark.parametrize("expression", ["price>null", "price>=null", "price<null", "price<=null", "city~null"])
+def test_null_rejected_by_operators_that_cannot_match_it(expression: str) -> None:
+    """Comparing with null can never be true, so it must be a usage error."""
+    with pytest.raises(QueryValidationError, match="cannot be compared with null"):
+        query_rows([{"price": 100, "city": "Denver"}], where=[expression])
+
+
+def test_null_equality_tests_for_a_null_value() -> None:
+    rows: list[dict[str, Any]] = [{"zpid": 1, "price": 100}, {"zpid": 2, "price": None}]
+    result, _ = query_rows(rows, where=["price=null"])
+    assert [row["zpid"] for row in result] == [2]
+    result, _ = query_rows(rows, where=["price!=null"])
+    assert [row["zpid"] for row in result] == [1]
+
+
+def test_null_rejected_in_where_json_conditions() -> None:
+    with pytest.raises(QueryValidationError, match="cannot be compared with null"):
+        query_rows([{"price": 100}], where_json='[{"field": "price", "op": ">", "value": null}]')

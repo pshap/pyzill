@@ -179,7 +179,10 @@ pyzill query listings.json --where-json '[{"field":"price","op":"<=","value":300
     always treated as strings.
 - Strings compare case-insensitively, so `city==schenectady` matches
   `"Schenectady"`.
-- `null` / `none` match missing values.
+- `null` / `none` match missing values. They work with `=` and `!=` only:
+  comparing a value with `null` using `>`, `<`, `>=`, `<=` or `~` can never be
+  true, so those are rejected as usage errors instead of quietly matching
+  nothing.
 - `--where-json` accepts a JSON array of `{ "field", "op", "value" }`
     objects and can be combined with `--where`.
 
@@ -242,6 +245,17 @@ pyzill db stats
 - Older sightings extend history but cannot overwrite current listing state; first/last-seen timestamps track the actual minimum/maximum
 - Each `(zpid, kind)` pair keeps its own row, so a sale and a sold listing for the same zpid are separate rows with separate price histories
 - Rows without zpid are skipped and counted
+
+**Sync counts** are per listing, not per input row: a zpid that appears twice
+in one batch is one listing, counted once, and a listing whose price changed
+counts one price change however many sightings of it the batch carried. The
+summary line therefore reports how many listings were synced, and a run's
+stored `result_count` matches the number of sightings it kept.
+
+**Change events** — every event `db changes` reports carries the timestamp it
+happened at (`seen_utc`), and the events are ordered by it, so they can be
+replayed in the order they occurred. A `new` event is stamped with the moment
+the listing was first seen.
 
 **Delisting detection** — `db changes` reports a listing as delisted when it
 appeared in one search result set and is missing from a later one. Only search

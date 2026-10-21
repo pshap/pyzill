@@ -24,12 +24,16 @@ __all__ = ["SyncStats", "upsert_listings"]
 class SyncStats:
     """Statistics from a sync/import operation.
 
-    ``price_changes`` is a per-batch heuristic, not a durable metric: each
+    The counts are per listing, not per input row: a zpid that appears twice
+    in one batch is one listing and is counted once.
+
+    ``price_changes`` is a per-batch heuristic, not a durable metric: a
     priced sighting of an existing same-kind listing is compared against the
-    recorded state, so it counts a price that differs from the most recent
-    prior recorded price. New zpids never count; the first-ever price on an
-    existing listing counts. It is useful for "what changed in this sync"
-    reporting, not for long-term tracking — use ``price_history`` for that.
+    recorded state, and a listing whose price differs counts once per batch,
+    however many sightings of it the batch carried. New zpids never count;
+    the first-ever price on an existing listing counts. It is useful for
+    "what changed in this sync" reporting, not for long-term tracking — use
+    ``price_history`` for that.
     """
 
     added: int
@@ -245,24 +249,32 @@ def _prepare_rows(
 
 
 def _classify_changes(prepared: Sequence[_PreparedRow], state: _BatchState, stats: SyncStats) -> None:
-    """Count added, updated, and price-changed listings in the batch.
+    """Count the listings added, updated, and price-changed in the batch.
 
-    A zpid seen twice in one batch counts as one addition and one update.
+    The counts are per listing, not per input row: a zpid seen twice in one
+    batch is one listing, so it is counted once. A listing's price change is
+    counted once per batch too, even when the batch carried several
+    sightings of it at different prices.
     """
     added_in_batch: set[tuple[int, str]] = set()
+    updated_in_batch: set[tuple[int, str]] = set()
+    price_changed_in_batch: set[tuple[int, str]] = set()
     for entry in prepared:
         key = (entry.zpid, state.kind)
         if key in state.existing:
-            stats.updated += 1
+            if key not in updated_in_batch:
+                updated_in_batch.add(key)
+                stats.updated += 1
+            if key in price_changed_in_batch:
+                continue
             old_price = state.existing[key]
             prior_price = state.prior_prices.get(key)
             if entry.price is not None and (
                 (prior_price is not None and prior_price != entry.price) or (prior_price is None and old_price is None)
             ):
+                price_changed_in_batch.add(key)
                 stats.price_changes += 1
-        elif key in added_in_batch:
-            stats.updated += 1
-        else:
+        elif key not in added_in_batch:
             stats.added += 1
             added_in_batch.add(key)
 
@@ -399,7 +411,9 @@ def upsert_listings(  # noqa: PLR0913
     finish_sync_run(
         conn,
         run_id,
-        result_count=len(batch.sighting),
+        # Sightings are keyed by (run_id, zpid, kind), so a zpid seen twice in
+        # one batch stores one row; count the listings, not the input rows.
+        result_count=len({(row[1], row[2]) for row in batch.sighting}),
         truncated=truncated,
         finished_utc=seen_utc,
     )

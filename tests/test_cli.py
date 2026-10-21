@@ -1200,6 +1200,11 @@ class TestQueryCommand:
         assert result.exit_code == 0
         assert json.loads(result.stdout) == []
 
+    def test_where_rejects_null_with_ordering_operator(self, saved):
+        result = runner.invoke(app, ["query", str(saved), "--where", "price>null"])
+        assert result.exit_code == 2
+        assert "cannot be compared with null" in result.stderr
+
 
 class TestDetailExploration:
     """--keys and --path on detail commands."""

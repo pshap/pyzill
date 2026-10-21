@@ -62,7 +62,12 @@ def get_price_history(conn: sqlite3.Connection, zpid: int) -> list[dict[str, Any
 
 
 def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
-    """Summarize new listings, price/status transitions, and complete-run absences."""
+    """Summarize new listings, price/status transitions, and complete-run absences.
+
+    Every event carries the timestamp it happened at, and the returned list is
+    ordered by that timestamp, so a consumer can replay the events in the
+    order they occurred.
+    """
     events: list[dict[str, Any]] = []
     listings = {(row["zpid"], row["kind"]): row for row in load_listings(conn)}
 
@@ -79,6 +84,10 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
                     "zpid": key[0],
                     "kind": key[1],
                     "price": listing["price"],
+                    # The listing was first seen when it first appeared; that
+                    # is when the event happened, and it is what orders it
+                    # against the price and status events below.
+                    "seen_utc": listing["first_seen_utc"],
                     "days_observed": observed_days(key),
                 }
             )
@@ -166,4 +175,4 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
                 )
             prior_sets.append(present)
 
-    return sorted(events, key=lambda event: (event.get("seen_utc", since), event["zpid"], event["event"]))
+    return sorted(events, key=lambda event: (event["seen_utc"], event["zpid"], event["event"]))

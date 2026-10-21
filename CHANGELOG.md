@@ -100,6 +100,19 @@ All notable changes to this project are documented here.
   `pyzill.BBox`, or opt in with `allow_nationwide=True`.
 
 ### Fixed
+- `pyzill db changes` now orders events by when they happened and reports that
+  time for every event. A `new` event carries the moment the listing was
+  first seen instead of no timestamp at all, so a listing that first appeared
+  later is no longer reported before an event that happened earlier. The
+  events can be replayed in the order they occurred.
+- Sync counts are now per listing rather than per input row. A zpid that
+  appears twice in one batch used to be counted as two updates, and its price
+  change was counted once per row, so one listing could report two price
+  changes. The counts now match the listings actually stored, and a run's
+  `result_count` matches the number of sightings it kept.
+- Comparing a field with `null` using `>`, `<`, `>=`, `<=` or `~` is now a
+  usage error (exit 2) instead of quietly matching no rows. `=` and `!=` still
+  test for a missing value.
 - `pyzill db changes` no longer reports a delisting when two `db import`
   operations ingest different files. Every run used to look alike, so two
   unrelated imports were compared as if they were two searches of the same

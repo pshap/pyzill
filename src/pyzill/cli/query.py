@@ -50,6 +50,10 @@ _NUMERIC_FIELDS = frozenset(
 
 _QUOTED_LITERAL_LENGTH = 2
 _STRING_OPS = frozenset({"=", "==", "!=", "~"})
+# Operators a null value cannot be compared with: "=" and "!=" test for null
+# (they compile to IS NULL / IS NOT NULL), but ordering and substring
+# comparisons against null are meaningless and would silently match nothing.
+_NULL_REJECTING_OPS = frozenset({">", "<", ">=", "<=", "~"})
 _WHERE_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(>=|<=|!=|==|=|>|<|~)\s*(.+?)\s*$")
 _SORT_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*(?::\s*(asc|desc))?\s*$", re.IGNORECASE)
 # Optional k/m suffix, e.g. "500k" or "1.2m".
@@ -94,6 +98,20 @@ def coerce_value(text: str, field: str | None = None) -> Any:
     number = float(value.replace("$", "").replace(",", "").removesuffix(match.group(1) or ""))
     number *= _NUMBER_SUFFIXES.get(suffix, 1)
     return int(number) if number.is_integer() else number
+
+
+def _validate_condition(condition: Condition) -> None:
+    """Reject a null value compared with an operator that cannot match it.
+
+    Comparing a column with null using ``>``, ``<``, ``>=``, ``<=`` or ``~``
+    can never be true, so it would silently return no rows. Use ``=`` or
+    ``!=`` to test whether a value is null.
+    """
+    if condition.value is None and condition.operator in _NULL_REJECTING_OPS:
+        raise QueryValidationError(
+            f"Field {condition.field!r} cannot be compared with null using "
+            f"{condition.operator!r}; use '=' or '!=' to test for a null value"
+        )
 
 
 def _parse_where(expression: str, valid_fields: frozenset[str]) -> Condition:
@@ -195,6 +213,8 @@ def _run_query(  # noqa: PLR0913
     default_order: str,
 ) -> tuple[list[dict[str, Any]], list[str] | None]:
     conditions = _parse_conditions(where, where_json, valid_fields)
+    for condition in conditions:
+        _validate_condition(condition)
     selected = _selected_columns(cols, valid_fields)
     clauses: list[str] = []
     parameters: list[Any] = []
