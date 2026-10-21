@@ -163,7 +163,6 @@ def _retry_delay(attempt: int, retry_after: str | None = None, max_retry_after: 
     return delay + random.uniform(0.0, min(1.0, delay * 0.25))  # noqa: S311 (retry jitter, not crypto)
 
 
-
 def build_proxies(proxy_url: str | None) -> ProxySpec | None:
     """Resolve ``proxy_url`` (with ``ZILLOW_PROXY`` fallback) into a proxies dict."""
     proxy_url = resolve_proxy(proxy_url)

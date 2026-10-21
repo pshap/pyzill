@@ -33,9 +33,7 @@ _EDGE_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36 Edg/{version}.0.0.0"
 )
-_FIREFOX_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{version}.0) Gecko/20100101 Firefox/{version}.0"
-)
+_FIREFOX_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:{version}.0) Gecko/20100101 Firefox/{version}.0"
 _SAFARI_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
     "(KHTML, like Gecko) Version/{version} Safari/605.1.15"
@@ -81,7 +79,7 @@ def _sec_ch_ua(version: str, extra_brand: str | None = None) -> str:
     """Build the Chromium client-hint brand list for a browser version."""
     brands = f'"Chromium";v="{version}", "Google Chrome";v="{version}"'
     if extra_brand:
-        brands += f", {extra_brand};v=\"{version}\""
+        brands += f', {extra_brand};v="{version}"'
     return f'{brands}, "Not.A/Brand";v="99"'
 
 
@@ -246,4 +244,3 @@ def build_headers(  # noqa: PLR0913 - one builder for every Zillow request shape
         )
     )
     return headers
-

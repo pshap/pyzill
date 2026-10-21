@@ -76,9 +76,7 @@ class _WriteBatch:
 
 # The listing fields the write path fills. ``zpid``, ``kind``, and the two
 # timestamps are supplied by the write path itself.
-_DATA_COLUMNS: tuple[str, ...] = tuple(
-    field for field in LISTING_FIELDS if field not in ("zpid", "price")
-)
+_DATA_COLUMNS: tuple[str, ...] = tuple(field for field in LISTING_FIELDS if field not in ("zpid", "price"))
 
 
 _CHUNK = 500

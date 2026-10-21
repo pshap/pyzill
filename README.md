@@ -693,7 +693,7 @@ against Zillow. A client may ask for a stricter interval, never a looser one:
 
 ```python
 client = pyzill.ZillowClient(rate_limit=3.0)  # at least 3s, and at least the shared budget
-client = pyzill.ZillowClient(rate_limit=0)     # explicit opt-out: no throttling
+client = pyzill.ZillowClient(rate_limit=0)  # explicit opt-out: no throttling
 ```
 
 ## For homes (details)
@@ -758,9 +758,9 @@ bbox = geocode("Schenectady NY").bbox
 request = SearchRequest(query="12305", filters=SearchFilters(north=bbox.north, south=bbox.south))
 result = fetch_listings("sale", request)
 
-print(len(result.listings), "listings")   # normalized Listing dicts
-print(result.truncated)                   # did Zillow cap the result?
-print(result.notices)                     # structured, non-fatal conditions
+print(len(result.listings), "listings")  # normalized Listing dicts
+print(result.truncated)  # did Zillow cap the result?
+print(result.notices)  # structured, non-fatal conditions
 ```
 
 Sync the same search into the local database:

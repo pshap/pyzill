@@ -151,11 +151,7 @@ class ZillowClient:
         try:
             return call(options)
         except ZillowBlockedError as exc:
-            if (
-                exc.status_code != _HTTP_FORBIDDEN
-                or pinned_proxy
-                or len(self._proxy_urls) < _MIN_PROXY_ROTATION_COUNT
-            ):
+            if exc.status_code != _HTTP_FORBIDDEN or pinned_proxy or len(self._proxy_urls) < _MIN_PROXY_ROTATION_COUNT:
                 raise
             with self._rotation_lock:
                 self._proxy_index = (self._proxy_index + 1) % len(self._proxy_urls)
