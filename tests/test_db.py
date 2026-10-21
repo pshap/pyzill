@@ -273,6 +273,65 @@ def test_upsert_does_not_change_kind_for_existing_pair(tmp_path: Path):
     conn.close()
 
 
+def test_failed_upsert_rolls_the_batch_back(tmp_path: Path):
+    """A failure part-way through a batch must leave nothing behind.
+
+    The listings rows are written before the price history, so a failure in
+    the price history leaves the listings written and the rest not. The write
+    path owns the transaction it commits, so it has to undo the whole batch.
+    """
+    conn = connect(tmp_path / "rollback.db")
+    conn.execute(
+        "CREATE TRIGGER fail_mid_batch BEFORE INSERT ON price_history "
+        "WHEN NEW.zpid = 2 BEGIN SELECT RAISE(ABORT, 'boom'); END"
+    )
+    conn.commit()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        upsert_listings(
+            conn,
+            [
+                {"zpid": 1, "price": 100, "city": "Albany"},
+                {"zpid": 2, "price": 200, "city": "Schenectady"},
+                {"zpid": 3, "price": 300, "city": "Troy"},
+            ],
+            seen_utc="2026-10-01T00:00:00Z",
+        )
+
+    # The connection is left clean: no transaction is open for the caller to
+    # commit by accident.
+    assert not conn.in_transaction
+    assert conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM price_history").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM sightings").fetchone()[0] == 0
+    # The run record is undone with the rest of the batch, so no unfinished
+    # run is left behind.
+    assert conn.execute("SELECT COUNT(*) FROM sync_runs").fetchone()[0] == 0
+
+    # The connection still works after the failure.
+    upsert_listings(conn, [{"zpid": 4, "price": 400}], seen_utc="2026-10-02T00:00:00Z")
+    assert load_listings(conn)[0]["zpid"] == 4
+    conn.close()
+
+
+def test_failed_upsert_rolls_back_the_run_it_created(tmp_path: Path):
+    """A run created by the caller is undone with the batch it belongs to."""
+    conn = connect(tmp_path / "rollback_run.db")
+    conn.execute(
+        "CREATE TRIGGER fail_mid_batch BEFORE INSERT ON price_history "
+        "WHEN NEW.zpid = 1 BEGIN SELECT RAISE(ABORT, 'boom'); END"
+    )
+    conn.commit()
+    run_id = begin_sync_run(conn, kind="sale", query="Albany", started_utc="2026-10-01T00:00:00Z")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        upsert_listings(conn, [{"zpid": 1, "price": 100}], run_id=run_id, seen_utc="2026-10-01T00:00:00Z")
+
+    assert conn.execute("SELECT COUNT(*) FROM sync_runs").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0] == 0
+    conn.close()
+
+
 def test_load_listings_supports_filters_and_limit(tmp_path: Path):
     conn = connect(tmp_path / "filtered.db")
     upsert_listings(

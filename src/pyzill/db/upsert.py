@@ -375,6 +375,12 @@ def upsert_listings(  # noqa: PLR0913
     queries before any writes; the write itself is one UPSERT per row. The run
     is finalized and committed in that same transaction.
 
+    The write path owns that transaction: it commits it on success and rolls
+    it back on failure, leaving the connection with no transaction open. A
+    failure part-way through a batch therefore undoes the whole batch -- the
+    listings already written, the price history, the sightings, and the run
+    record -- instead of leaving a half-applied database behind.
+
     The run lifecycle belongs to :mod:`pyzill.db.runs`: the caller creates the
     run (with the query text, viewport, and filters that make two runs
     comparable) and this function finishes it. When no run is supplied, an
@@ -407,31 +413,40 @@ def upsert_listings(  # noqa: PLR0913
     stats = SyncStats(added=0, updated=0, price_changes=0, skipped=0)
     prepared = _prepare_rows(rows, raw_rows, stats)
     zpids = list(dict.fromkeys(entry.zpid for entry in prepared))
-    existing, prior_prices = _prefetch(conn, zpids, kind, seen_utc)
-    prior_statuses = _latest_statuses(conn, zpids, kind, seen_utc)
-    if run_id is None:
-        run_id = begin_sync_run(conn, kind=kind, started_utc=seen_utc)
+    try:
+        existing, prior_prices = _prefetch(conn, zpids, kind, seen_utc)
+        prior_statuses = _latest_statuses(conn, zpids, kind, seen_utc)
+        if run_id is None:
+            run_id = begin_sync_run(conn, kind=kind, started_utc=seen_utc)
 
-    state = _BatchState(
-        kind=kind,
-        run_id=run_id,
-        seen_utc=seen_utc,
-        existing=existing,
-        prior_prices=prior_prices,
-        prior_statuses=prior_statuses,
-        staged_prices={},
-    )
-    _classify_changes(prepared, state, stats)
-    batch = _build_params(prepared, state)
-    _write_batch(conn, batch)
-    finish_sync_run(
-        conn,
-        run_id,
-        # Sightings are keyed by (run_id, zpid, kind), so a zpid seen twice in
-        # one batch stores one row; count the listings, not the input rows.
-        result_count=len({(row[1], row[2]) for row in batch.sighting}),
-        truncated=truncated,
-        finished_utc=seen_utc,
-    )
-    conn.commit()
+        state = _BatchState(
+            kind=kind,
+            run_id=run_id,
+            seen_utc=seen_utc,
+            existing=existing,
+            prior_prices=prior_prices,
+            prior_statuses=prior_statuses,
+            staged_prices={},
+        )
+        _classify_changes(prepared, state, stats)
+        batch = _build_params(prepared, state)
+        _write_batch(conn, batch)
+        finish_sync_run(
+            conn,
+            run_id,
+            # Sightings are keyed by (run_id, zpid, kind), so a zpid seen twice
+            # in one batch stores one row; count the listings, not the input rows.
+            result_count=len({(row[1], row[2]) for row in batch.sighting}),
+            truncated=truncated,
+            finished_utc=seen_utc,
+        )
+        conn.commit()
+    except BaseException:
+        # The write path owns the transaction it commits, so a failure has to
+        # undo it. Without this the rows written before the failure stay
+        # pending: a caller that reuses the connection would commit a
+        # half-applied batch, with listings that have no sighting and no price
+        # history and a run record that was never finished.
+        conn.rollback()
+        raise
     return stats
