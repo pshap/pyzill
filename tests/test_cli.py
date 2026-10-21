@@ -387,7 +387,7 @@ class TestSearchCommands:
         assert payload["code"] == "not_found"
         assert payload["retryable"] is False
 
-    def test_network_error_uses_transient_exit_code(self, monkeypatch):
+    def test_network_error_uses_transient_exit_code(self, monkeypatch, no_sleep):
         from curl_cffi import requests as cffi_requests
         from curl_cffi.requests.exceptions import RequestException
 
@@ -402,6 +402,8 @@ class TestSearchCommands:
         payload = json.loads(result.stderr)["error"]
         assert payload["code"] == "network"
         assert payload["retryable"] is True
+        # The failure was retried before it was reported.
+        assert no_sleep, "the request was not retried"
 
     def test_json_errors_can_be_disabled(self, fake_http):
         fake_http.install("PUT", status_code=403, text="blocked")
@@ -854,18 +856,21 @@ class TestGlobalOptions:
         result = runner.invoke(app, ["--proxy", "http://cli:pass@proxy:9090", "search", "sale", "12305"])
         assert result.exit_code == 0
 
-    def test_rate_limit_option_applied(self, fake_http, search_success_body):
+    def test_rate_limit_option_applied(self, fake_http, search_success_body, no_sleep):
         fake_http.install("PUT", json_data=search_success_body)
         result = runner.invoke(app, ["--rate-limit", "2.5", "search", "sale", "12305"])
         assert result.exit_code == 0
         assert ratelimit.get_min_interval() == 2.5
+        # The interval is not only stored: the request waited for it.
+        assert no_sleep, "the search did not wait for the rate limit"
 
-    def test_rate_limit_env_var(self, fake_http, search_success_body, monkeypatch):
+    def test_rate_limit_env_var(self, fake_http, search_success_body, monkeypatch, no_sleep):
         fake_http.install("PUT", json_data=search_success_body)
         monkeypatch.setenv("PYZILL_RATE_LIMIT", "3.5")
         result = runner.invoke(app, ["search", "sale", "12305"])
         assert result.exit_code == 0
         assert ratelimit.get_min_interval() == 3.5
+        assert no_sleep, "the search did not wait for the rate limit"
 
 
 class TestProxyValidation:
@@ -1899,9 +1904,8 @@ class TestDatabaseCommands:
         result = runner.invoke(app, ["db", "changes", "2026-10-01T14:00:00+02:00", "--db", str(db_path)])
         assert result.exit_code == 0
 
-    def test_db_changes_rejects_invalid_since(self, tmp_path):
-        db_path = tmp_path / "changes.db"
-        runner.invoke(app, ["db", "sync", "sale", "12305", "--db", str(db_path)])
+    def test_db_changes_rejects_invalid_since(self, import_rows):
+        db_path = import_rows([{"zpid": 1, "price": 250000}])
         result = runner.invoke(app, ["db", "changes", "not-a-date", "--db", str(db_path)])
         assert result.exit_code == 2
 

@@ -9,8 +9,19 @@ from typing import Any
 
 import pytest
 
+from pyzill import geocode as geocode_module
 from pyzill.bbox import BBox
 from pyzill.geocode import GeoResult, _expand_viewport, default_cache_path, geocode
+
+
+@pytest.fixture(autouse=True)
+def _no_nominatim_delay(monkeypatch):
+    """Keep the Nominatim limiter from waiting a second per lookup.
+
+    The limiter is there to stay under Nominatim's request budget; the
+    tests stub the request itself, so the wait buys nothing.
+    """
+    monkeypatch.setattr(geocode_module._nominatim_limiter, "min_interval", 0)
 
 
 class _Resp:

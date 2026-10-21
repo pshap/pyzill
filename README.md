@@ -856,6 +856,11 @@ in, set `PYZILL_LIVE=1`. They hit a fixed Schenectady viewport for
 sale/rent/sold search, resolve a zpid from the sale search for the home-detail
 check, and exercise the live Nominatim geocode path once.
 
+The rest of the suite never reaches the network, and `tests/conftest.py`
+enforces it: a test that calls out without stubbing the transport fails
+at the end of the test. Stub it with the `fake_http` fixture, or mark the
+test `live`.
+
 ### Keeping up with Zillow's payload
 
 Zillow's payloads are not committed: a capture holds real listing data and

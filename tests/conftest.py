@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Any
 
 import pytest
@@ -8,6 +9,10 @@ from curl_cffi.requests.exceptions import HTTPError
 from pyzill import ratelimit
 
 
+class NetworkAccessError(RuntimeError):
+    """Raised when an offline test reaches for the network."""
+
+
 @pytest.fixture(autouse=True)
 def _disable_rate_limit():
     """Keep tests fast: no throttling between mocked requests."""
@@ -15,6 +20,52 @@ def _disable_rate_limit():
     ratelimit.set_min_interval(0)
     yield
     ratelimit.set_min_interval(original)
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch, request):
+    """Fail an offline test that reaches for the network.
+
+    The offline suite must never talk to Zillow or Nominatim: a live
+    request makes the run slow and flaky, and it hides the fact that a
+    test depends on a site it does not control. The ``live`` tests are the
+    only ones allowed out.
+
+    The guard is installed before any other fixture patches the same
+    attribute, so a test that stubs the transport (``fake_http``) still
+    wins over it. The attempt is reported when the test ends rather than
+    where it happens, because the CLI turns every failure of a request
+    into a clean exit code: a test that phoned home would otherwise pass.
+    """
+    attempts: list[str] = []
+
+    def deny(*_args: Any, **_kwargs: Any) -> None:
+        attempts.append(request.node.nodeid)
+        raise NetworkAccessError("an offline test tried to reach the network")
+
+    if request.node.get_closest_marker("live"):
+        yield
+        return
+    monkeypatch.setattr(cffi_requests, "request", deny)
+    monkeypatch.setattr(cffi_requests.Session, "request", deny)
+    yield
+    assert not attempts, (
+        f"{request.node.nodeid} reached the network: it must stub the transport "
+        "with the fake_http fixture, or be marked live"
+    )
+
+
+@pytest.fixture
+def no_sleep(monkeypatch):
+    """Make the rate limiters' delays instant.
+
+    A test that checks *what* the limiter was asked to do does not need
+    to wait for it. Tests that measure the delay itself ask for the
+    ``time.sleep`` patch themselves.
+    """
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", slept.append)
+    return slept
 
 
 class FakeResponse:
