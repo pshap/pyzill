@@ -9,6 +9,7 @@ import sqlite3
 import sys
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -66,6 +67,7 @@ from pyzill.db import (
     default_db_path,
     get_changes,
     get_price_history,
+    list_runs,
     normalize_utc_timestamp,
     resolve_db_path,
     utc_now,
@@ -338,6 +340,27 @@ def db_changes(
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
         events = get_changes(conn, since)
     write_output(events, output_format, output)
+
+
+@db_app.command("runs")
+def db_runs(
+    kind: Annotated[
+        ListingKind | None,
+        typer.Option("--kind", help="Only runs of this kind: sale, rent, or sold"),
+    ] = None,
+    limit: LimitOpt = None,
+    db_path: DbPathOpt = None,
+    output_format: FormatOpt = OutputFormat.json,
+    output: OutputOpt = None,
+) -> None:
+    """List the recorded sync runs, newest first.
+
+    A run with no query text is an import or an anonymous upsert rather than
+    a search snapshot, so the query column says which kind of run it was.
+    """
+    with _db_session(db_path, must_exist=True, readonly=True) as conn:
+        runs = list_runs(conn, kind=kind, limit=limit)
+    write_output([asdict(run) for run in runs], output_format, output, title="Sync runs")
 
 
 @db_app.command("stats")

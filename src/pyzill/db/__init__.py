@@ -19,9 +19,11 @@ from pyzill.db.connection import connect, connect_readonly
 from pyzill.db.paths import default_db_path, resolve_db_path
 from pyzill.db.queries import get_price_history, load_listings
 from pyzill.db.runs import (
+    SyncRun,
     begin_sync_run,
     comparable_run_had_results,
     finish_sync_run,
+    list_runs,
     utc_now,
 )
 from pyzill.db.stats import DBStats, db_stats
@@ -30,6 +32,7 @@ from pyzill.db.upsert import SyncStats, upsert_listings
 
 __all__ = [
     "DBStats",
+    "SyncRun",
     "SyncStats",
     "begin_sync_run",
     "comparable_run_had_results",
@@ -40,6 +43,7 @@ __all__ = [
     "finish_sync_run",
     "get_changes",
     "get_price_history",
+    "list_runs",
     "load_listings",
     "normalize_utc_timestamp",
     "resolve_db_path",

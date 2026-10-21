@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 from pyzill.bbox import BBox
 from pyzill.cli import app, main_entry
 from pyzill.cli.search import extract_listings
-from pyzill.db import connect, upsert_listings
+from pyzill.db import begin_sync_run, connect, finish_sync_run, upsert_listings
 from pyzill.geocode import GeoResult
 from pyzill.query import query_database
 
@@ -1067,6 +1067,84 @@ class TestGeocodeIntegration:
         assert _GEO_STUB.calls == ["Schenectady NY"]
 
 
+class TestGeocodeCommand:
+    """The geocode command resolves a place to a viewport on its own."""
+
+    def test_geocode_prints_the_resolved_viewport(self, monkeypatch):
+        from pyzill.cli import geocode as geocode_module
+        from pyzill.geocode import GeoResult
+
+        def fake_geocode(place: str, **kwargs: object) -> GeoResult:
+            assert place == "Schenectady NY"
+            return GeoResult(
+                display_name="Schenectady, NY, USA",
+                bbox=BBox(north=42.9, south=42.6, east=-73.8, west=-74.1),
+            )
+
+        monkeypatch.setattr(geocode_module, "geocode_place", fake_geocode)
+
+        result = runner.invoke(app, ["geocode", "Schenectady NY"])
+
+        assert result.exit_code == 0
+        payload = json.loads(result.stdout)
+        assert payload["display_name"] == "Schenectady, NY, USA"
+        assert payload["north"] == 42.9
+        assert payload["south"] == 42.6
+        assert payload["east"] == -73.8
+        assert payload["west"] == -74.1
+
+    def test_geocode_rejects_an_empty_place(self):
+        result = runner.invoke(app, ["geocode", "  "])
+
+        assert result.exit_code == 2
+        assert "Place name must not be empty" in result.stderr
+
+    def test_geocode_rejects_a_format_it_cannot_render(self, monkeypatch):
+        from pyzill.cli import geocode as geocode_module
+        from pyzill.geocode import GeoResult
+
+        monkeypatch.setattr(
+            geocode_module,
+            "geocode_place",
+            lambda place, **kwargs: GeoResult(display_name="x", bbox=BBox(north=1, south=0, east=1, west=0)),
+        )
+
+        result = runner.invoke(app, ["geocode", "Schenectady NY", "--format", "table"])
+
+        assert result.exit_code == 2
+        assert "only supports JSON format" in result.stderr
+
+    def test_geocode_reports_an_unreachable_service_as_retryable(self, monkeypatch):
+        from pyzill.cli import geocode as geocode_module
+        from pyzill.geocode import GeocodeUnavailableError
+
+        def fake_geocode(place: str, **kwargs: object) -> object:
+            raise GeocodeUnavailableError("the service is down")
+
+        monkeypatch.setattr(geocode_module, "geocode_place", fake_geocode)
+
+        result = runner.invoke(app, ["--json-errors", "geocode", "Schenectady NY"])
+
+        assert result.exit_code == 6
+        error_payload = json.loads(result.stderr)["error"]
+        assert error_payload["retryable"] is True
+
+    def test_geocode_reports_an_unresolved_place_as_an_error(self, monkeypatch):
+        from pyzill.cli import geocode as geocode_module
+        from pyzill.geocode import GeocodeError
+
+        def fake_geocode(place: str, **kwargs: object) -> object:
+            raise GeocodeError("no such place")
+
+        monkeypatch.setattr(geocode_module, "geocode_place", fake_geocode)
+
+        result = runner.invoke(app, ["--json-errors", "geocode", "Nowhere"])
+
+        assert result.exit_code == 1
+        error_payload = json.loads(result.stderr)["error"]
+        assert error_payload["retryable"] is False
+
+
 def test_where_coercion_only_accepts_strict_numeric_literals():
     from pyzill.cli.query import coerce_value as _coerce_value
 
@@ -1414,6 +1492,55 @@ class TestDatabaseCommands:
 
         assert result.exit_code == 2
         assert "Query must not be empty" in result.stderr
+
+    def test_db_runs_lists_the_recorded_runs(self, tmp_path):
+        """A run id handed out by a sync must be resolvable afterwards."""
+        db_path = tmp_path / "runs.db"
+        conn = connect(db_path)
+        run_id = begin_sync_run(
+            conn,
+            kind="sale",
+            query="Albany",
+            bbox={"north": 43.0, "south": 42.0},
+            filters={"max_price": 500000},
+            started_utc="2026-10-01T00:00:00Z",
+        )
+        finish_sync_run(conn, run_id, result_count=7, finished_utc="2026-10-01T00:01:00Z")
+        conn.commit()
+        conn.close()
+
+        result = runner.invoke(app, ["db", "runs", "--db", str(db_path)])
+
+        assert result.exit_code == 0
+        runs = json.loads(result.stdout)
+        assert len(runs) == 1
+        assert runs[0]["id"] == run_id
+        assert runs[0]["kind"] == "sale"
+        assert runs[0]["query"] == "Albany"
+        assert runs[0]["result_count"] == 7
+        assert runs[0]["truncated"] is False
+        assert runs[0]["bbox"] == {"north": 43.0, "south": 42.0}
+        assert runs[0]["filters"] == {"max_price": 500000}
+
+    def test_db_runs_filters_by_kind(self, tmp_path):
+        db_path = tmp_path / "runs.db"
+        conn = connect(db_path)
+        begin_sync_run(conn, kind="sale", query="Albany", started_utc="2026-10-01T00:00:00Z")
+        begin_sync_run(conn, kind="rent", query="Albany", started_utc="2026-10-02T00:00:00Z")
+        conn.commit()
+        conn.close()
+
+        result = runner.invoke(app, ["db", "runs", "--db", str(db_path), "--kind", "rent"])
+
+        assert result.exit_code == 0
+        runs = json.loads(result.stdout)
+        assert [run["kind"] for run in runs] == ["rent"]
+
+    def test_db_runs_needs_a_database(self, tmp_path):
+        result = runner.invoke(app, ["db", "runs", "--db", str(tmp_path / "missing.db")])
+
+        assert result.exit_code == 1
+        assert "Database not found" in result.stderr
 
     def test_db_sync_zip_only_stores_listings_in_requested_zip(self, fake_http, tmp_path):
         fake_http.install(

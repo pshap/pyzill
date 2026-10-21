@@ -88,13 +88,18 @@ def render_jsonl(value: Any) -> str:
         raise OutputError(f"Output is not valid JSON: {exc}") from exc
 
 
-def render_table(rows: list[dict[str, Any]], columns: list[str] | None, use_db_columns: bool) -> Table:
+def render_table(
+    rows: list[dict[str, Any]],
+    columns: list[str] | None,
+    use_db_columns: bool,
+    title: str = "Listings",
+) -> Table:
     """Render rows as a table."""
     if columns is None:
         defaults = _DB_TABLE_COLUMNS if use_db_columns else _TABLE_COLUMNS
         display = [column for column in defaults if any(column in row for row in rows)]
         columns = display or _columns(rows)
-    table = Table(title="Listings")
+    table = Table(title=title)
     for column in columns:
         table.add_column(column)
     for row in rows:

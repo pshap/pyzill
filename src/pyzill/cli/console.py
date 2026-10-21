@@ -293,12 +293,13 @@ def emit(content: str, output: str | None) -> None:
         raise typer.Exit(0) from None
 
 
-def write_output(
+def write_output(  # noqa: PLR0913
     data: Any,
     output_format: OutputFormat,
     output: str | None = None,
     columns: list[str] | None = None,
     use_db_columns: bool = False,
+    title: str = "Listings",
 ) -> None:
     """Render the data and write it out, deciding what to report on the way.
 
@@ -321,7 +322,7 @@ def write_output(
         return
     if not rows:
         return
-    table = render_table(rows, columns, use_db_columns)
+    table = render_table(rows, columns, use_db_columns, title)
     if output:
         emit(render_table_text(table), output)
         return

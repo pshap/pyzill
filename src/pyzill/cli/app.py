@@ -19,6 +19,7 @@ from pyzill.cli.console import (
 )
 from pyzill.cli.db import db_app
 from pyzill.cli.detail import detail_app
+from pyzill.cli.geocode import register as register_geocode_command
 from pyzill.cli.query import register as register_offline_commands
 from pyzill.cli.schema import schema_app
 from pyzill.cli.search import search_app
@@ -38,6 +39,7 @@ app.add_typer(detail_app)
 app.add_typer(db_app)
 app.add_typer(schema_app)
 register_offline_commands(app)
+register_geocode_command(app)
 
 
 def _no_color_requested() -> bool:

@@ -17,11 +17,13 @@ from pyzill.bbox import CONTINENTAL_US, BBox
 from pyzill.client import ZillowClient
 from pyzill.db import (
     DBStats,
+    SyncRun,
     SyncStats,
     connect,
     db_stats,
     default_db_path,
     get_price_history,
+    list_runs,
     load_listings,
     upsert_listings,
     utc_now,
@@ -36,9 +38,10 @@ from pyzill.exceptions import (
 )
 
 # Importing the submodule also binds ``pyzill.geocode`` to the module, so
-# ``pyzill.geocode.geocode(...)`` resolves. Only ``GeoResult`` is re-exported
-# by name: binding the function as ``pyzill.geocode`` would shadow the module.
-from pyzill.geocode import GeoResult
+# ``pyzill.geocode.geocode(...)`` resolves. Only the names below are
+# re-exported by name: binding the function as ``pyzill.geocode`` would
+# shadow the module.
+from pyzill.geocode import GeocodeError, GeocodeUnavailableError, GeoResult
 from pyzill.normalize import (
     Listing,
     is_building_result,
@@ -56,8 +59,11 @@ __all__ = [
     "BBox",
     "DBStats",
     "GeoResult",
+    "GeocodeError",
+    "GeocodeUnavailableError",
     "Listing",
     "PropertyDetail",
+    "SyncRun",
     "SyncStats",
     "ZillowBlockedError",
     "ZillowClient",
@@ -84,6 +90,7 @@ __all__ = [
     "iter_sale",
     "iter_search",
     "iter_sold",
+    "list_runs",
     "load_listings",
     "normalize_listing",
     "normalize_listings",

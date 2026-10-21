@@ -40,6 +40,33 @@ except ImportError:  # pragma: no cover - Windows
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 
+__all__ = [
+    "GeoResult",
+    "GeocodeError",
+    "GeocodeUnavailableError",
+    "default_cache_path",
+    "geocode",
+]
+
+
+class GeocodeError(ValueError):
+    """A geocoding lookup failed.
+
+    A subclass of :class:`ValueError`, so the callers that already handle a
+    failed lookup keep working. ``retryable`` says whether trying again
+    could succeed: a place that does not resolve will not resolve on a
+    second try, but an unreachable service might.
+    """
+
+    retryable = False
+
+
+class GeocodeUnavailableError(GeocodeError):
+    """The geocoding service could not be reached, or returned an error."""
+
+    retryable = True
+
+
 # The viewport flags a caller can use instead of geocoding. Every error
 # message points at them, so the list lives in one place.
 _VIEWPORT_FLAGS = "--north/--south/--east/--west"
@@ -247,13 +274,13 @@ def _store_cache(path: Path, key: str, entry: dict[str, Any]) -> None:
         pass
 
 
-def _geocode_error(place: str, detail: str, hint: str = _NO_GEOCODE_HINT) -> ValueError:
+def _geocode_error(place: str, detail: str, hint: str = _NO_GEOCODE_HINT) -> GeocodeError:
     """Build the error for a failed lookup.
 
     Every failure points at the same hint, so the wording lives in one place
     instead of being copied into each message.
     """
-    return ValueError(f"Geocoding {place!r} {detail}. {hint}")
+    return GeocodeError(f"Geocoding {place!r} {detail}. {hint}")
 
 
 def _cached_result(cache_path: Path, key: str, place: str) -> GeoResult | None:
@@ -304,8 +331,9 @@ def _fetch_hits(place: str, proxy_url: str | None) -> list[Any]:
         hits = json_body(response)
     except (OSError, ValueError) as exc:
         # Network failures, HTTP errors, and unparseable bodies all mean the
-        # same thing to the caller: the place could not be resolved.
-        raise _geocode_error(place, f"failed: {exc}") from exc
+        # same thing to the caller: the place could not be resolved now. They
+        # are retryable, unlike a place that simply does not resolve.
+        raise GeocodeUnavailableError(f"Geocoding {place!r} failed: {exc}. {_NO_GEOCODE_HINT}") from exc
     if not isinstance(hits, list):
         raise _geocode_error(place, "returned an unexpected response shape")
     return hits
@@ -363,12 +391,13 @@ def geocode(
         GeoResult: display name plus a validated BBox.
 
     Raises:
-        ValueError: no result, the response was malformed, or the network
-            request failed.
+        GeocodeError: the place did not resolve, or the response was
+            malformed. Not retryable.
+        GeocodeUnavailableError: the request failed. Retryable.
     """
     place = place.strip()
     if not place:
-        raise ValueError("Cannot geocode an empty place name")
+        raise GeocodeError("Cannot geocode an empty place name")
 
     cache_path = cache_path or default_cache_path()
     key = f"us:jsonv2:{place.lower()}"
@@ -379,7 +408,7 @@ def geocode(
 
     hits = _fetch_hits(place, proxy_url)
     if not hits:
-        raise ValueError(f"No geocoding result for {place!r}. {_NO_RESULT_HINT}")
+        raise GeocodeError(f"No geocoding result for {place!r}. {_NO_RESULT_HINT}")
 
     result = _result_from_hit(hits[0], place)
     _store_cache(
