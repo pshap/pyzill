@@ -53,7 +53,7 @@ cli_query_rows = _as_cli_error(query_rows)
 cli_query_database = _as_cli_error(query_database)
 
 
-def query(  # noqa: PLR0913
+def query(
     input_or_dash: Annotated[str, typer.Argument(help="Saved search JSON file, or '-' for stdin")],
     where: WhereOpt = None,
     where_json: WhereJSONOpt = None,

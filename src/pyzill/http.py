@@ -5,7 +5,6 @@ that search and detail requests stay consistent. The browser identity
 (headers and client hints) lives in :mod:`pyzill.http_headers`.
 """
 
-import random
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
@@ -26,7 +25,7 @@ from pyzill.exceptions import (
 from pyzill.http_headers import JSON_ACCEPT, build_headers
 from pyzill.ratelimit import RateLimiter, default_limiter
 from pyzill.responses import json_body, raise_for_status
-from pyzill.utils import resolve_proxy
+from pyzill.utils import jitter, resolve_proxy
 
 __all__ = [
     "DEFAULT_IMPERSONATE",
@@ -160,7 +159,7 @@ def _retry_delay(attempt: int, retry_after: str | None = None, max_retry_after: 
             except (TypeError, ValueError, OverflowError):
                 pass
     delay: float = _RETRY_DELAY * (2**attempt)
-    return delay + random.uniform(0.0, min(1.0, delay * 0.25))  # noqa: S311 (retry jitter, not crypto)
+    return delay + jitter(min(1.0, delay * 0.25))
 
 
 def build_proxies(proxy_url: str | None) -> ProxySpec | None:

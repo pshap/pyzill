@@ -94,7 +94,7 @@ def _emit_keys(data: Any, output: str | None = None) -> None:
     emit("\n".join(lines), output)
 
 
-def run_detail(  # noqa: PLR0913
+def run_detail(
     fetch: Callable[..., Any],
     value: str | int,
     output_format: OutputFormat,

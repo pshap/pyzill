@@ -48,7 +48,7 @@ def _no_color_requested() -> bool:
 
 
 @app.callback()
-def main(  # noqa: PLR0913
+def main(
     ctx: typer.Context,
     quiet: Annotated[
         bool,
@@ -98,7 +98,7 @@ def main(  # noqa: PLR0913
             envvar="PYZILL_RATE_LIMIT",
         ),
     ] = None,
-    version: Annotated[  # noqa: ARG001
+    _version: Annotated[
         bool,
         typer.Option(
             "--version",

@@ -56,7 +56,7 @@ def _load_json_object(value: str | None) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def begin_sync_run(  # noqa: PLR0913
+def begin_sync_run(  # noqa: PLR0913 - a run records its query, its viewport, and its filters
     conn: sqlite3.Connection,
     *,
     kind: str,

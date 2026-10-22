@@ -1,8 +1,8 @@
-import random
 import threading
 import time
 
 from pyzill.config import read_env
+from pyzill.utils import jitter
 
 DEFAULT_MIN_INTERVAL = 1.5
 
@@ -40,7 +40,7 @@ class RateLimiter:
         with self._lock:
             now = time.monotonic()
             interval = max(0.0, self.min_interval)
-            interval_target = max(0.0, interval + random.uniform(0, self.jitter))  # noqa: S311 (not crypto)
+            interval_target = max(0.0, interval + jitter(self.jitter))
             interval_wait = max(0.0, interval_target - (now - self._last))
             time.sleep(max(interval_wait, minimum_delay, 0.0))
             self._last = time.monotonic()
@@ -74,9 +74,9 @@ class SharedBudgetLimiter(RateLimiter):
         # two clients cannot start requests at the same instant.
         with self._shared._lock:
             now = time.monotonic()
-            jitter = random.uniform(0, self._shared.jitter)  # noqa: S311 (not crypto)
-            shared_target = max(0.0, self._shared.min_interval) + jitter
-            local_target = max(0.0, self.min_interval) + jitter
+            spread = jitter(self._shared.jitter)
+            shared_target = max(0.0, self._shared.min_interval) + spread
+            local_target = max(0.0, self.min_interval) + spread
             wait_for = max(
                 0.0,
                 shared_target - (now - self._shared._last),

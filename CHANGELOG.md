@@ -235,6 +235,20 @@ All notable changes to this project are documented here.
   and the unit it was stated in ("1,742 sqft", "0.25 acres"), so a unit
   that arrived with the number is no longer dropped.
 
+### Tooling
+
+- The lint suppressions that hid a rule rather than answered it are gone.
+  The CLI's long signatures are the flag surface itself, so the
+  argument-count rule is now ignored for the CLI package in `pyproject.toml`
+  instead of being silenced at ten call sites, and every remaining
+  suppression says why it is there. The random jitter the rate limiter and
+  the retry backoff draw now comes from one helper, so the "this is not
+  cryptographic randomness" decision is made once.
+- The CLI reads its search filters from `SearchFilters` instead of listing
+  the same fourteen names a second time, and the query engine takes one
+  description of a query instead of ten parameters. A filter added to the
+  model reaches the commands with it.
+
 ## [1.4.0] - 2026-10
 
 ### Added

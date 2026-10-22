@@ -208,7 +208,7 @@ def _detail_options(
     )
 
 
-def get_from_home_id(  # noqa: PLR0913
+def get_from_home_id(  # noqa: PLR0913 - the detail fetchers take the transport options
     property_id: int,
     proxy_url: str | None = None,
     impersonate: str = DEFAULT_IMPERSONATE,
@@ -224,7 +224,7 @@ def get_from_home_id(  # noqa: PLR0913
     )
 
 
-def get_from_home_url(  # noqa: PLR0913
+def get_from_home_url(  # noqa: PLR0913 - the detail fetchers take the transport options
     home_url: str,
     proxy_url: str | None = None,
     impersonate: str = DEFAULT_IMPERSONATE,
@@ -240,7 +240,7 @@ def get_from_home_url(  # noqa: PLR0913
     )
 
 
-def get_from_apartment_id(  # noqa: PLR0913
+def get_from_apartment_id(  # noqa: PLR0913 - the detail fetchers take the transport options
     apartment_id: str,
     proxy_url: str | None = None,
     impersonate: str = DEFAULT_IMPERSONATE,
@@ -256,7 +256,7 @@ def get_from_apartment_id(  # noqa: PLR0913
     )
 
 
-def get_from_apartment_url(  # noqa: PLR0913
+def get_from_apartment_url(  # noqa: PLR0913 - the detail fetchers take the transport options
     apartment_url: str,
     proxy_url: str | None = None,
     impersonate: str = DEFAULT_IMPERSONATE,

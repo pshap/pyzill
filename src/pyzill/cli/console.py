@@ -294,7 +294,7 @@ def emit(content: str, output: str | None) -> None:
         raise typer.Exit(0) from None
 
 
-def write_output(  # noqa: PLR0913
+def write_output(
     data: Any,
     output_format: OutputFormat,
     output: str | None = None,

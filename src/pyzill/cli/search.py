@@ -5,8 +5,8 @@ flags, calls the workflow, maps its errors to exit codes, and renders the
 result.
 """
 
-import inspect
 from collections.abc import Mapping
+from dataclasses import fields
 from typing import Any, NoReturn
 
 import typer
@@ -63,54 +63,29 @@ search_app = typer.Typer(name="search", help="Search Zillow listings")
 _SEARCH_NAMES = {"sale": "for_sale", "rent": "for_rent", "sold": "sold"}
 
 
-def search_filter_options(  # noqa: PLR0913
-    north: North = None,
-    south: South = None,
-    east: East = None,
-    west: West = None,
-    zoom: Zoom = None,
-    min_beds: MinBeds = None,
-    max_beds: MaxBeds = None,
-    min_bathrooms: MinBaths = None,
-    max_bathrooms: MaxBaths = None,
-    min_price: MinPrice = None,
-    max_price: MaxPrice = None,
-    tile: Tile = False,
-    max_depth: MaxDepth = 4,
-    max_requests: MaxRequests = 50,
-) -> SearchFilters:
-    """Build shared filter options used by search variants and database sync."""
-    return SearchFilters(
-        north=north,
-        south=south,
-        east=east,
-        west=west,
-        zoom=zoom,
-        min_beds=min_beds,
-        max_beds=max_beds,
-        min_bathrooms=min_bathrooms,
-        max_bathrooms=max_bathrooms,
-        min_price=min_price,
-        max_price=max_price,
-        tile=tile,
-        max_depth=max_depth,
-        max_requests=max_requests,
-    )
+def search_filter_options(args: Mapping[str, Any]) -> SearchFilters:
+    """Build shared filter options used by search variants and database sync.
+
+    The filters are the fields of :class:`~pyzill.workflows.SearchFilters`,
+    so the names are read from there instead of being listed a second time:
+    a filter added to the model reaches the commands with it.
+    """
+    return SearchFilters(**{name: args[name] for name in _FILTER_OPTION_NAMES})
 
 
-_FILTER_OPTION_NAMES = tuple(inspect.signature(search_filter_options).parameters)
+_FILTER_OPTION_NAMES = tuple(field.name for field in fields(SearchFilters))
 
 
 def search_options_from_args(args: Mapping[str, Any]) -> SearchRequest:
     """Build a search request from a command's own arguments.
 
     ``args`` is the calling command's ``locals()``. The filter values are the
-    parameters of :func:`search_filter_options`, so a command declares them
-    once and a new filter only has to be added to the command signatures.
+    fields of :class:`~pyzill.workflows.SearchFilters`, so a command declares
+    them once and a new filter only has to be added to the command signatures.
     ``is_room``/``is_entire_place`` are rental-only switches that the sale
     and sold commands do not have.
     """
-    filters = search_filter_options(**{name: args[name] for name in _FILTER_OPTION_NAMES})
+    filters = search_filter_options(args)
     return SearchRequest(
         query=args["query"],
         filters=filters,
@@ -230,7 +205,7 @@ def _search_command(kind: Kind, args: Mapping[str, Any]) -> None:
 
 
 @search_app.command("sale")
-def search_sale(  # noqa: PLR0913
+def search_sale(
     query: Query,
     north: North = None,
     south: South = None,
@@ -255,7 +230,7 @@ def search_sale(  # noqa: PLR0913
 
 
 @search_app.command("rent")
-def search_rent(  # noqa: PLR0913
+def search_rent(
     query: Query,
     north: North = None,
     south: South = None,
@@ -282,7 +257,7 @@ def search_rent(  # noqa: PLR0913
 
 
 @search_app.command("sold")
-def search_sold(  # noqa: PLR0913
+def search_sold(
     query: Query,
     north: North = None,
     south: South = None,

@@ -112,7 +112,7 @@ def import_rows(
     return SyncResult(stats=stats, rows=list(rows), run_id=run_id)
 
 
-def sync_to_db(  # noqa: PLR0913
+def sync_to_db(  # noqa: PLR0913 - the sync pipeline's inputs
     conn: sqlite3.Connection,
     kind: Kind,
     request: SearchRequest,

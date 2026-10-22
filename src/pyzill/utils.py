@@ -1,4 +1,4 @@
-"""Small text helpers, plus compatibility re-exports of the proxy helpers.
+"""Small helpers, plus compatibility re-exports of the proxy helpers.
 
 The proxy functions used to live here. They now live in :mod:`pyzill.proxy`;
 this module keeps re-exporting them so existing imports
@@ -6,6 +6,7 @@ this module keeps re-exporting them so existing imports
 import them from :mod:`pyzill.proxy`.
 """
 
+import random
 import re
 from typing import Any
 
@@ -18,6 +19,17 @@ from pyzill.proxy import resolve_proxy as resolve_proxy
 def collapse_whitespace(value: str) -> str:
     """Collapse runs of whitespace to a single space."""
     return re.sub(r"\s+", " ", value.strip())
+
+
+def jitter(maximum: float) -> float:
+    """Return a random delay in ``[0, maximum]`` seconds.
+
+    This is the one place pyzill draws a random number: the rate limiter's
+    spacing and the retry backoff. None of those values is a secret -- they
+    only spread requests out in time -- so the standard library's ``random``
+    is the right tool and ``secrets`` would only cost more.
+    """
+    return random.uniform(0.0, maximum)  # noqa: S311 - jitter is not cryptographic
 
 
 remove_space = collapse_whitespace

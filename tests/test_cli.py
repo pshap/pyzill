@@ -4,6 +4,8 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import fields
+from inspect import signature
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -17,11 +19,13 @@ from pyzill.bbox import BBox
 from pyzill.cli import app, console, main_entry
 from pyzill.cli import geocode as geocode_module
 from pyzill.cli.console import _redact, stderr_line
+from pyzill.cli.db import db_sync
 from pyzill.cli.query import coerce_value
-from pyzill.cli.search import extract_listings
+from pyzill.cli.search import extract_listings, search_rent, search_sale, search_sold
 from pyzill.db import begin_sync_run, connect, finish_sync_run, upsert_listings
 from pyzill.geocode import GeoResult
 from pyzill.query import query_database
+from pyzill.workflows import SearchFilters
 
 runner = CliRunner()
 
@@ -505,6 +509,15 @@ class TestSearchCommands:
         assert "isRoomForRent" not in filter_state
         assert "isEntirePlaceForRent" not in filter_state
 
+    def test_search_passes_the_zoom_filter_to_the_request(self, fake_http, search_success_body):
+        """The map zoom is a filter like any other and must reach the request."""
+        fake_http.install("PUT", json_data=search_success_body)
+
+        result = runner.invoke(app, ["search", "sale", "12305", "--zoom", "12"])
+
+        assert result.exit_code == 0
+        assert fake_http.calls[0]["json"]["searchQueryState"]["mapZoom"] == 12
+
     def test_raw_format_rejects_csv(self, fake_http, search_success_body):
         fake_http.install("PUT", json_data=search_success_body)
         result = runner.invoke(app, ["search", "sale", "12305", "--raw", "--format", "csv"])
@@ -517,6 +530,20 @@ class TestSearchCommands:
         assert result.exit_code == 0
         data = json.loads(result.stdout)
         assert data == []
+
+
+def test_every_search_command_declares_every_filter():
+    """The CLI reads the filters out of a command's own locals(), by name.
+
+    The names come from :class:`~pyzill.workflows.SearchFilters`, so a filter
+    the model has but a command does not declare would be a KeyError in the
+    middle of a search. The two are checked here instead.
+    """
+    filter_names = {field.name for field in fields(SearchFilters)}
+    for command in (search_sale, search_rent, search_sold, db_sync):
+        declared = set(signature(command).parameters)
+        missing = filter_names - declared
+        assert not missing, f"{command.__name__} does not declare {sorted(missing)}"
 
 
 class TestExtractListings:

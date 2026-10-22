@@ -177,7 +177,7 @@ def _report_sync_stats(result: SyncResult, verb: str, output_format: OutputForma
 
 
 @db_app.command("sync")
-def db_sync(  # noqa: PLR0913
+def db_sync(
     kind: Annotated[ListingKind, typer.Argument(help="Search kind: sale, rent, or sold")],
     query: Query,
     north: North = None,
@@ -283,7 +283,7 @@ def db_import(
 
 
 @db_app.command("query")
-def db_query(  # noqa: PLR0913
+def db_query(
     where: WhereOpt = None,
     where_json: WhereJSONOpt = None,
     sort: SortOpt = None,

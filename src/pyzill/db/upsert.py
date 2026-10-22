@@ -147,6 +147,8 @@ def _prefetch(
     prior_prices: dict[tuple[int, str], int | None] = {}
     for start in range(0, len(zpids), _CHUNK):
         chunk = zpids[start : start + _CHUNK]
+        # The only thing interpolated into these statements is the run of
+        # placeholders; every value is bound.
         marks = _placeholders(len(chunk))
         for zpid, price in conn.execute(
             f"SELECT zpid, price FROM listings WHERE zpid IN ({marks}) AND kind = ?",  # noqa: S608
@@ -352,7 +354,7 @@ def _write_batch(conn: sqlite3.Connection, batch: _WriteBatch) -> None:
         )
 
 
-def upsert_listings(  # noqa: PLR0913
+def upsert_listings(  # noqa: PLR0913 - the write path's inputs
     conn: sqlite3.Connection,
     rows: Sequence[Mapping[str, Any]],
     *,

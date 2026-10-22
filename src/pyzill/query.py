@@ -267,24 +267,31 @@ def _projection_column(field: str) -> str:
     return f'"{field}"'
 
 
-def _run_query(  # noqa: PLR0913
-    conn: sqlite3.Connection,
-    *,
-    table: str,
-    where: list[str] | None,
-    where_json: str | None,
-    sort: str | None,
-    cols: str | None,
-    limit: int | None,
-    valid_fields: frozenset[str],
-    default_order: str,
-    payload_column: str | None = None,
-    conditions: Sequence[Condition] | None = None,
-) -> tuple[list[dict[str, Any]], list[str] | None]:
-    parsed = _parse_conditions(where, where_json, valid_fields, conditions)
+@dataclass(frozen=True)
+class _QuerySpec:
+    """One query: the table to read, the filters that narrow it, and the order.
+
+    The two public entry points -- a saved response and the database -- run
+    the same engine; they differ only in the spec they hand it.
+    """
+
+    table: str
+    valid_fields: frozenset[str]
+    default_order: str
+    where: list[str] | None = None
+    where_json: str | None = None
+    sort: str | None = None
+    cols: str | None = None
+    limit: int | None = None
+    payload_column: str | None = None
+    conditions: Sequence[Condition] | None = None
+
+
+def _run_query(conn: sqlite3.Connection, spec: _QuerySpec) -> tuple[list[dict[str, Any]], list[str] | None]:
+    parsed = _parse_conditions(spec.where, spec.where_json, spec.valid_fields, spec.conditions)
     for condition in parsed:
         _validate_condition(condition)
-    selected = _selected_columns(cols, valid_fields)
+    selected = _selected_columns(spec.cols, spec.valid_fields)
     clauses: list[str] = []
     parameters: list[Any] = []
     for condition in parsed:
@@ -292,43 +299,43 @@ def _run_query(  # noqa: PLR0913
         clauses.append(clause)
         parameters.extend(values)
 
-    order_clause = default_order
-    if sort:
-        field, direction = _sort_condition(sort, valid_fields)
+    order_clause = spec.default_order
+    if spec.sort:
+        field, direction = _sort_condition(spec.sort, spec.valid_fields)
         column = _sql_column(field)
         order_clause = f'({column}) IS NULL ASC, {column} {direction.upper()}, "zpid" ASC'
 
-    if payload_column is not None:
+    if spec.payload_column is not None:
         # A saved row is its payload; the table columns exist to filter and
         # sort on, so they are not selected.
-        select_clause = f'"{payload_column}"'
+        select_clause = f'"{spec.payload_column}"'
     elif selected:
         # Projecting in SQL keeps the columns that were not asked for out of
         # the result, so a narrow query does not read the whole table.
         select_clause = ", ".join(_projection_column(column) for column in selected)
     else:
         select_clause = "*"
-    sql = f'SELECT {select_clause} FROM "{table}"'  # noqa: S608 - table names are internal constants
+    sql = f'SELECT {select_clause} FROM "{spec.table}"'  # noqa: S608 - table names are internal constants
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY " + order_clause
-    if limit is not None:
+    if spec.limit is not None:
         sql += " LIMIT ?"
-        parameters.append(limit)
+        parameters.append(spec.limit)
     cursor = conn.execute(sql, parameters)
     names = [description[0] for description in cursor.description]
     rows: list[dict[str, Any]] = []
     for record in cursor.fetchall():
         row = dict(zip(names, record, strict=True))
-        if payload_column is not None:
-            payload = json.loads(row[payload_column])
+        if spec.payload_column is not None:
+            payload = json.loads(row[spec.payload_column])
             rows.append({column: _field_value(payload, column) for column in selected} if selected else payload)
         else:
             rows.append(row)
     return rows, selected
 
 
-def query_rows(  # noqa: PLR0913
+def query_rows(  # noqa: PLR0913 - the query's whole filter surface
     rows: list[dict[str, Any]],
     *,
     where: list[str] | None = None,
@@ -357,21 +364,23 @@ def query_rows(  # noqa: PLR0913
         conn.executemany(f'INSERT INTO "query_rows" VALUES ({placeholders})', values)  # noqa: S608
         return _run_query(
             conn,
-            table="query_rows",
-            where=where,
-            where_json=where_json,
-            sort=sort,
-            cols=cols,
-            limit=limit,
-            valid_fields=valid_fields,
-            default_order="rowid ASC",
-            payload_column="__payload",
+            _QuerySpec(
+                table="query_rows",
+                valid_fields=valid_fields,
+                default_order="rowid ASC",
+                where=where,
+                where_json=where_json,
+                sort=sort,
+                cols=cols,
+                limit=limit,
+                payload_column="__payload",
+            ),
         )
     finally:
         conn.close()
 
 
-def query_database(  # noqa: PLR0913
+def query_database(  # noqa: PLR0913 - the query's whole filter surface
     conn: sqlite3.Connection,
     *,
     where: list[str] | None = None,
@@ -389,13 +398,15 @@ def query_database(  # noqa: PLR0913
     """
     return _run_query(
         conn,
-        table="listings",
-        where=where,
-        where_json=where_json,
-        sort=sort,
-        cols=cols,
-        limit=limit,
-        valid_fields=_DB_QUERY_FIELDS,
-        default_order='"last_seen_utc" DESC, "zpid" DESC, "kind" ASC',
-        conditions=conditions,
+        _QuerySpec(
+            table="listings",
+            valid_fields=_DB_QUERY_FIELDS,
+            default_order='"last_seen_utc" DESC, "zpid" DESC, "kind" ASC',
+            where=where,
+            where_json=where_json,
+            sort=sort,
+            cols=cols,
+            limit=limit,
+            conditions=conditions,
+        ),
     )

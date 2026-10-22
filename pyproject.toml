@@ -52,9 +52,11 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "PLR0913", "PLR0917", "PLR2004", "ARG001", "ARG005"]
-# Typer turns each function parameter into a CLI option, so command signatures
-# legitimately exceed the positional-argument threshold.
-"src/pyzill/cli/**" = ["PLR0917"]
+# The CLI is the adapter between the flags and the library: a Typer command
+# turns every parameter into a command-line option, and the render helpers
+# take the comparable set of presentation parameters, so the argument and
+# positional-argument thresholds do not apply here.
+"src/pyzill/cli/**" = ["PLR0913", "PLR0917"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -94,4 +96,8 @@ ignore_names = [
     "for_sale",
     "for_rent",
     "sold",
+    # Typer binds a command's option parameters from the command line, and the
+    # CLI reads them out of the command's own locals(), so a filter name that
+    # the rest of the tree never mentions looks unused.
+    "zoom",
 ]
