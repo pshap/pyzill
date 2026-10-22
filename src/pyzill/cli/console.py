@@ -220,6 +220,11 @@ def network_errors(failure: str) -> Iterator[None]:
             retryable=e.retryable,
             status_code=getattr(e, "status_code", None),
         )
+    except typer.Exit:
+        # The CLI raises this to end a command with its own exit code. It is
+        # an Exception, so the catch-all below would report it as an
+        # unexpected failure and replace the code the CLI chose.
+        raise
     except Exception as e:
         if context().verbose:
             raise

@@ -46,10 +46,30 @@ def home_target(zpid_or_url: int | str) -> tuple[str, int | str | None]:
     A numeric zpid becomes the canonical detail URL; a URL is used as given,
     and the zpid embedded in it (if any) is the property to select.
     """
-    if isinstance(zpid_or_url, str) and zpid_or_url.startswith("https://"):
-        match = re.search(r"(\d+)_zpid", zpid_or_url)
-        return zpid_or_url, (match.group(1) if match else None)
-    return home_detail_url(zpid_or_url), int(zpid_or_url)
+    error = "Home target must be a positive integer zpid or valid https Zillow URL on a zillow.com host"
+    if isinstance(zpid_or_url, bool):
+        raise ValueError(error)
+    if isinstance(zpid_or_url, int):
+        if zpid_or_url <= 0:
+            raise ValueError(error)
+        return home_detail_url(zpid_or_url), zpid_or_url
+    if not isinstance(zpid_or_url, str):
+        raise ValueError(error)
+    if is_zillow_https_url(zpid_or_url):
+        parsed = urlsplit(zpid_or_url)
+        match = re.search(r"(?:^|/)([0-9]+)_zpid(?:/|$)", parsed.path)
+        if match is None:
+            return zpid_or_url, None
+        zpid = match.group(1)
+        if int(zpid) <= 0:
+            raise ValueError(error)
+        return zpid_or_url, zpid
+    if not re.fullmatch(r"[0-9]+", zpid_or_url):
+        raise ValueError(error)
+    zpid = int(zpid_or_url)
+    if zpid <= 0:
+        raise ValueError(error)
+    return home_detail_url(zpid), zpid
 
 
 def apartment_target(apartment_id_or_url: str) -> str:

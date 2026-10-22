@@ -116,7 +116,9 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
         # would otherwise report every excluded listing as delisted.
         comparable.setdefault((kind, query, bbox_json, filters_json), []).append((run_id, started_utc))
     for run_list in comparable.values():
-        prior_sets: list[set[tuple[int, str]]] = []
+        # The listings the run before this one saw. Only the run right before
+        # the current one is compared, so one set is enough.
+        prev_present: set[tuple[int, str]] | None = None
         # Every listing any earlier run of this group saw. It is accumulated
         # as the runs are walked, so the report costs one pass over the
         # sightings rather than a union of all of them for every run.
@@ -126,8 +128,7 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
                 (zpid, kind)
                 for zpid, kind in conn.execute("SELECT zpid, kind FROM sightings WHERE run_id = ?", (run_id,))
             }
-            if prior_sets and started_utc >= since:
-                prev_set = prior_sets[-1]
+            if prev_present is not None and started_utc >= since:
                 events.extend(
                     {
                         "event": "delisted",
@@ -136,7 +137,7 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
                         "seen_utc": started_utc,
                         "days_observed": observed_days(key) if key in listings else None,
                     }
-                    for key in sorted(prev_set - present)
+                    for key in sorted(prev_present - present)
                 )
                 events.extend(
                     {
@@ -146,10 +147,9 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
                         "seen_utc": started_utc,
                         "days_observed": observed_days(key) if key in listings else None,
                     }
-                    for key in sorted((present - prev_set) & all_prior)
+                    for key in sorted((present - prev_present) & all_prior)
                 )
-            prior_sets.append(present)
+            prev_present = present
             all_prior |= present
-            prior_sets.append(present)
 
     return sorted(events, key=lambda event: (event["seen_utc"], event["zpid"], event["event"]))

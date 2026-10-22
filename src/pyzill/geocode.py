@@ -317,9 +317,9 @@ def _fetch_hits(place: str, proxy_url: str | None) -> list[Any]:
     Raises:
         ValueError: If the request failed, or the response was not a list.
     """
+    resolved_proxy = resolve_proxy(proxy_url) if proxy_url else None
     try:
         _nominatim_limiter.wait()
-        resolved_proxy = resolve_proxy(proxy_url) if proxy_url else None
         response = requests.get(
             NOMINATIM_URL,
             params={"q": place, "format": "jsonv2", "limit": 1, "countrycodes": "us"},

@@ -82,7 +82,10 @@ class ZillowClient:
         proxies = [proxy] if isinstance(proxy, str) else list(proxy or [])
         # Deduplicate: two entries for the same proxy would rotate onto
         # themselves and burn the one retry without changing the transport.
-        self._proxy_urls = list(dict.fromkeys(resolve_proxy(item) for item in proxies))
+        # An entry that resolves to nothing (an empty string) is dropped: a
+        # proxy of None means "connect directly", which is the opposite of
+        # what a caller who listed a proxy asked for.
+        self._proxy_urls = [url for url in dict.fromkeys(resolve_proxy(item) for item in proxies) if url]
         if not self._proxy_urls:
             default_proxy = resolve_proxy(None)
             if default_proxy:
@@ -154,16 +157,25 @@ class ZillowClient:
             if exc.status_code != _HTTP_FORBIDDEN or pinned_proxy or len(self._proxy_urls) < _MIN_PROXY_ROTATION_COUNT:
                 raise
             with self._rotation_lock:
-                self._proxy_index = (self._proxy_index + 1) % len(self._proxy_urls)
-                proxy_url = self._proxy_urls[self._proxy_index]
-                session = self._session_for(proxy_url)
-                self.session = session
-                # Stay on the transport that worked: re-using a proxy that
-                # just returned 403 would double the request count against an
-                # IP Zillow has flagged. Per-call overrides (timeout,
-                # impersonate, ...) that belonged to this one request are not
-                # touched.
-                self.options = replace(self.options, proxy_url=proxy_url, session=session)
+                failed = options.proxy_url
+                if self.options.proxy_url != failed:
+                    # Another thread already rotated the client off the proxy
+                    # that failed; this retry uses the proxy the client is on
+                    # now rather than rotating a second time and landing back
+                    # on the one that was just refused.
+                    proxy_url = self.options.proxy_url
+                    session = self._session_for(proxy_url)
+                else:
+                    self._proxy_index = (self._proxy_index + 1) % len(self._proxy_urls)
+                    proxy_url = self._proxy_urls[self._proxy_index]
+                    session = self._session_for(proxy_url)
+                    self.session = session
+                    # Stay on the transport that worked: re-using a proxy that
+                    # just returned 403 would double the request count against an
+                    # IP Zillow has flagged. Per-call overrides (timeout,
+                    # impersonate, ...) that belonged to this one request are not
+                    # touched.
+                    self.options = replace(self.options, proxy_url=proxy_url, session=session)
             retry_options = replace(options, proxy_url=proxy_url, session=session)
             return call(retry_options)
 

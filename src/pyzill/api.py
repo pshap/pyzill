@@ -132,7 +132,9 @@ def _iter_search(
     max_items: int | None,
     kwargs: dict[str, Any],
 ) -> Iterator[Mapping[str, Any]]:
-    map_results = search_fn(**kwargs).get("mapResults", [])
+    # Zillow sends "mapResults": null when it has no rows for the viewport,
+    # so the key being present is not the key being a list.
+    map_results = search_fn(**kwargs).get("mapResults") or []
     yielded = 0
     for listing in map_results:
         if max_items is not None and yielded >= max_items:
@@ -151,13 +153,14 @@ def iter_search(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapp
 
     Note:
         Despite the name, this is **not** a paginating iterator: it issues one
-        request and iterates that response's ``mapResults`` (lazily with
-        respect to yielding, but the request happens up front). Zillow caps
-        ``mapResults`` at **500 listings per query**; the ``pagination``
-        argument does NOT raise this cap — it only affects the sidebar
-        ``listResults``. For depth beyond one response use :func:`tiled_search`
-        (bounded by ``max_requests``) or split the bbox with :func:`split_bbox`
-        and query each quadrant.
+        request and iterates that response's ``mapResults``. Nothing happens
+        until the first listing is asked for -- the request is made then, and
+        a missing ``bbox`` is reported then too. Zillow caps ``mapResults``
+        at **500 listings per query**; the ``pagination`` argument does NOT
+        raise this cap — it only affects the sidebar ``listResults``. For
+        depth beyond one response use :func:`tiled_search` (bounded by
+        ``max_requests``) or split the bbox with :func:`split_bbox` and query
+        each quadrant.
 
     Args:
         max_items: Stop after yielding this many listings (None = all).

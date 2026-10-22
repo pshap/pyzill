@@ -3,7 +3,25 @@ import time
 import pytest
 
 from pyzill import details, http
+from pyzill.detail_request import home_target
 from pyzill.exceptions import ZillowBlockedError, ZillowNotFoundError, ZillowServerError
+
+
+@pytest.mark.parametrize("value", ["12_3", " 123 ", True, 0, -5, "http://www.zillow.com/homedetails/123_zpid/"])
+def test_home_target_rejects_invalid_targets(value):
+    with pytest.raises(ValueError, match="positive integer zpid"):
+        home_target(value)
+
+
+@pytest.mark.parametrize(
+    ("url", "expected_zpid"),
+    [
+        ("https://www.zillow.com/homedetails/27-Washington-Ave/123_zpid/", "123"),
+        ("https://www.zillow.com/homedetails/no-id/?ref=123_zpid", None),
+    ],
+)
+def test_home_target_extracts_only_a_zpid_path_segment(url, expected_zpid):
+    assert home_target(url) == (url, expected_zpid)
 
 
 def test_get_from_home_id(fake_http, home_detail_body):

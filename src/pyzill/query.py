@@ -32,6 +32,9 @@ _NUMERIC_FIELDS = NUMERIC_LISTING_FIELDS | {"ppsf"}
 
 _QUOTED_LITERAL_LENGTH = 2
 _STRING_OPS = frozenset({"=", "==", "!=", "~"})
+# The operators the engine knows how to compile. An operator is written into
+# the SQL, so only these may be used.
+_OPERATORS = frozenset({">", "<", ">=", "<=", "==", "=", "!=", "~"})
 # Operators a null value cannot be compared with: "=" and "!=" test for null
 # (they compile to IS NULL / IS NOT NULL), but ordering and substring
 # comparisons against null are meaningless and would silently match nothing.
@@ -144,29 +147,49 @@ def _parse_conditions(
         field, operator, value = item["field"], item["op"], item["value"]
         if not isinstance(field, str) or field not in valid_fields:
             raise QueryValidationError(f"Unknown field {field!r} in --where-json")
-        if not isinstance(operator, str) or operator not in {">", "<", ">=", "<=", "==", "=", "!=", "~"}:
+        if not isinstance(operator, str) or operator not in _OPERATORS:
             raise QueryValidationError(f"Unknown operator {operator!r} in --where-json")
         if not isinstance(value, (str, int, float, bool, type(None))):
             raise QueryValidationError("--where-json values must be strings, numbers, booleans, or null")
-        parsed.append(Condition(field, operator, value))
+        parsed.append(Condition(field, operator, _condition_value(field, value)))
     return parsed
+
+
+def _condition_value(field: str, value: Any) -> Any:
+    """Return the value a condition compares with.
+
+    A numeric field is compared with a number.  SQLite orders every number
+    before every string, so a string compared with a numeric column matches
+    every row instead of failing, and a value that is not a number is a
+    usage error rather than a comparison that means nothing.
+    """
+    if field in _NUMERIC_FIELDS and value is not None:
+        return _numeric_value(field, value)
+    return value
 
 
 def _validated_conditions(
     conditions: Sequence[Condition],
     valid_fields: frozenset[str],
 ) -> list[Condition]:
-    """Check structured conditions against the fields the query can read.
+    """Check structured conditions against the fields and operators the query can read.
 
     A condition that names a field the table does not have would compile to
-    SQL against a column that is not there, so it is rejected here with the
-    same error the expression form raises.
+    SQL against a column that is not there, and one that carries an operator
+    the engine does not know would be written into the SQL as it stands.
+    Both are rejected here, with the same errors the expression form raises.
     """
     validated: list[Condition] = []
     for condition in conditions:
         if condition.field not in valid_fields:
             raise QueryValidationError(f"Unknown field {condition.field!r}. Fields: {', '.join(sorted(valid_fields))}")
-        validated.append(condition)
+        if condition.operator not in _OPERATORS:
+            raise QueryValidationError(
+                f"Unknown operator {condition.operator!r}. Operators: {', '.join(sorted(_OPERATORS))}"
+            )
+        validated.append(
+            Condition(condition.field, condition.operator, _condition_value(condition.field, condition.value))
+        )
     return validated
 
 
@@ -288,6 +311,8 @@ class _QuerySpec:
 
 
 def _run_query(conn: sqlite3.Connection, spec: _QuerySpec) -> tuple[list[dict[str, Any]], list[str] | None]:
+    if spec.limit is not None and spec.limit < 0:
+        raise QueryValidationError("limit must be non-negative")
     parsed = _parse_conditions(spec.where, spec.where_json, spec.valid_fields, spec.conditions)
     for condition in parsed:
         _validate_condition(condition)

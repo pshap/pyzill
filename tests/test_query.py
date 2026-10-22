@@ -266,3 +266,46 @@ class TestValueTypes:
             assert file_result == database_result == [{"zpid": 1, "ppsf": 166.67}]
         finally:
             connection.close()
+
+
+@pytest.mark.parametrize("value", ["abc", True])
+def test_json_numeric_filters_reject_non_numeric_and_boolean_values(value: Any) -> None:
+    encoded = json.dumps([{"field": "price", "op": ">", "value": value}])
+    with pytest.raises(QueryValidationError, match="is numeric"):
+        query_rows([{"zpid": 1, "price": 100}], where_json=encoded)
+
+
+def test_json_numeric_filter_coerces_quoted_numbers() -> None:
+    rows = [{"zpid": 1, "price": 100}, {"zpid": 2, "price": 250}]
+    filtered, _ = query_rows(
+        rows,
+        where_json='[{"field":"price","op":">=","value":"200"}]',
+    )
+    assert [row["zpid"] for row in filtered] == [2]
+
+
+@pytest.mark.parametrize("limit", [-1, -10])
+def test_query_entry_points_reject_negative_limits(limit: int) -> None:
+    rows = [{"zpid": 1, "price": 100}]
+    with pytest.raises(QueryValidationError, match="limit must be non-negative"):
+        query_rows(rows, limit=limit)
+
+    connection = connect(":memory:")
+    try:
+        upsert_listings(connection, rows, seen_utc="2026-10-01T00:00:00Z")
+        with pytest.raises(QueryValidationError, match="limit must be non-negative"):
+            query_database(connection, limit=limit)
+    finally:
+        connection.close()
+
+
+def test_query_entry_points_allow_zero_limit() -> None:
+    rows = [{"zpid": 1, "price": 100}]
+    assert query_rows(rows, limit=0)[0] == []
+
+    connection = connect(":memory:")
+    try:
+        upsert_listings(connection, rows, seen_utc="2026-10-01T00:00:00Z")
+        assert query_database(connection, limit=0)[0] == []
+    finally:
+        connection.close()

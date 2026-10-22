@@ -4,6 +4,7 @@ import pytest
 
 from pyzill import normalize
 from pyzill.normalize import Listing
+from pyzill.values import to_number, to_zpid
 
 
 def _normalize(raw: Any) -> Listing:
@@ -369,3 +370,22 @@ class TestZpidResolution:
         raw = {"isBuilding": True, "zpid": "47.61503--122.34274"}
         assert normalize.is_building_result(raw)
         assert _normalize(raw)["zpid"] is None
+
+
+@pytest.mark.parametrize("value", ["1e5", "$1,2,3"])
+def test_to_number_rejects_scientific_notation_and_malformed_grouping(value):
+    assert to_number(value) is None
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf"), 2**63, -(2**63) - 1])
+def test_numeric_coercions_reject_non_finite_and_out_of_range_values(value):
+    assert to_number(value) is None
+    assert normalize.parse_price(value) is None
+    assert to_zpid(value) is None
+
+
+@pytest.mark.parametrize("value", ["NaN", "inf", "-Infinity", "9223372036854775808"])
+def test_numeric_coercions_reject_non_finite_and_out_of_range_strings(value):
+    assert to_number(value) is None
+    assert normalize.parse_price(value) is None
+    assert to_zpid(value) is None

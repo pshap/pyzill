@@ -135,6 +135,12 @@ class TestGeocode:
         with pytest.raises(ValueError, match="--north"):
             geocode("Schenectady NY", cache_path=cache_path)
 
+    def test_invalid_proxy_raises_its_value_error(self, monkeypatch):
+        monkeypatch.setattr("pyzill.geocode.requests.get", lambda *_args, **_kwargs: pytest.fail("unexpected request"))
+        with pytest.raises(ValueError, match="Invalid proxy URL") as exc_info:
+            geocode_module._fetch_hits("Schenectady NY", "invalid://proxy.example")
+        assert not isinstance(exc_info.value, geocode_module.GeocodeUnavailableError)
+
     def test_empty_place_raises(self, cache_path):
         with pytest.raises(ValueError, match="empty"):
             geocode("   ", cache_path=cache_path)

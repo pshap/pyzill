@@ -6,14 +6,21 @@ These helpers apply one rule per value kind, so the listing shape and the
 property-detail shape cannot drift apart on how a value is read.
 """
 
+import math
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 __all__ = ["parse_price", "to_number", "to_quantity", "to_text", "to_zpid"]
 
 
-# Anything that is not a digit, minus sign or decimal point.
-_NOT_NUMBER = re.compile(r"[^0-9.\-]")
+# A number, optionally signed, optionally a dollar amount, with the thousands
+# separators Zillow writes: "149900", "1,234.5", "-$20,000".  Anything else --
+# "3 beds, 2 baths", "1e5" -- is not a number, and taking the digits out of it
+# would report a value Zillow never sent.
+_NUMBER_RE = re.compile(r"^[-+]?\$?(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d*)?|\.\d+)$")
+_SQLITE_MIN = -(2**63)
+_SQLITE_MAX = 2**63 - 1
 _PRICE_SUFFIXES = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
 # Trailing rental / "starting at" adornments attached to a price.
 _RENTAL_SUFFIX = re.compile(r"(?:/month(?:ly)?|/mo|\+)\s*$", re.IGNORECASE)
@@ -21,21 +28,60 @@ _RENTAL_SUFFIX = re.compile(r"(?:/month(?:ly)?|/mo|\+)\s*$", re.IGNORECASE)
 _QUANTITY_RE = re.compile(r"^(?P<number>[-+]?[\d,]*\.?\d+)\s*(?P<unit>[A-Za-z][A-Za-z.\s]*)?$")
 
 
+def _in_sqlite_range(number: int | float) -> bool:
+    """Whether a number fits the signed 64-bit range SQLite stores."""
+    return _SQLITE_MIN <= number <= _SQLITE_MAX
+
+
+def _number_from_int(value: int) -> int | None:
+    return value if _in_sqlite_range(value) else None
+
+
+def _number_from_float(value: float) -> float | None:
+    return value if math.isfinite(value) and _in_sqlite_range(value) else None
+
+
+def _number_from_string(value: str) -> int | float | None:
+    text = value.strip()
+    if not _NUMBER_RE.fullmatch(text):
+        return None
+    try:
+        number = Decimal(text.replace(",", "").replace("$", ""))
+    except InvalidOperation:
+        return None
+    if not number.is_finite():
+        return None
+    if number == number.to_integral_value():
+        return _number_from_int(int(number))
+    return _number_from_float(float(number))
+
+
 def to_number(value: Any) -> int | float | None:
-    """Coerce a Zillow scalar into an int/float, or None if not numeric."""
+    """Coerce a Zillow scalar into an int/float, or None if not numeric.
+
+    A string has to be a number from end to end.  "1,234" is one, and so is
+    "-$20,000"; "3 beds, 2 baths" is not, and reading the digits out of it
+    would report 32 bedrooms.  Scientific notation ("1e5") is deliberately
+    not accepted: Zillow's payloads do not use it, and treating it as a
+    number would make a typo look like a value.  A number Zillow sent as a
+    number keeps the type it was sent with; a string holding a whole number
+    becomes an int.  Values outside SQLite's signed 64-bit range, and NaN or
+    infinity, are not numbers this package can store, so they are ``None``.
+
+    Args:
+        value: Raw value, e.g. ``"1,234"``, ``1742.4``, ``None``.
+
+    Returns:
+        int | float | None: the number, or None when the value is not one.
+    """
     if value is None or isinstance(value, bool):
         return None
-    if isinstance(value, (int, float)):
-        return value
+    if isinstance(value, int):
+        return _number_from_int(value)
+    if isinstance(value, float):
+        return _number_from_float(value)
     if isinstance(value, str):
-        cleaned = _NOT_NUMBER.sub("", value.strip())
-        if cleaned in ("", "-", ".", "-."):
-            return None
-        try:
-            num = float(cleaned)
-        except ValueError:
-            return None
-        return int(num) if num.is_integer() else num
+        return _number_from_string(value)
     return None
 
 
@@ -120,7 +166,9 @@ def parse_price(value: Any) -> int | None:
         int | None: The price in whole dollars, or None if unknown.
     """
     if isinstance(value, str):
-        cleaned = value.strip().replace(",", "").replace("$", "")
+        # Keep the thousands separators for to_number, which validates their
+        # grouping; taking them out here would turn "$1,2,3" into 123.
+        cleaned = value.strip().replace("$", "")
         # Strip trailing rental ("/mo", "/month") and "starting at" ("+")
         # adornments before the letter check, so "$2,500/mo" parses as 2500.
         while True:
@@ -144,5 +192,7 @@ def parse_price(value: Any) -> int | None:
         num = to_number(value)
     if num is None:
         return None
+    if isinstance(num, float) and not math.isfinite(num):
+        return None
     price = round(num)
-    return price if price > 0 else None
+    return price if 0 < price <= _SQLITE_MAX else None

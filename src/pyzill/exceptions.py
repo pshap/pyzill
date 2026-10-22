@@ -7,6 +7,20 @@ class ZillowError(Exception):
     code = "other"
     retryable = False
 
+    def __reduce__(self) -> tuple[object, tuple[object, ...]]:
+        return _restore_error, (type(self), self.args, self.__dict__)
+
+
+def _restore_error(
+    error_type: type[ZillowError],
+    args: tuple[object, ...],
+    attributes: dict[str, object],
+) -> ZillowError:
+    error = error_type.__new__(error_type, *args)
+    BaseException.__init__(error, *args)
+    error.__dict__.update(attributes)
+    return error
+
 
 class ZillowParseError(ZillowError):
     """A successful page response did not contain the expected data shape."""
@@ -32,7 +46,7 @@ class ZillowBlockedError(ZillowError):
 
     code = "blocked"
 
-    def __init__(self, status_code: int, url: str, body_snippet: str = ""):
+    def __init__(self, status_code: int, url: str, body_snippet: str = "") -> None:
         self.status_code = status_code
         self.retryable = status_code == _HTTP_TOO_MANY_REQUESTS
         self.url = url

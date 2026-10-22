@@ -75,12 +75,14 @@ def _digits(text: str) -> str:
     return "".join(char for char in text if char.isdigit())
 
 
-def _sec_ch_ua(version: str, extra_brand: str | None = None) -> str:
-    """Build the Chromium client-hint brand list for a browser version."""
-    brands = f'"Chromium";v="{version}", "Google Chrome";v="{version}"'
-    if extra_brand:
-        brands += f', {extra_brand};v="{version}"'
-    return f'{brands}, "Not.A/Brand";v="99"'
+def _sec_ch_ua(version: str, brand: str = '"Google Chrome"') -> str:
+    """Build the Chromium client-hint brand list for a browser version.
+
+    The list names the browser that sends it: Chrome sends Chromium and
+    Chrome, Edge sends Chromium and Edge. A list that named both Chrome and
+    Edge would be a fingerprint mismatch, so the brand is a parameter.
+    """
+    return f'"Chromium";v="{version}", {brand};v="{version}", "Not.A/Brand";v="99"'
 
 
 def _safari_version(profile: str) -> tuple[str, bool]:

@@ -142,6 +142,7 @@ def sync_to_db(  # noqa: PLR0913 - the sync pipeline's inputs
         confirm_empty: Treat an empty result as a complete search.
         on_progress: Progress callback for a tiled search.
     """
+    started_utc = utc_now()
     if result is None:
         result = fetch_listings(
             kind,
@@ -153,7 +154,7 @@ def sync_to_db(  # noqa: PLR0913 - the sync pipeline's inputs
         )
     notices = list(result.notices)
     truncated = result.truncated
-    started_utc = utc_now()
+    seen_utc = utc_now()
     filter_values = _comparable_filters(request)
     bbox_bounds = result.bbox.to_map_bounds()
     if (
@@ -181,7 +182,7 @@ def sync_to_db(  # noqa: PLR0913 - the sync pipeline's inputs
         conn,
         result.listings,
         raw_rows=result.raw_listings,
-        seen_utc=started_utc,
+        seen_utc=seen_utc,
         kind=kind,
         run_id=run_id,
         truncated=truncated,

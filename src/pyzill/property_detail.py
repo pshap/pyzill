@@ -164,15 +164,16 @@ def normalize_property_detail(property_data: Mapping[str, Any]) -> PropertyDetai
     lot_size, lot_size_unit = _lot_size_in_sqft(property_data, reso_dict)
 
     hoa_fee_val = property_data.get("monthlyHoaFee")
-    hoa_fee_unit: str | None = None
-    if hoa_fee_val is not None:
-        hoa_fee = to_number(hoa_fee_val)
-        hoa_fee_unit = "monthly"
-    else:
-        hoa_fee = to_number(reso_dict.get("hoaFeeTotal"))
-        if hoa_fee is not None:
+    hoa_fee = to_number(hoa_fee_val) if hoa_fee_val is not None else None
+    hoa_fee_unit = "monthly" if hoa_fee is not None else None
+    if hoa_fee is None:
+        # ``monthlyHoaFee`` can arrive empty, which says nothing about the
+        # fee; the annual total is then the only figure there is.
+        annual_fee = to_number(reso_dict.get("hoaFeeTotal"))
+        if annual_fee is not None:
             # ``hoaFeeTotal`` is an annual figure on Zillow detail payloads;
             # record the unit so callers do not mistake it for a monthly fee.
+            hoa_fee = annual_fee
             hoa_fee_unit = "annual"
 
     photo_count_val = property_data.get("photoCount")

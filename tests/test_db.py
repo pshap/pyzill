@@ -985,19 +985,21 @@ def test_upsert_skip_no_zpid(tmp_path: Path):
 
 
 def test_upsert_skip_invalid_zpid(tmp_path: Path):
-    """Test upsert_listings skips rows with invalid zpid."""
+    """Test upsert_listings skips values that are not integer zpids."""
     db_path = tmp_path / "test.db"
     conn = connect(db_path)
 
     rows: list[dict[str, Any]] = [
         {"zpid": "not-a-number", "price": 250000},
-        {"zpid": 123.5, "price": 300000},  # Float should be castable
+        {"zpid": 123.5, "price": 300000},
+        {"zpid": True, "price": 350000},
+        {"zpid": 2**63, "price": 400000},
     ]
 
     stats = upsert_listings(conn, rows, seen_utc="2026-10-01T12:00:00Z")
 
-    assert stats.skipped == 1  # "not-a-number" skipped
-    assert stats.added == 1  # 123.5 cast to 123
+    assert stats.skipped == 4
+    assert stats.added == 0
 
     conn.close()
 

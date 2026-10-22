@@ -5,6 +5,31 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Fixed
+- Every `ZillowError` subclass now survives `pickle` and `copy.copy` with the
+  same type, message, and attributes. The exceptions with a custom
+  constructor (`ZillowBlockedError`, `ZillowNotFoundError`,
+  `ZillowServerError`) used to fail to round-trip because their arguments
+  never reached `Exception.args`.
+- A home detail target is now only a positive integer zpid or an HTTPS
+  zillow.com URL. Numeric-looking strings such as `"12_3"` or `" 123 "`, a
+  boolean, `0`, a negative number, and an `http://` URL are rejected with a
+  clear `ValueError`; the zpid in a URL must be a path segment.
+- Numeric coercion is strict about grouping: `"$1,2,3"` and `"1e5"` are no
+  longer read as numbers, and NaN, infinity, and values outside SQLite's
+  signed 64-bit range become `None` instead of raising or overflowing.
+- `--where-json` applies the same numeric validation and coercion as
+  `--where`: a non-numeric or boolean value for a numeric field raises
+  `QueryValidationError`, and quoted numbers compare as numbers. A negative
+  `limit` is rejected by the library (`query_rows`/`query_database`), not
+  only by the CLI; `limit=0` returns no rows.
+- The write path reads a zpid through the shared coercion rule, so a float
+  with a fraction, a boolean, and an out-of-range value are skipped and
+  counted instead of truncated or crashing the batch.
+- An invalid proxy passed to geocoding raises its own `ValueError` rather
+  than a retryable `GeocodeUnavailableError`.
+- `db sync` records the run's start time before the fetch, so time spent
+  requesting listings is part of the run's duration; the sightings keep the
+  completion time as `seen_utc`.
 - A table of something that is not a listing now shows what the rows carry.
   The table renderer applied the listing columns to every row set, so
   `pyzill db changes --format table` showed a single `price` column and

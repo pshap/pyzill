@@ -6,7 +6,9 @@ from pyzill.exceptions import ZillowParseError
 from pyzill.utils import get_nested_value
 
 _SCRIPT_RE = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
-_SCRIPT_ID_RE = re.compile(r"\bid\s*=\s*(?:['\"]([^'\"]*)['\"]|([^\s>]+))", re.IGNORECASE)
+# The id attribute, and not an attribute that ends in "id" (data-id,
+# aria-labelledid): the lookbehind keeps those out.
+_SCRIPT_ID_RE = re.compile(r"(?<![\w-])id\s*=\s*(?:['\"]([^'\"]*)['\"]|([^\s>]+))", re.IGNORECASE)
 
 
 def _parse_error(body: bytes) -> ZillowParseError:
@@ -77,7 +79,10 @@ def parse_body(body: bytes) -> dict[str, Any]:
     """
     html = body.decode("utf-8", errors="replace")
     script_data: str | None = None
-    for attributes, content in _SCRIPT_RE.findall(html):
+    # finditer, not findall: a Zillow page carries a dozen script bodies and
+    # only one of them is wanted, so the rest need not be held in memory.
+    for match in _SCRIPT_RE.finditer(html):
+        attributes, content = match.group(1), match.group(2)
         identifier = _SCRIPT_ID_RE.search(attributes)
         if identifier and next(value for value in identifier.groups() if value is not None) == "__NEXT_DATA__":
             script_data = content

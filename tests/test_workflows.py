@@ -5,19 +5,21 @@ listings, how a filter reaches the search request, and what makes two sync
 runs comparable.
 """
 
+import importlib
 import json
 import sqlite3
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from pyzill import BBox
 from pyzill.db.schema import ensure_schema
-from pyzill.normalize import normalize_listing
+from pyzill.normalize import Listing, normalize_listing
 from pyzill.search_request import SearchQuery
 from pyzill.workflows import (
     SearchFilters,
     SearchRequest,
+    SearchResult,
     extract_listings,
     fetch_listings,
     import_rows,
@@ -433,3 +435,41 @@ def test_fetch_listings_returns_the_listings_of_a_response(kind, monkeypatch):
 
     assert len(result.listings) == 1
     assert result.bbox == BBOX
+
+
+def test_sync_records_start_before_fetch_and_seen_after_fetch(monkeypatch):
+    sync_module = importlib.import_module("pyzill.workflows.sync")
+    conn = sqlite3.connect(":memory:")
+    ensure_schema(conn)
+    timestamps = iter(("2026-10-01T12:00:00Z", "2026-10-01T12:00:05Z"))
+    events: list[str] = []
+    row = _listing(1)
+    search_result = SearchResult(
+        raw={},
+        listings=cast("list[Listing]", [row]),
+        raw_listings=[row],
+        truncated=False,
+        bbox=BBOX,
+    )
+
+    def now() -> str:
+        events.append("clock")
+        return next(timestamps)
+
+    def fetch(*_args: Any, **_kwargs: Any) -> SearchResult:
+        events.append("fetch")
+        return search_result
+
+    monkeypatch.setattr(sync_module, "utc_now", now)
+    monkeypatch.setattr(sync_module, "fetch_listings", fetch)
+
+    result = sync_to_db(conn, "sale", SearchRequest(query="12305"), bbox=BBOX)
+
+    assert events == ["clock", "fetch", "clock"]
+    assert conn.execute("SELECT started_utc FROM sync_runs WHERE id = ?", (result.run_id,)).fetchone() == (
+        "2026-10-01T12:00:00Z",
+    )
+    assert conn.execute("SELECT seen_utc FROM sightings WHERE run_id = ?", (result.run_id,)).fetchone() == (
+        "2026-10-01T12:00:05Z",
+    )
+    conn.close()

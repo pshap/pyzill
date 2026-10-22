@@ -16,7 +16,7 @@ from pyzill._kinds import KINDS, Kind
 from pyzill.db.runs import begin_sync_run, finish_sync_run, utc_now
 from pyzill.db.schema import LISTING_TABLE_COLUMNS
 from pyzill.normalize import LISTING_FIELDS
-from pyzill.values import parse_price
+from pyzill.values import parse_price, to_zpid
 
 __all__ = ["SyncStats", "upsert_listings"]
 
@@ -225,13 +225,12 @@ def _prepare_rows(
     # and maps 0/"$0" (Zillow's unknown sentinel) to None.
     prepared: list[_PreparedRow] = []
     for index, row in enumerate(rows):
-        zpid = row.get("zpid")
+        # to_zpid applies the package's one rule for a zpid: it is an
+        # integer, and a value that is not one (a float with a fraction, a
+        # bool, an infinity, a building card's lat-lng string) is no zpid at
+        # all. int() would accept some of those and raise on others.
+        zpid = to_zpid(row.get("zpid"))
         if zpid is None:
-            stats.skipped += 1
-            continue
-        try:
-            zpid = int(zpid)
-        except (ValueError, TypeError):
             stats.skipped += 1
             continue
         raw_row = raw_rows[index] if raw_rows is not None and index < len(raw_rows) else row

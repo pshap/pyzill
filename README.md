@@ -202,7 +202,10 @@ pyzill query listings.json --where-json '[{"field":"price","op":"<=","value":300
   true, so those are rejected as usage errors instead of quietly matching
   nothing.
 - `--where-json` accepts a JSON array of `{ "field", "op", "value" }`
-    objects and can be combined with `--where`.
+    objects and can be combined with `--where`. It applies the same numeric
+    validation as the expression form: a non-numeric or boolean value for a
+    numeric field is a usage error, and a quoted number is compared as a
+    number. `--limit` must be zero or greater (`0` returns no rows).
 
 **Fields** — the normalized listing fields (`zpid`, `price`, `beds`, `baths`,
 `area`, `address`, `city`, `state`, `zipcode`, `latitude`, `longitude`,

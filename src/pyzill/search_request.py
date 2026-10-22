@@ -55,6 +55,7 @@ class TransportParams(TypedDict, total=False):
     impersonate: str
     timeout: float
     max_retries: int
+    max_retry_after: float
 
 
 class SearchParams(SearchQuery, TransportParams, total=False):
@@ -78,8 +79,8 @@ def split_params(kwargs: Mapping[str, Any]) -> tuple[SearchQuery, dict[str, Any]
     """Split loose keyword arguments into query fields and transport fields.
 
     The transport fields (``proxy_url``, ``impersonate``, ``timeout``,
-    ``max_retries``) describe how to send the request; everything else
-    describes what to search for.
+    ``max_retries``, ``max_retry_after``) describe how to send the request;
+    everything else describes what to search for.
 
     Raises:
         TypeError: If an unknown keyword is passed.
