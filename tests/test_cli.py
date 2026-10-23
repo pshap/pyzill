@@ -23,7 +23,7 @@ from pyzill.cli.db import db_sync
 from pyzill.cli.query import coerce_value
 from pyzill.cli.search import extract_listings, search_rent, search_sale, search_sold
 from pyzill.db import begin_sync_run, connect, finish_sync_run, upsert_listings
-from pyzill.geocode import GeoResult
+from pyzill.geocode import GeocodeError, GeoResult
 from pyzill.query import query_database
 from pyzill.workflows import SearchFilters
 
@@ -1120,7 +1120,7 @@ class TestGeocode:
         assert _GEO_STUB.calls == []
 
     def test_geocode_failure_is_clean_error(self):
-        _GEO_STUB.error = ValueError("Geocoding 'nowhere' failed: DNS error. Pass --north/--south/--east/--west.")
+        _GEO_STUB.error = GeocodeError("Geocoding 'nowhere' failed: DNS error. Pass --north/--south/--east/--west.")
         result = runner.invoke(app, ["search", "sale", "nowhere"])
         assert result.exit_code == 1
         assert "Geocoding 'nowhere' failed" in result.stderr
@@ -1175,8 +1175,6 @@ class TestGeocode:
         assert error_payload["retryable"] is True
 
     def test_geocode_reports_an_unresolved_place_as_an_error(self, patch_geocode):
-        from pyzill.geocode import GeocodeError
-
         patch_geocode(error=GeocodeError("no such place"))
 
         result = runner.invoke(app, ["--json-errors", "geocode", "Nowhere"])

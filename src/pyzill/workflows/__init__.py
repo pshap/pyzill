@@ -18,7 +18,7 @@ The package is split by job:
 - :mod:`pyzill.workflows.sync` -- the sync and import pipelines.
 """
 
-from pyzill.workflows.extract import extract_listings, query_zipcode, usable_row_count
+from pyzill.workflows.extract import extract_listings, query_zipcode, select_listings, usable_row_count
 from pyzill.workflows.model import (
     BoundingBoxError,
     Notice,
@@ -50,6 +50,7 @@ __all__ = [
     "prepare_import",
     "query_zipcode",
     "resolve_viewport",
+    "select_listings",
     "sync_to_db",
     "usable_row_count",
 ]

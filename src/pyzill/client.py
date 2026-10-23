@@ -12,7 +12,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from typing import Any, TypeVar
+from typing import Any, TypeVar, Unpack
 
 from curl_cffi import requests
 
@@ -24,12 +24,13 @@ from pyzill.http import (
     DEFAULT_MAX_RETRIES,
     DEFAULT_TIMEOUT,
     RequestOptions,
+    SessionLike,
     build_request_options,
 )
+from pyzill.proxy import resolve_proxy
 from pyzill.ratelimit import RateLimiter, SharedBudgetLimiter, default_limiter
-from pyzill.search_request import build_custom_params, build_kind_params, search_request
-from pyzill.tiling import tiled_search
-from pyzill.utils import resolve_proxy
+from pyzill.search_request import RentParams, SearchParams, build_custom_params, build_kind_params, search_request
+from pyzill.tiling import TiledSearchParams, tiled_search
 
 _HTTP_FORBIDDEN = 403
 _MIN_PROXY_ROTATION_COUNT = 2
@@ -94,8 +95,8 @@ class ZillowClient:
         self._rotation_lock = threading.RLock()
         # One session (cookie jar) per proxy URL: PerimeterX cookies issued on
         # one IP must not be replayed through another.
-        self._sessions: dict[str | None, Any] = {}
-        self.session: Any = self._session_for(self._proxy_urls[0] if self._proxy_urls else None)
+        self._sessions: dict[str | None, SessionLike] = {}
+        self.session: SessionLike = self._session_for(self._proxy_urls[0] if self._proxy_urls else None)
         self.limiter = _resolve_limiter(rate_limit, _limiter_instance)
         self.options = build_request_options(
             proxy_url=self._proxy_urls[0] if self._proxy_urls else None,
@@ -107,7 +108,7 @@ class ZillowClient:
             limiter=self.limiter,
         )
 
-    def _session_for(self, proxy_url: str | None) -> Any:
+    def _session_for(self, proxy_url: str | None) -> SessionLike:
         """Return the session dedicated to ``proxy_url``, creating it if needed."""
         with self._rotation_lock:
             session = self._sessions.get(proxy_url)
@@ -200,18 +201,18 @@ class ZillowClient:
             pinned_proxy=pinned_proxy,
         )
 
-    def search_sale(self, **kwargs: Any) -> dict[str, Any]:
+    def search_sale(self, **kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         return self._search("sale", kwargs)
 
-    def search_rent(self, **kwargs: Any) -> dict[str, Any]:
+    def search_rent(self, **kwargs: Unpack[RentParams]) -> dict[str, Any]:
         is_room = bool(kwargs.pop("is_room", False))
         is_entire_place = bool(kwargs.pop("is_entire_place", False))
         return self._search("rent", kwargs, is_room=is_room, is_entire_place=is_entire_place)
 
-    def search_sold(self, **kwargs: Any) -> dict[str, Any]:
+    def search_sold(self, **kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         return self._search("sold", kwargs)
 
-    def search(self, **kwargs: Any) -> dict[str, Any]:
+    def search(self, **kwargs: Unpack[SearchParams]) -> dict[str, Any]:
         """Run a raw search with a custom filter_state."""
         options, pinned_proxy = self._options_for(kwargs)
         params = build_custom_params(kwargs)
@@ -224,7 +225,7 @@ class ZillowClient:
     def tiled_search(
         self,
         kind: Kind,
-        **kwargs: Any,
+        **kwargs: Unpack[TiledSearchParams],
     ) -> dict[str, Any]:
         is_room = bool(kwargs.pop("is_room", False))
         is_entire_place = bool(kwargs.pop("is_entire_place", False))
@@ -232,31 +233,32 @@ class ZillowClient:
         def search_fn(**tile_kwargs: Any) -> dict[str, Any]:
             return self._search(kind, tile_kwargs, is_room=is_room, is_entire_place=is_entire_place)
 
-        return tiled_search(search_fn, **kwargs)
+        params: dict[str, Any] = dict(kwargs)
+        bbox = params.pop("bbox", None)
+        if bbox is None:
+            raise ValueError("tiled_search requires bbox")
+        return tiled_search(search_fn, bbox=bbox, **params)
 
-    def home(self, zpid_or_url: int | str, *, options: RequestOptions | None = None) -> dict[str, Any]:
+    def _detail(
+        self,
+        call: Callable[[RequestOptions], dict[str, Any]],
+        options: RequestOptions | None,
+    ) -> dict[str, Any]:
+        """Run one detail fetch with this client's session and proxy rules."""
         base = options or self.options
         request_options = replace(base, session=self._session_for(base.proxy_url), limiter=self.limiter)
         # A caller-provided proxy pins this request; the client's own pool is
         # only rotated through when the caller did not choose a transport.
         pinned_proxy = options is not None and base.proxy_url is not None
-        url, requested_zpid = home_target(zpid_or_url)
-
-        def call(selected: RequestOptions) -> dict[str, Any]:
-            return fetch_home(url, requested_zpid, selected)
-
         return self._invoke(call, request_options, pinned_proxy=pinned_proxy)
+
+    def home(self, zpid_or_url: int | str, *, options: RequestOptions | None = None) -> dict[str, Any]:
+        url, requested_zpid = home_target(zpid_or_url)
+        return self._detail(lambda selected: fetch_home(url, requested_zpid, selected), options)
 
     def apartment(self, apartment_id_or_url: str, *, options: RequestOptions | None = None) -> dict[str, Any]:
-        base = options or self.options
-        request_options = replace(base, session=self._session_for(base.proxy_url), limiter=self.limiter)
-        pinned_proxy = options is not None and base.proxy_url is not None
         url = apartment_target(apartment_id_or_url)
-
-        def call(selected: RequestOptions) -> dict[str, Any]:
-            return fetch_apartment(url, selected)
-
-        return self._invoke(call, request_options, pinned_proxy=pinned_proxy)
+        return self._detail(lambda selected: fetch_apartment(url, selected), options)
 
 
 class _DefaultClientHolder:

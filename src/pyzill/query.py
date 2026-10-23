@@ -222,10 +222,15 @@ def _sort_condition(spec: str, valid_fields: frozenset[str]) -> tuple[str, str]:
 
 
 def _sql_column(field: str) -> str:
+    """Return the SQL expression for a field.
+
+    The column is used as it stands, without a ``CAST``: wrapping a column in
+    ``CAST(...)`` (or a function such as ``lower``) hides it from SQLite's
+    indexes, so a filtered query reads the whole table instead of seeking.
+    """
     if field == "ppsf":
         return "(CAST(price AS REAL) / NULLIF(area, 0))"
-    column = f'"{field}"'
-    return f"CAST({column} AS REAL)" if field in _NUMERIC_FIELDS else f"CAST({column} AS TEXT)"
+    return f'"{field}"'
 
 
 def _numeric_value(field: str, value: Any) -> int | float:
@@ -260,6 +265,11 @@ def _sql_equality(field: str, column: str, operator: str, value: Any) -> tuple[s
     if field in _NUMERIC_FIELDS:
         return f"{column} {sql_operator} ?", [_numeric_value(field, value)]
     text = value if isinstance(value, str) else str(value)
+    if field == "kind":
+        # Kind is stored lower-case and is the leading column of several
+        # indexes; comparing it directly (against a lower-cased value) keeps
+        # the case-insensitive meaning without hiding the column from them.
+        return f"{column} {sql_operator} ?", [text.lower()]
     return f"lower({column}) {sql_operator} lower(?)", [text]
 
 
@@ -269,7 +279,7 @@ def _sql_condition(condition: Condition) -> tuple[str, list[Any]]:
     if operator in ("=", "==", "!=") and value is None:
         return f"{column} IS {'NOT ' if operator == '!=' else ''}NULL", []
     if operator == "~":
-        return f"instr(lower(CAST({column} AS TEXT)), lower(?)) > 0", [str(value)]
+        return f"instr(lower({column}), lower(?)) > 0", [str(value)]
     if operator in _STRING_OPS:
         return _sql_equality(field, column, operator, value)
     return f"{column} {'=' if operator == '==' else operator} ?", [value]
@@ -310,43 +320,60 @@ class _QuerySpec:
     conditions: Sequence[Condition] | None = None
 
 
-def _run_query(conn: sqlite3.Connection, spec: _QuerySpec) -> tuple[list[dict[str, Any]], list[str] | None]:
-    if spec.limit is not None and spec.limit < 0:
-        raise QueryValidationError("limit must be non-negative")
+def _build_where(conditions: Sequence[Condition]) -> tuple[list[str], list[Any]]:
+    """Compile the conditions into SQL clauses and their bound values."""
+    clauses: list[str] = []
+    parameters: list[Any] = []
+    for condition in conditions:
+        clause, values = _sql_condition(condition)
+        clauses.append(clause)
+        parameters.extend(values)
+    return clauses, parameters
+
+
+def _build_order(spec: _QuerySpec) -> str:
+    """Return the ORDER BY clause, with nulls last and a stable tie-breaker."""
+    if spec.sort is None:
+        return spec.default_order
+    field, direction = _sort_condition(spec.sort, spec.valid_fields)
+    column = _sql_column(field)
+    return f'({column}) IS NULL ASC, {column} {direction.upper()}, "zpid" ASC'
+
+
+def _build_select(spec: _QuerySpec, selected: list[str] | None) -> str:
+    """Return the SELECT list for the query."""
+    if spec.payload_column is not None:
+        # A saved row is its payload; the table columns exist to filter and
+        # sort on, so they are not selected.
+        return f'"{spec.payload_column}"'
+    if selected:
+        # Projecting in SQL keeps the columns that were not asked for out of
+        # the result, so a narrow query does not read the whole table.
+        return ", ".join(_projection_column(column) for column in selected)
+    return "*"
+
+
+def _compile_query(spec: _QuerySpec) -> tuple[str, list[Any], list[str] | None]:
+    """Turn a query description into SQL and its bound values."""
     parsed = _parse_conditions(spec.where, spec.where_json, spec.valid_fields, spec.conditions)
     for condition in parsed:
         _validate_condition(condition)
     selected = _selected_columns(spec.cols, spec.valid_fields)
-    clauses: list[str] = []
-    parameters: list[Any] = []
-    for condition in parsed:
-        clause, values = _sql_condition(condition)
-        clauses.append(clause)
-        parameters.extend(values)
-
-    order_clause = spec.default_order
-    if spec.sort:
-        field, direction = _sort_condition(spec.sort, spec.valid_fields)
-        column = _sql_column(field)
-        order_clause = f'({column}) IS NULL ASC, {column} {direction.upper()}, "zpid" ASC'
-
-    if spec.payload_column is not None:
-        # A saved row is its payload; the table columns exist to filter and
-        # sort on, so they are not selected.
-        select_clause = f'"{spec.payload_column}"'
-    elif selected:
-        # Projecting in SQL keeps the columns that were not asked for out of
-        # the result, so a narrow query does not read the whole table.
-        select_clause = ", ".join(_projection_column(column) for column in selected)
-    else:
-        select_clause = "*"
-    sql = f'SELECT {select_clause} FROM "{spec.table}"'  # noqa: S608 - table names are internal constants
+    clauses, parameters = _build_where(parsed)
+    sql = f'SELECT {_build_select(spec, selected)} FROM "{spec.table}"'  # noqa: S608 - table names are internal constants
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY " + order_clause
+    sql += " ORDER BY " + _build_order(spec)
     if spec.limit is not None:
         sql += " LIMIT ?"
         parameters.append(spec.limit)
+    return sql, parameters, selected
+
+
+def _run_query(conn: sqlite3.Connection, spec: _QuerySpec) -> tuple[list[dict[str, Any]], list[str] | None]:
+    if spec.limit is not None and spec.limit < 0:
+        raise QueryValidationError("limit must be non-negative")
+    sql, parameters, selected = _compile_query(spec)
     cursor = conn.execute(sql, parameters)
     names = [description[0] for description in cursor.description]
     rows: list[dict[str, Any]] = []

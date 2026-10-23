@@ -12,11 +12,13 @@ from typing import Any, TypedDict, cast
 from pyzill import http
 from pyzill._kinds import Kind
 from pyzill.bbox import CONTINENTAL_US, BBox
+from pyzill.config import ZILLOW_HOME
 from pyzill.exceptions import ZillowParseError
 from pyzill.responses import json_body
 
 __all__ = [
     "SEARCH_URL",
+    "RentParams",
     "SearchParams",
     "SearchQuery",
     "TransportParams",
@@ -28,7 +30,7 @@ __all__ = [
     "split_params",
 ]
 
-SEARCH_URL = f"{http.ZILLOW_HOME}/async-create-search-page-state"
+SEARCH_URL = f"{ZILLOW_HOME}/async-create-search-page-state"
 
 
 class SearchQuery(TypedDict, total=False):
@@ -60,6 +62,13 @@ class TransportParams(TypedDict, total=False):
 
 class SearchParams(SearchQuery, TransportParams, total=False):
     """Every keyword a search call accepts (query fields + transport fields)."""
+
+
+class RentParams(SearchParams, total=False):
+    """Every keyword a rent search accepts, including its two rent-only flags."""
+
+    is_room: bool
+    is_entire_place: bool
 
 
 _QUERY_FIELDS = frozenset(SearchQuery.__annotations__)

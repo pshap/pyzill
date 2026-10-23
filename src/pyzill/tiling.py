@@ -8,16 +8,24 @@ from typing import Any
 
 from pyzill.bbox import CONTINENTAL_US, BBox
 from pyzill.exceptions import ZillowError
+from pyzill.search_request import RentParams
 
-__all__ = ["RESULT_CAP", "TiledSearchError", "split_bbox", "tiled_search"]
+__all__ = ["RESULT_CAP", "TiledSearchError", "TiledSearchParams", "split_bbox", "tiled_search"]
 
 # Zillow's per-search result cap. A search that returns this many rows was
 # truncated by Zillow, which is why tiling subdivides the viewport.
 RESULT_CAP = 500
 _DEFAULT_MAX_REQUESTS = 50
 
-# Compatibility alias for the historical private name.
-_RESULT_CAP = RESULT_CAP
+
+class TiledSearchParams(RentParams, total=False):
+    """Every keyword a tiled search accepts: the search parameters plus its bounds."""
+
+    max_depth: int
+    max_requests: int
+    on_cap: Callable[[], None] | None
+    on_progress: Callable[[int, int], None] | None
+    on_budget: Callable[[], None] | None
 
 
 def _listing_identity(listing: Mapping[str, Any]) -> str:
@@ -87,6 +95,32 @@ class TiledSearchError(ZillowError):
         )
 
 
+def _tile_is_capped(map_results: list[Any], list_results: list[Any]) -> bool:
+    """Whether either result list reached Zillow's cap for this tile."""
+    return len(map_results) >= RESULT_CAP or len(list_results) >= RESULT_CAP
+
+
+def _request_tile(
+    search_fn: Callable[..., dict[str, Any]],
+    tile: BBox,
+    kwargs: Mapping[str, Any],
+    combined: dict[str, dict[str, Any]],
+    requests_used: int,
+) -> dict[str, Any]:
+    """Run one tile, keeping the completed tiles' listings if it fails."""
+    try:
+        return search_fn(**kwargs, bbox=tile)
+    except Exception as exc:
+        # The tiles that already answered are real listings; losing them
+        # because a later tile failed would silently shrink the snapshot.
+        raise TiledSearchError(
+            exc,
+            _payload(combined, budget_exhausted=False),
+            requests_used=requests_used,
+            tile=tile,
+        ) from exc
+
+
 def tiled_search(  # noqa: PLR0913 - a single bounded tiling loop with callbacks
     search_fn: Callable[..., dict[str, Any]],
     *,
@@ -114,17 +148,7 @@ def tiled_search(  # noqa: PLR0913 - a single bounded tiling loop with callbacks
             _budget_exhausted(max_requests, on_budget)
             break
         tile, depth = queue.popleft()
-        try:
-            response = search_fn(**kwargs, bbox=tile)
-        except Exception as exc:
-            # The tiles that already answered are real listings; losing them
-            # because a later tile failed would silently shrink the snapshot.
-            raise TiledSearchError(
-                exc,
-                _payload(combined, budget_exhausted=False),
-                requests_used=requests_used,
-                tile=tile,
-            ) from exc
+        response = _request_tile(search_fn, tile, kwargs, combined, requests_used)
         requests_used += 1
         map_results, list_results = _merge_response(combined, response)
         if on_progress is not None:
@@ -133,12 +157,13 @@ def tiled_search(  # noqa: PLR0913 - a single bounded tiling loop with callbacks
         # A tile is cut off when *either* result list reached the cap: Zillow
         # caps each list separately, and a tile whose map results are empty
         # but whose sidebar list is full is truncated just as much.
-        if len(map_results) >= _RESULT_CAP or len(list_results) >= _RESULT_CAP:
-            if depth < max_depth:
-                for child in tile.split():
-                    queue.append((child, depth + 1))
-            elif on_cap is not None:
-                on_cap()
+        if not _tile_is_capped(map_results, list_results):
+            continue
+        if depth < max_depth:
+            for child in tile.split():
+                queue.append((child, depth + 1))
+        elif on_cap is not None:
+            on_cap()
 
     return _payload(combined, budget_exhausted=budget_exhausted)
 

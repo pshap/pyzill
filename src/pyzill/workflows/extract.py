@@ -11,7 +11,7 @@ from typing import Any
 
 from pyzill.normalize import Listing, is_building_result, normalize_listing
 
-__all__ = ["extract_listings", "query_zipcode", "usable_row_count"]
+__all__ = ["extract_listings", "query_zipcode", "select_listings", "usable_row_count"]
 
 _ZIPCODE_LENGTH = 5
 
@@ -57,7 +57,7 @@ def _usable_listings(rows: list[Any], *, zipcode: str | None = None) -> list[tup
     return usable
 
 
-def _select_listings(
+def select_listings(
     data: Any, *, wrap_single: bool, zipcode: str | None
 ) -> tuple[list[Any], list[tuple[Mapping[str, Any], Listing]]]:
     """Return a response's listing list and the real listings in it.
@@ -99,7 +99,7 @@ def _select_listings(
             if key in data:
                 # It's a response envelope: honor its (possibly empty) contents
                 # rather than treating the envelope itself as a listing.
-                return _select_listings(data[key], wrap_single=wrap_single, zipcode=zipcode)
+                return select_listings(data[key], wrap_single=wrap_single, zipcode=zipcode)
         if wrap_single:
             return [data], _usable_listings([data], zipcode=zipcode)
         return [], []
@@ -115,5 +115,5 @@ def extract_listings(data: Any, *, wrap_single: bool = False, zipcode: str | Non
     Raises:
         ValueError: If the payload is neither an object nor an array.
     """
-    rows, _ = _select_listings(data, wrap_single=wrap_single, zipcode=zipcode)
+    rows, _ = select_listings(data, wrap_single=wrap_single, zipcode=zipcode)
     return rows

@@ -18,7 +18,7 @@ from pyzill.client import get_default_client
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 from pyzill.http import RequestOptions, build_request_options
 from pyzill.normalize import is_building_result
-from pyzill.search_request import SearchParams
+from pyzill.search_request import RentParams, SearchParams
 
 __all__ = [
     "for_rent",
@@ -130,7 +130,7 @@ def _iter_search(
     search_fn: Callable[..., dict[str, Any]],
     *,
     max_items: int | None,
-    kwargs: dict[str, Any],
+    kwargs: Mapping[str, Any],
 ) -> Iterator[Mapping[str, Any]]:
     # Zillow sends "mapResults": null when it has no rows for the viewport,
     # so the key being present is not the key being a list.
@@ -144,7 +144,7 @@ def _iter_search(
             yield listing
 
 
-def iter_search(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
+def iter_search(*, max_items: int | None = None, **kwargs: Unpack[SearchParams]) -> Iterator[Mapping[str, Any]]:
     """Yield for-sale listings from a single search response.
 
     Use :func:`iter_sale`, :func:`iter_rent`, or :func:`iter_sold` when the
@@ -178,17 +178,17 @@ def iter_search(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapp
     yield from _iter_search(for_sale, max_items=max_items, kwargs=kwargs)
 
 
-def iter_sale(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
+def iter_sale(*, max_items: int | None = None, **kwargs: Unpack[SearchParams]) -> Iterator[Mapping[str, Any]]:
     """Yield for-sale listings from a single search response (see :func:`iter_search`)."""
     yield from _iter_search(for_sale, max_items=max_items, kwargs=kwargs)
 
 
-def iter_rent(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
+def iter_rent(*, max_items: int | None = None, **kwargs: Unpack[RentParams]) -> Iterator[Mapping[str, Any]]:
     """Yield for-rent listings from a single search response (see :func:`iter_search`)."""
     yield from _iter_search(for_rent, max_items=max_items, kwargs=kwargs)
 
 
-def iter_sold(*, max_items: int | None = None, **kwargs: Any) -> Iterator[Mapping[str, Any]]:
+def iter_sold(*, max_items: int | None = None, **kwargs: Unpack[SearchParams]) -> Iterator[Mapping[str, Any]]:
     """Yield sold listings from a single search response (see :func:`iter_search`)."""
     yield from _iter_search(sold, max_items=max_items, kwargs=kwargs)
 

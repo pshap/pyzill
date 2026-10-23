@@ -26,9 +26,7 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
     ordered by that timestamp, so a consumer can replay the events in the
     order they occurred.
     """
-    events: list[dict[str, Any]] = []
     now = datetime.now(UTC)
-
     # Only the two columns the events need are read: the report is about
     # changes, and loading every column of every listing made the cost of a
     # report grow with the size of the database rather than with the size of
@@ -37,38 +35,72 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
         (zpid, kind): (price, first_seen)
         for zpid, kind, price, first_seen in conn.execute("SELECT zpid, kind, price, first_seen_utc FROM listings")
     }
+    events = _new_listing_events(listings, since=since, now=now)
+    events.extend(_price_events(conn, listings, since=since, now=now))
+    events.extend(_status_events(conn, listings, since=since, now=now))
+    events.extend(_run_events(conn, listings, since=since, now=now))
+    return sorted(events, key=lambda event: (event["seen_utc"], event["zpid"], event["event"]))
 
-    def observed_days(key: tuple[int, str]) -> int:
-        return _observed_days(listings[key][1], now)
 
-    for key, (price, first_seen) in listings.items():
-        if first_seen >= since:
-            events.append(
-                {
-                    "event": "new",
-                    "zpid": key[0],
-                    "kind": key[1],
-                    "price": price,
-                    # The listing was first seen when it first appeared; that
-                    # is when the event happened, and it is what orders it
-                    # against the price and status events below.
-                    "seen_utc": first_seen,
-                    "days_observed": observed_days(key),
-                }
-            )
+def _new_listing_events(
+    listings: dict[tuple[int, str], tuple[Any, str]],
+    *,
+    since: str,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    """One ``new`` event for every listing first seen at or after ``since``."""
+    return [
+        {
+            "event": "new",
+            "zpid": key[0],
+            "kind": key[1],
+            "price": price,
+            # The listing was first seen when it first appeared; that is when
+            # the event happened, and it is what orders it against the price
+            # and status events below.
+            "seen_utc": first_seen,
+            "days_observed": _observed_days(first_seen, now),
+        }
+        for key, (price, first_seen) in listings.items()
+        if first_seen >= since
+    ]
 
-    # The previous price of a listing is the price of the row before it, so
-    # it is found in the database with a window function rather than by
-    # reading the whole history into memory. The window is computed over
-    # every row, so a price that moved before ``since`` is still the
-    # baseline the change is measured against.
-    for zpid, kind, price, seen_utc, previous in conn.execute(
+
+def _days_observed(
+    listings: dict[tuple[int, str], tuple[Any, str]],
+    key: tuple[int, str],
+    now: datetime,
+) -> int | None:
+    """The days a listing was observed, or None when it is not in the table."""
+    if key not in listings:
+        return None
+    return _observed_days(listings[key][1], now)
+
+
+def _price_events(
+    conn: sqlite3.Connection,
+    listings: dict[tuple[int, str], tuple[Any, str]],
+    *,
+    since: str,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    """Price drops and increases recorded at or after ``since``.
+
+    The previous price of a listing is the price of the row before it, so it
+    is found in the database with a window function rather than by reading
+    the whole history into memory. The window is computed over every row, so
+    a price that moved before ``since`` is still the baseline the change is
+    measured against.
+    """
+    events: list[dict[str, Any]] = []
+    rows = conn.execute(
         "SELECT zpid, kind, price, seen_utc, previous_price FROM ("
         "SELECT zpid, kind, price, seen_utc, "
         "LAG(price) OVER (PARTITION BY zpid, kind ORDER BY seen_utc) AS previous_price "
         "FROM price_history) WHERE seen_utc >= ?",
         (since,),
-    ):
+    )
+    for zpid, kind, price, seen_utc, previous in rows:
         if previous is None or previous == price:
             continue
         key = (zpid, kind)
@@ -80,31 +112,52 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
                 "old_price": previous,
                 "price": price,
                 "seen_utc": seen_utc,
-                "days_observed": observed_days(key) if key in listings else None,
+                "days_observed": _days_observed(listings, key, now),
             }
         )
+    return events
 
-    for zpid, kind, status, first_seen_utc in conn.execute(
+
+def _status_events(
+    conn: sqlite3.Connection,
+    listings: dict[tuple[int, str], tuple[Any, str]],
+    *,
+    since: str,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    """Status transitions recorded at or after ``since``."""
+    rows = conn.execute(
         "SELECT zpid, kind, status, first_seen_utc FROM status_history "
         "WHERE first_seen_utc >= ? ORDER BY first_seen_utc",
         (since,),
-    ):
-        key = (zpid, kind)
-        events.append(
-            {
-                "event": "status_change",
-                "zpid": zpid,
-                "kind": kind,
-                "status": status,
-                "seen_utc": first_seen_utc,
-                "days_observed": observed_days(key) if key in listings else None,
-            }
-        )
+    )
+    return [
+        {
+            "event": "status_change",
+            "zpid": zpid,
+            "kind": kind,
+            "status": status,
+            "seen_utc": first_seen_utc,
+            "days_observed": _days_observed(listings, (zpid, kind), now),
+        }
+        for zpid, kind, status, first_seen_utc in rows
+    ]
 
-    # Only search runs are compared. A run with no query text is an ingest of
-    # a file snapshot (``db import``) or an anonymous upsert, where an absence
-    # means "not in this batch", not "delisted". Comparing two of those would
-    # report every listing missing from the second batch as delisted.
+
+def _run_events(
+    conn: sqlite3.Connection,
+    listings: dict[tuple[int, str], tuple[Any, str]],
+    *,
+    since: str,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    """Delisted and relisted events from comparable complete search runs.
+
+    Only search runs are compared. A run with no query text is an ingest of a
+    file snapshot (``db import``) or an anonymous upsert, where an absence
+    means "not in this batch", not "delisted". Comparing two of those would
+    report every listing missing from the second batch as delisted.
+    """
     run_rows = conn.execute(
         "SELECT id, started_utc, finished_utc, kind, query, bbox_json, filters_json FROM sync_runs "
         "WHERE query != '' AND finished_utc IS NOT NULL AND truncated = 0 ORDER BY started_utc, id"
@@ -115,9 +168,9 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
         # viewport, *and* filters: an unfiltered run after a --max-price run
         # would otherwise report every excluded listing as delisted.
         comparable.setdefault((kind, query, bbox_json, filters_json), []).append((run_id, started_utc))
+
+    events: list[dict[str, Any]] = []
     for run_list in comparable.values():
-        # The listings the run before this one saw. Only the run right before
-        # the current one is compared, so one set is enough.
         prev_present: set[tuple[int, str]] | None = None
         # Every listing any earlier run of this group saw. It is accumulated
         # as the runs are walked, so the report costs one pass over the
@@ -130,26 +183,28 @@ def get_changes(conn: sqlite3.Connection, since: str) -> list[dict[str, Any]]:
             }
             if prev_present is not None and started_utc >= since:
                 events.extend(
-                    {
-                        "event": "delisted",
-                        "zpid": key[0],
-                        "kind": key[1],
-                        "seen_utc": started_utc,
-                        "days_observed": observed_days(key) if key in listings else None,
-                    }
-                    for key in sorted(prev_present - present)
+                    _run_event("delisted", key, started_utc, listings, now) for key in sorted(prev_present - present)
                 )
                 events.extend(
-                    {
-                        "event": "relisted",
-                        "zpid": key[0],
-                        "kind": key[1],
-                        "seen_utc": started_utc,
-                        "days_observed": observed_days(key) if key in listings else None,
-                    }
+                    _run_event("relisted", key, started_utc, listings, now)
                     for key in sorted((present - prev_present) & all_prior)
                 )
             prev_present = present
             all_prior |= present
+    return events
 
-    return sorted(events, key=lambda event: (event["seen_utc"], event["zpid"], event["event"]))
+
+def _run_event(
+    event: str,
+    key: tuple[int, str],
+    seen_utc: str,
+    listings: dict[tuple[int, str], tuple[Any, str]],
+    now: datetime,
+) -> dict[str, Any]:
+    return {
+        "event": event,
+        "zpid": key[0],
+        "kind": key[1],
+        "seen_utc": seen_utc,
+        "days_observed": _days_observed(listings, key, now),
+    }

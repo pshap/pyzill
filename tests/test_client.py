@@ -175,28 +175,28 @@ def test_duplicate_proxies_do_not_count_as_a_rotation_pair(monkeypatch, search_s
 
 def test_clients_share_the_process_wide_rate_limit_budget():
     """Several clients in one process must not multiply the request rate."""
-    from pyzill.ratelimit import _limiter
+    from pyzill.ratelimit import default_limiter
 
-    assert ZillowClient().limiter is _limiter
+    assert ZillowClient().limiter is default_limiter()
     assert ZillowClient().limiter is ZillowClient().limiter
 
 
 def test_explicit_rate_limit_is_never_looser_than_the_shared_budget():
-    from pyzill.ratelimit import _limiter, _SharedBudgetLimiter
+    from pyzill.ratelimit import SharedBudgetLimiter, default_limiter
 
     client = ZillowClient(rate_limit=2.5)
 
-    assert isinstance(client.limiter, _SharedBudgetLimiter)
+    assert isinstance(client.limiter, SharedBudgetLimiter)
     assert client.limiter.min_interval == 2.5
-    assert client.limiter._shared is _limiter
+    assert client.limiter._shared is default_limiter()
 
 
 def test_explicit_zero_rate_limit_opts_out_of_throttling():
-    from pyzill.ratelimit import _SharedBudgetLimiter
+    from pyzill.ratelimit import SharedBudgetLimiter
 
     client = ZillowClient(rate_limit=0)
 
-    assert not isinstance(client.limiter, _SharedBudgetLimiter)
+    assert not isinstance(client.limiter, SharedBudgetLimiter)
     assert client.limiter.min_interval == 0
 
 

@@ -258,6 +258,21 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- The compatibility shims that duplicated a real module are deprecated, not
+  silently kept alive. `pyzill.utils.remove_space` (use
+  `pyzill.utils.normalize_whitespace`), the proxy re-exports from
+  `pyzill.utils` (use `pyzill.proxy`), the `pyzill.search` and
+  `pyzill.details` modules (use `pyzill.api` or the package root), and
+  `pyzill.http.ZILLOW_HOME` (use `pyzill.config.ZILLOW_HOME`) now raise a
+  `DeprecationWarning` when used; the private aliases that had no historical
+  caller are gone. Internal code imports the real module, so a deprecation
+  warning only means a caller is using an old name.
+- A filtered `db query` seeks instead of scanning. The query engine wrapped
+  every column in `CAST` (and `lower`) inside `WHERE`, which hides the
+  column from SQLite's indexes; a kind+price filter now uses
+  `ix_listings_kind_price`. Text equality is still case-insensitive, and
+  `kind` is compared against its lower-case stored form so the composite
+  indexes stay usable.
 - `load_listings` filters text without regard to case, and rejects a value
   that is not a number for a numeric column instead of matching nothing.
   It now shares the query engine's rules, so a filter means the same thing
@@ -297,6 +312,14 @@ All notable changes to this project are documented here.
 
 ### Tooling
 
+- Functions that had grown past a readable branch count are split by job, and
+  `ruff` now enforces it: the `C90` rule is on with `max-complexity = 10`.
+  The query compiler, the change report, and the tiling loop each became a
+  few named steps instead of one long function.
+- The client's search methods are typed with `Unpack[SearchParams]` (and
+  `RentParams` / `TiledSearchParams` for their extra flags), so an editor
+  knows the keywords a search accepts. The HTTP session is described by a
+  small `SessionLike` protocol instead of `Any`.
 - The lint suppressions that hid a rule rather than answered it are gone.
   The CLI's long signatures are the flag surface itself, so the
   argument-count rule is now ignored for the CLI package in `pyproject.toml`
@@ -304,6 +327,10 @@ All notable changes to this project are documented here.
   suppression says why it is there. The random jitter the rate limiter and
   the retry backoff draw now comes from one helper, so the "this is not
   cryptographic randomness" decision is made once.
+- Packaging states its contract: `curl_cffi` has an upper bound
+  (`>=0.16.3,<0.17`), the license is the SPDX expression `MIT` with the
+  license file declared, and the `dev` extra builds on the `test` extra so
+  the pytest requirement is written once.
 - The CLI reads its search filters from `SearchFilters` instead of listing
   the same fourteen names a second time, and the query engine takes one
   description of a query instead of ten parameters. A filter added to the

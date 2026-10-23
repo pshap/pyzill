@@ -13,7 +13,7 @@ from pyzill._kinds import Kind
 from pyzill.bbox import BBox
 from pyzill.client import ZillowClient, get_default_client
 from pyzill.tiling import RESULT_CAP, tiled_search
-from pyzill.workflows.extract import _select_listings, query_zipcode
+from pyzill.workflows.extract import query_zipcode, select_listings
 from pyzill.workflows.model import (
     FILTER_PARAMS,
     Notice,
@@ -137,7 +137,7 @@ def fetch_listings(  # noqa: PLR0913 - one search entry point with its inputs
             notices.append(Notice("result_cap", {"cap": RESULT_CAP}))
 
     zipcode = query_zipcode(request.query)
-    _, usable = _select_listings(result, wrap_single=False, zipcode=zipcode)
+    _, usable = select_listings(result, wrap_single=False, zipcode=zipcode)
     listings = [normalized for _, normalized in usable]
     raw_listings = [row for row, _ in usable]
 

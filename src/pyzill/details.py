@@ -6,6 +6,8 @@ This module keeps the historical import paths (``pyzill.details.get_from_home_id
 and friends) working.
 """
 
+import warnings
+
 from pyzill.api import (
     get_from_apartment_id,
     get_from_apartment_url,
@@ -14,6 +16,13 @@ from pyzill.api import (
     get_from_home_id,
     get_from_home_url,
 )
+
+warnings.warn(
+    "pyzill.details is deprecated; import the entry points from pyzill.api",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
 
 __all__ = [
     "get_from_apartment_id",

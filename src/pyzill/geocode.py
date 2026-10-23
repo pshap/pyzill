@@ -29,9 +29,9 @@ from typing import Any
 from curl_cffi import requests
 
 from pyzill.bbox import BBox
+from pyzill.proxy import resolve_proxy
 from pyzill.ratelimit import RateLimiter
 from pyzill.responses import json_body, raise_for_status
-from pyzill.utils import resolve_proxy
 
 try:  # pragma: no cover - Windows has no fcntl
     import fcntl
@@ -332,10 +332,8 @@ def _fetch_hits(place: str, proxy_url: str | None) -> list[Any]:
     except GeocodeError:
         raise
     except ValueError as exc:
-        # If it's from resolve_proxy, it's a ValueError that should not be wrapped as GeocodeUnavailableError
-        # Check if it's an "Invalid proxy" style error
-        if "proxy" in str(exc).lower() or "invalid" in str(exc).lower():
-            raise
+        # The request reached the service, but its body was not JSON. That is
+        # an unavailable lookup, not a place that does not resolve.
         raise GeocodeUnavailableError(f"Geocoding {place!r} failed: {exc}. {_NO_GEOCODE_HINT}") from exc
     except OSError as exc:
         # Network failures, HTTP errors, and unparseable bodies all mean the

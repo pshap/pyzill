@@ -838,6 +838,8 @@ with connect(":memory:") as conn:
 
 `import_rows` does the same for listings you already have on disk, and
 `extract_listings` pulls the listings out of a saved Zillow response.
+`select_listings` returns both the response's listing list and the real
+listings in it, which is what the sync pipeline uses.
 
 `fetch_listings` returns the real listings of a search: building cards and
 cards without a usable zpid are dropped, and when the query is a zipcode only

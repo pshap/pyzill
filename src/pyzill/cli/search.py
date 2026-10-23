@@ -44,7 +44,7 @@ from pyzill.cli.options import (
     Zoom,
 )
 from pyzill.cli.output import OutputFormat
-from pyzill.geocode import GeocodeUnavailableError, geocode
+from pyzill.geocode import GeocodeError, GeocodeUnavailableError, geocode
 from pyzill.workflows import (
     BoundingBoxError,
     RangeError,
@@ -123,7 +123,7 @@ def resolve_search_viewport(request: SearchRequest) -> Viewport:
         # The geocoder could not be reached: trying again might work, so this
         # is the transient failure the exit-code contract gives code 6.
         error(str(exc), code=6, error_code="network", retryable=True)
-    except ValueError as exc:
+    except GeocodeError as exc:
         error(str(exc), code=1)
     if viewport.display_name:
         debug(f"Geocoded {request.query!r} -> {viewport.display_name}")

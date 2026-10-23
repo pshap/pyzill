@@ -51,9 +51,9 @@ from pyzill.normalize import (
     normalize_listings,
 )
 from pyzill.property_detail import PropertyDetail, normalize_property_detail
+from pyzill.proxy import parse_proxy, resolve_proxy
 from pyzill.ratelimit import get_min_interval, set_min_interval
 from pyzill.tiling import TiledSearchError, split_bbox, tiled_search
-from pyzill.utils import parse_proxy, resolve_proxy
 from pyzill.values import parse_price
 
 __all__ = [

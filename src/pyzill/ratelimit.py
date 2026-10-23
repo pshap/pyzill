@@ -153,9 +153,6 @@ def _read_min_interval() -> float:
 # to Zillow is throttled together.
 _limiter = RateLimiter(min_interval=_read_min_interval())
 
-# Compatibility alias: the class used to be private.
-_SharedBudgetLimiter = SharedBudgetLimiter
-
 
 def default_limiter() -> RateLimiter:
     """Return the process-wide request-budget limiter.

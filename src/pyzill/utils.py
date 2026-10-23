@@ -1,24 +1,56 @@
-"""Small helpers, plus compatibility re-exports of the proxy helpers.
+"""Small helpers shared by the package core.
 
-The proxy functions used to live here. They now live in :mod:`pyzill.proxy`;
-this module keeps re-exporting them so existing imports
-(``from pyzill.utils import resolve_proxy``) keep working. New code should
-import them from :mod:`pyzill.proxy`.
+The proxy helpers used to live here. They now live in :mod:`pyzill.proxy`;
+the old import paths still resolve, but reach them through a deprecation
+shim so existing code keeps working while new code imports the real module.
 """
 
 import random
 import re
+import warnings
 from typing import Any
 
-from pyzill.proxy import parse_proxy as parse_proxy
-from pyzill.proxy import redact_credentials as redact_credentials
-from pyzill.proxy import redact_proxy_url as redact_proxy_url
-from pyzill.proxy import resolve_proxy as resolve_proxy
+from pyzill.proxy import parse_proxy as _parse_proxy
+from pyzill.proxy import redact_credentials as _redact_credentials
+from pyzill.proxy import redact_proxy_url as _redact_proxy_url
+from pyzill.proxy import resolve_proxy as _resolve_proxy
+
+# The public proxy helpers, as the old path exposed them. Reaching one through
+# this module is deprecated; ``__getattr__`` warns and returns the proxy
+# module's function.
+_PROXY_EXPORTS: dict[str, Any] = {
+    "parse_proxy": _parse_proxy,
+    "redact_credentials": _redact_credentials,
+    "redact_proxy_url": _redact_proxy_url,
+    "resolve_proxy": _resolve_proxy,
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve a historical proxy re-export, with a deprecation warning."""
+    if name in _PROXY_EXPORTS:
+        warnings.warn(
+            f"pyzill.utils.{name} is deprecated; import it from pyzill.proxy",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _PROXY_EXPORTS[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def collapse_whitespace(value: str) -> str:
     """Collapse runs of whitespace to a single space."""
     return re.sub(r"\s+", " ", value.strip())
+
+
+def remove_space(value: str) -> str:
+    """Deprecated alias for :func:`collapse_whitespace`."""
+    warnings.warn(
+        "pyzill.utils.remove_space is deprecated; use pyzill.utils.collapse_whitespace",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return collapse_whitespace(value)
 
 
 def jitter(maximum: float) -> float:
@@ -30,9 +62,6 @@ def jitter(maximum: float) -> float:
     is the right tool and ``secrets`` would only cost more.
     """
     return random.uniform(0.0, maximum)  # noqa: S311 - jitter is not cryptographic
-
-
-remove_space = collapse_whitespace
 
 
 def get_nested_value(dic: Any, key_path: str, default: Any = None) -> Any:

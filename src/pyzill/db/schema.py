@@ -22,9 +22,6 @@ __all__ = [
 # The current schema version.
 SCHEMA_VERSION = 3
 
-# Compatibility alias for the historical private name.
-_SCHEMA_VERSION = SCHEMA_VERSION
-
 # Canonical listings columns, in schema order. Derived from the normalized
 # listing shape, so the DDL, the migrations, and the write path all agree on
 # one list. The kind sits second (it is part of the primary key) and the two

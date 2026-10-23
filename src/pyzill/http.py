@@ -5,16 +5,18 @@ that search and detail requests stay consistent. The browser identity
 (headers and client hints) lives in :mod:`pyzill.http_headers`.
 """
 
+import warnings
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from threading import Lock
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from curl_cffi.requests import ProxySpec, Response, Session
 from curl_cffi.requests.exceptions import RequestException
 
-from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, ZILLOW_HOME
+from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
+from pyzill.config import ZILLOW_HOME as _ZILLOW_HOME
 from pyzill.exceptions import (
     ZillowBlockedError,
     ZillowError,
@@ -23,16 +25,17 @@ from pyzill.exceptions import (
     ZillowServerError,
 )
 from pyzill.http_headers import JSON_ACCEPT, build_headers
+from pyzill.proxy import resolve_proxy
 from pyzill.ratelimit import RateLimiter, default_limiter
 from pyzill.responses import json_body, raise_for_status
-from pyzill.utils import jitter, resolve_proxy
+from pyzill.utils import jitter
 
 __all__ = [
     "DEFAULT_IMPERSONATE",
     "DEFAULT_MAX_RETRIES",
     "DEFAULT_TIMEOUT",
-    "ZILLOW_HOME",
     "RequestOptions",
+    "SessionLike",
     "build_headers",
     "build_proxies",
     "build_request_options",
@@ -45,9 +48,37 @@ __all__ = [
     "reset_default_session",
 ]
 
-# ``ZILLOW_HOME`` is re-exported here (it is listed in ``__all__``) because
-# this module has always been the place callers imported it from; the value
-# itself now lives in ``pyzill.config``.
+# ``ZILLOW_HOME`` used to be defined here. It now lives in ``pyzill.config``;
+# the old attribute still resolves, with a deprecation warning.
+
+
+class SessionLike(Protocol):
+    """The part of an HTTP session this package uses.
+
+    Tests supply a stand-in, and callers may pass any session-like object, so
+    the transport is described by the two methods it needs rather than tied
+    to curl_cffi's concrete ``Session``.
+    """
+
+    def request(self, *args: Any, **kwargs: Any) -> object:
+        """Send one request and return the response."""
+        ...
+
+    def close(self) -> None:
+        """Release the session's resources."""
+        ...
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve the historical ``ZILLOW_HOME`` re-export with a warning."""
+    if name == "ZILLOW_HOME":
+        warnings.warn(
+            "pyzill.http.ZILLOW_HOME is deprecated; import it from pyzill.config",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _ZILLOW_HOME
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +89,7 @@ class RequestOptions:
     impersonate: str = DEFAULT_IMPERSONATE
     timeout: float = DEFAULT_TIMEOUT
     max_retries: int = DEFAULT_MAX_RETRIES
-    session: Any | None = field(default=None, repr=False, compare=False)
+    session: SessionLike | None = field(default=None, repr=False, compare=False)
     limiter: RateLimiter | None = field(default=None, repr=False, compare=False)
     max_retry_after: float = 60.0
 
@@ -93,7 +124,7 @@ def build_request_options(  # noqa: PLR0913 - one builder for every Zillow reque
     timeout: float = DEFAULT_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
     max_retry_after: float = 60.0,
-    session: Any | None = None,
+    session: SessionLike | None = None,
     limiter: RateLimiter | None = None,
 ) -> RequestOptions:
     """Build the transport options for a Zillow request.
@@ -112,11 +143,11 @@ def build_request_options(  # noqa: PLR0913 - one builder for every Zillow reque
     )
 
 
-_default_sessions: dict[str | None, Any] = {}
+_default_sessions: dict[str | None, SessionLike] = {}
 _default_sessions_lock = Lock()
 
 
-def default_session(proxy_url: str | None = None) -> Any:
+def default_session(proxy_url: str | None = None) -> SessionLike:
     """Return the fallback session for a proxy (or the direct connection).
 
     Callers that own a session (every :class:`~pyzill.client.ZillowClient`)
@@ -235,8 +266,8 @@ def put_json(
             user_initiated=False,
         ),
         "Content-Type": "application/json",
-        "Origin": ZILLOW_HOME,
-        "Referer": f"{ZILLOW_HOME}/",
+        "Origin": _ZILLOW_HOME,
+        "Referer": f"{_ZILLOW_HOME}/",
     }
     return _send("PUT", url, headers=headers, json=payload, options=options)
 
@@ -251,7 +282,7 @@ def request(  # noqa: PLR0913 - central request primitive
     timeout: float = DEFAULT_TIMEOUT,
     max_retries: int = DEFAULT_MAX_RETRIES,
     json: Any = None,
-    session: Any | None = None,
+    session: SessionLike | None = None,
     limiter: RateLimiter | None = None,
     max_retry_after: float = 60.0,
 ) -> Response:

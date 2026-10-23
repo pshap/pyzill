@@ -97,6 +97,38 @@ def test_identifier_sort_uses_numeric_order_in_both_sources() -> None:
         connection.close()
 
 
+def test_kind_and_price_filter_uses_the_composite_index() -> None:
+    """A kind+price filter must seek, not scan the whole listings table.
+
+    The conditions used to wrap every column in ``CAST``/``lower``, which
+    hides it from the index and turns a bounded lookup into a full scan.
+    """
+    connection = connect(":memory:")
+    try:
+        rows = [{"zpid": index + 1, "price": 100_000 + index * 10_000} for index in range(40)]
+        upsert_listings(connection, rows, kind="sale", seen_utc="2026-10-01T00:00:00Z")
+        upsert_listings(connection, rows, kind="rent", seen_utc="2026-10-01T00:00:00Z")
+
+        statements: list[str] = []
+        connection.set_trace_callback(statements.append)
+        try:
+            found, _ = query_database(connection, where=["kind==sale", "price>=250000"])
+        finally:
+            connection.set_trace_callback(None)
+
+        assert sorted(row["zpid"] for row in found) == list(range(16, 41))
+        select = next(statement for statement in statements if statement.lstrip().upper().startswith("SELECT"))
+        plan = connection.execute(
+            "EXPLAIN QUERY PLAN " + select,
+            [None] * select.count("?"),
+        ).fetchall()
+        detail = " ".join(str(column) for row in plan for column in row)
+        assert "ix_listings_kind_price" in detail
+        assert "SEARCH" in detail
+    finally:
+        connection.close()
+
+
 def test_zpid_range_filter_is_numeric() -> None:
     rows = [{"zpid": 99}, {"zpid": 101}]
     connection = connect(":memory:")

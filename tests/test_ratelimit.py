@@ -145,10 +145,8 @@ class TestSharedBudgetLimiter:
     """The shared limiter bounds the whole process; a client may be stricter."""
 
     def test_local_and_shared_intervals_do_not_stack(self):
-        from pyzill.ratelimit import _SharedBudgetLimiter
-
         shared = RateLimiter(min_interval=0.2, jitter=0)
-        limiter = _SharedBudgetLimiter(shared, min_interval=0.2)
+        limiter = SharedBudgetLimiter(shared, min_interval=0.2)
         limiter.wait()
         start = time.monotonic()
         limiter.wait()
@@ -157,10 +155,8 @@ class TestSharedBudgetLimiter:
         assert 0.18 <= elapsed < 0.35  # one interval, not two
 
     def test_stricter_local_interval_wins(self):
-        from pyzill.ratelimit import _SharedBudgetLimiter
-
         shared = RateLimiter(min_interval=0.1, jitter=0)
-        limiter = _SharedBudgetLimiter(shared, min_interval=0.5)
+        limiter = SharedBudgetLimiter(shared, min_interval=0.5)
         limiter.wait()
         start = time.monotonic()
         limiter.wait()
@@ -169,10 +165,8 @@ class TestSharedBudgetLimiter:
         assert elapsed >= 0.45
 
     def test_looser_local_interval_cannot_beat_the_shared_budget(self):
-        from pyzill.ratelimit import _SharedBudgetLimiter
-
         shared = RateLimiter(min_interval=0.5, jitter=0)
-        limiter = _SharedBudgetLimiter(shared, min_interval=0.1)
+        limiter = SharedBudgetLimiter(shared, min_interval=0.1)
         limiter.wait()
         start = time.monotonic()
         limiter.wait()
@@ -181,11 +175,9 @@ class TestSharedBudgetLimiter:
         assert elapsed >= 0.45
 
     def test_separate_clients_share_one_budget(self):
-        from pyzill.ratelimit import _SharedBudgetLimiter
-
         shared = RateLimiter(min_interval=0.2, jitter=0)
-        first = _SharedBudgetLimiter(shared, min_interval=0)
-        second = _SharedBudgetLimiter(shared, min_interval=0)
+        first = SharedBudgetLimiter(shared, min_interval=0)
+        second = SharedBudgetLimiter(shared, min_interval=0)
         first.wait()
         start = time.monotonic()
         second.wait()
@@ -194,12 +186,10 @@ class TestSharedBudgetLimiter:
         assert elapsed >= 0.18
 
     def test_retry_after_delay_is_applied_once(self, monkeypatch):
-        from pyzill.ratelimit import _SharedBudgetLimiter
-
         slept: list[float] = []
         monkeypatch.setattr(time, "sleep", slept.append)
         shared = RateLimiter(min_interval=0, jitter=0)
-        limiter = _SharedBudgetLimiter(shared, min_interval=0)
+        limiter = SharedBudgetLimiter(shared, min_interval=0)
 
         limiter.wait(5.0)
 

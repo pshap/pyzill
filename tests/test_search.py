@@ -28,9 +28,9 @@ def test_bbox_maps_and_splits():
 
 def test_missing_bbox_requires_explicit_nationwide_opt_in():
     with pytest.raises(ValueError, match="bbox is required"):
-        search._resolve_bbox(None)
+        search.resolve_bbox(None)
 
-    assert search._resolve_bbox(None, allow_nationwide=True) == CONTINENTAL_US
+    assert search.resolve_bbox(None, allow_nationwide=True) == CONTINENTAL_US
 
 
 def test_search_without_bbox_raises_before_any_request(fake_http):
@@ -96,7 +96,7 @@ def test_for_sale_success(fake_http, search_success_body):
     assert result["mapResults"][0]["zpid"] == 348914888
 
     call = fake_http.calls[-1]
-    assert call["url"] == search._SEARCH_URL
+    assert call["url"] == search.SEARCH_URL
     assert call["impersonate"] == "chrome136"
     assert call["timeout"] == 30.0
     assert call["headers"]["Referer"] == "https://www.zillow.com/"
