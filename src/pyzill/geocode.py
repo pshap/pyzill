@@ -36,7 +36,7 @@ from pyzill.responses import json_body, raise_for_status
 try:  # pragma: no cover - Windows has no fcntl
     import fcntl
 except ImportError:  # pragma: no cover - Windows
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None  # type: ignore[no-redef, assignment, unused-ignore]
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 
