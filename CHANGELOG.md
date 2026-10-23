@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped to **1.5.0**: the stricter inputs, deprecations, and the new
+  `pyzill.tiling` module are no longer unreleased.
+- `for_sale`/`for_rent`/`sold`/`search` now require an explicit `bbox=`
+  viewport (or `allow_nationwide=True`); a missing bbox used to silently
+  search the whole continental United States.
+- `db prune` gained a `--dry-run` that reports what would be deleted without
+  touching the database, and no longer removes sightings by default.
+
 ### Fixed
 
 - Value coercion is strict: thousands separators must be grouped correctly,

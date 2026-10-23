@@ -71,13 +71,14 @@ def _delete_runs(conn: sqlite3.Connection, run_ids: list[int]) -> tuple[int, int
     return len(run_ids), sightings
 
 
-def prune_database(
+def prune_database(  # noqa: PLR0913 - one prune entry point with its options
     conn: sqlite3.Connection,
     *,
     older_than_days: int | None = None,
     keep_runs: int | None = None,
     vacuum: bool = False,
     now: str | None = None,
+    dry_run: bool = False,
 ) -> PruneStats:
     """Delete old sync runs (and their sightings) from the database.
 
@@ -87,6 +88,9 @@ def prune_database(
         keep_runs: Keep only the newest N runs; the rest are deleted.
         vacuum: Rebuild the database file after deleting, reclaiming its space.
         now: Override the current UTC timestamp (for tests).
+        dry_run: When True, resolve the runs to delete and count their sightings
+            but issue no DELETE statements. The returned ``PruneStats``
+            describes what a real run would remove.
 
     Returns:
         PruneStats: the number of runs and sightings deleted, and whether a
@@ -104,6 +108,16 @@ def prune_database(
 
     cutoff = _cutoff(older_than_days, now or utc_now()) if older_than_days is not None else None
     run_ids = _run_ids_to_delete(conn, cutoff=cutoff, keep_runs=keep_runs)
+    if dry_run:
+        sightings = 0
+        for start in range(0, len(run_ids), _CHUNK):
+            chunk = run_ids[start : start + _CHUNK]
+            marks = ", ".join("?" * len(chunk))
+            sightings += conn.execute(
+                f"SELECT COUNT(*) FROM sightings WHERE run_id IN ({marks})",  # noqa: S608 - values are bound
+                chunk,
+            ).fetchone()[0]
+        return PruneStats(runs_deleted=len(run_ids), sightings_deleted=sightings, vacuumed=False)
     runs_deleted, sightings_deleted = _delete_runs(conn, run_ids)
     conn.commit()
     if vacuum:

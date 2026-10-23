@@ -198,6 +198,45 @@ class TestMainEntry:
         assert isinstance(code, int)
         return code
 
+    def test_module_body_runs_under_runpy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``python -m pyzill`` runs the module body, not just its import.
+
+        The body is three lines (import, guard, call); a test that only calls
+        ``main_entry`` directly misses the guard, so the coverage gate never
+        sees the path a user actually takes.
+        """
+        import runpy
+
+        monkeypatch.setattr(sys, "argv", ["pyzill", "--version"])
+        with pytest.raises(SystemExit) as exit_info:
+            runpy.run_module("pyzill", run_name="__main__", alter_sys=True)
+        assert exit_info.value.code == 0
+
+    def test_max_requests_above_the_floor_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = self._run(monkeypatch, ["--json-errors", "search", "sale", "12305", "--max-requests", "1000"])
+        assert code == 2
+        assert json.loads(capsys.readouterr().err)["error"]["code"] == "usage"
+
+    def test_force_overrides_the_max_requests_floor(self, fake_http, search_success_body) -> None:
+        fake_http.install("PUT", json_data=search_success_body)
+        result = runner.invoke(app, ["--force", "search", "sale", "12305", "--max-requests", "1000"])
+        assert result.exit_code == 0
+
+    def test_rate_limit_below_the_floor_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = self._run(monkeypatch, ["--json-errors", "--rate-limit", "0", "search", "sale", "12305"])
+        assert code == 2
+        assert json.loads(capsys.readouterr().err)["error"]["code"] == "usage"
+
+    def test_force_overrides_the_rate_limit_floor(self, fake_http, search_success_body, no_sleep) -> None:  # noqa: ARG002
+        fake_http.install("PUT", json_data=search_success_body)
+        result = runner.invoke(app, ["--force", "--rate-limit", "0", "search", "sale", "12305"])
+        assert result.exit_code == 0
+        assert ratelimit.get_min_interval() == 0.0
+
     def test_a_usage_error_exits_with_code_2(self, monkeypatch, capsys):
         code = self._run(monkeypatch, ["--json-errors", "search", "sale"])
 

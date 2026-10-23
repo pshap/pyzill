@@ -44,6 +44,7 @@ from pyzill.cli.options import (
     Zoom,
 )
 from pyzill.cli.output import OutputFormat
+from pyzill.cli.safety import MAX_REQUESTS_CAP
 from pyzill.geocode import GeocodeError, GeocodeUnavailableError, geocode
 from pyzill.workflows import (
     BoundingBoxError,
@@ -84,7 +85,12 @@ def search_options_from_args(args: Mapping[str, Any]) -> SearchRequest:
     them once and a new filter only has to be added to the command signatures.
     ``is_room``/``is_entire_place`` are rental-only switches that the sale
     and sold commands do not have.
+
+    The request-budget floor is enforced here rather than in the workflow:
+    the CLI owns how an agent may pace itself, while the library stays
+    permissive for callers that build their own client.
     """
+    _enforce_budget_floor(args)
     filters = search_filter_options(args)
     return SearchRequest(
         query=args["query"],
@@ -93,6 +99,25 @@ def search_options_from_args(args: Mapping[str, Any]) -> SearchRequest:
         is_entire_place=args.get("is_entire_place", False),
         transport=context().http_kwargs,
     )
+
+
+def _enforce_budget_floor(args: Mapping[str, Any]) -> None:
+    """Refuse a dangerous ``--max-requests`` unless ``--force`` was passed.
+
+    The floor lives in the CLI layer, not the library: a script that builds
+    its own client is free to pace itself however it likes. An agent running
+    the CLI gets the conservative default unless it says ``--force`` on the
+    same invocation. ``--rate-limit`` is floored by the root callback, so it
+    is checked there and is not re-checked here.
+    """
+    if context().force:
+        return
+    max_requests = args.get("max_requests")
+    if max_requests is not None and max_requests > MAX_REQUESTS_CAP:
+        error(
+            f"--max-requests must be at most {MAX_REQUESTS_CAP} (use --force to override)",
+            code=2,
+        )
 
 
 def _viewport_error(exc: BoundingBoxError) -> NoReturn:

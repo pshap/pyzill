@@ -27,6 +27,7 @@ from pyzill.cli.output import (
     render_table_text,
     require_list,
 )
+from pyzill.cli.safety import record_block
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 from pyzill.exceptions import (
     ZillowError,
@@ -47,6 +48,8 @@ class Context:
     timeout: float = DEFAULT_TIMEOUT
     max_retries: int = DEFAULT_MAX_RETRIES
     json_errors: bool = False
+    rate_limit: float | None = None
+    force: bool = False
 
     @cached_property
     def stderr_console(self) -> Console:
@@ -213,6 +216,11 @@ def network_errors(failure: str) -> Iterator[None]:
             "blocked": f"Zillow blocked the request: {e}",
         }
         exit_codes = {"blocked": 3, "not_found": 4, "schema_drift": 5, "server_error": 6, "network": 6}
+        if e.code == "blocked":
+            # Remember the block so an agent looping on exit code 3 does not
+            # keep hitting Zillow. The state file is opt-in via
+            # PYZILL_BLOCK_STATE; when unset this is a no-op.
+            record_block(e.code, retryable=e.retryable, status_code=getattr(e, "status_code", None))
         error(
             messages.get(e.code, f"{failure}: {e}"),
             code=exit_codes.get(e.code, 1),

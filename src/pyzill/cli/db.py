@@ -428,6 +428,10 @@ def db_prune(
         bool,
         typer.Option("--vacuum", help="Rebuild the database file to reclaim the freed space"),
     ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Report what would be deleted without changing the database"),
+    ] = False,
     db_path: DbPathOpt = None,
     output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
 ) -> None:
@@ -436,14 +440,15 @@ def db_prune(
     The listings and their price history are kept; what goes away is the
     per-search record (including the raw payloads) that grows with every run.
     Use --older-than DAYS, --keep-runs N, or both. --vacuum reclaims the file
-    space afterwards.
+    space afterwards. --dry-run reports what would be deleted without
+    changing the database, so a destructive prune can be reviewed first.
     """
-    if older_than is None and keep_runs is None and not vacuum:
-        error("Nothing to prune: pass --older-than, --keep-runs, or --vacuum", code=2)
+    if older_than is None and keep_runs is None and not vacuum and not dry_run:
+        error("Nothing to prune: pass --older-than, --keep-runs, --vacuum, or --dry-run", code=2)
     if (older_than is not None and older_than < 0) or (keep_runs is not None and keep_runs < 0):
         error("--older-than and --keep-runs must be non-negative", code=2)
     with _db_session(db_path, must_exist=True) as conn:
-        stats = prune_database(conn, older_than_days=older_than, keep_runs=keep_runs, vacuum=vacuum)
+        stats = prune_database(conn, older_than_days=older_than, keep_runs=keep_runs, vacuum=vacuum, dry_run=dry_run)
 
     if output_format is OutputFormat.json or (output_format is None and not sys.stdout.isatty()):
         emit(dumps(asdict(stats)), None)
@@ -452,7 +457,7 @@ def db_prune(
         error("db prune only supports --format json", code=2)
     stderr_line(
         "green",
-        "Pruned",
+        "Pruned" if not dry_run else "Would prune",
         f"{stats.runs_deleted} runs, {stats.sightings_deleted} sightings"
         + (", database vacuumed" if stats.vacuumed else ""),
     )

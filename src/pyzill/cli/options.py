@@ -25,7 +25,11 @@ MaxDepth = Annotated[
 ]
 MaxRequests = Annotated[
     int,
-    typer.Option("--max-requests", min=1, help="Maximum search requests when tiling (default: 50)"),
+    typer.Option(
+        "--max-requests",
+        min=1,
+        help="Maximum search requests when tiling (default: 50; capped by PYZILL_MAX_REQUESTS, unset = no cap)",
+    ),
 ]
 Raw = Annotated[bool, typer.Option("--raw", help="Return raw search response (not normalized)")]
 IsRoom = Annotated[bool, typer.Option("--room", help="Filter for rooms for rent")]
