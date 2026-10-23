@@ -1,0 +1,634 @@
+{
+  "building": {
+    "address": {
+      "city": null,
+      "neighborhood": null,
+      "state": null,
+      "streetAddress": null,
+      "zipcode": null
+    },
+    "amenitiesVRModels": null,
+    "amenityDetails": {
+      "customAmenities": {
+        "rawAmenities": null
+      },
+      "hours": null,
+      "petDetails": null,
+      "pets": null,
+      "unitFeatures": null
+    },
+    "amenityPhotos": null,
+    "amenitySummary": {
+      "buildingDetails": null,
+      "laundry": null
+    },
+    "assignedSchools": [
+      {
+        "assigned": null,
+        "distance": null,
+        "districtId": null,
+        "districtName": null,
+        "enrollment": null,
+        "grades": null,
+        "isAssigned": null,
+        "level": null,
+        "link": null,
+        "name": null,
+        "percentageOfFullTimeTeachersWhoAreCertified": null,
+        "rating": null,
+        "schoolId": null,
+        "size": null,
+        "studentCounselorRatio": null,
+        "studentTeacherRatio": null,
+        "studentsPerTeacher": null,
+        "themedRatings": [
+          {
+            "name": null,
+            "rating": null,
+            "type": null
+          }
+        ],
+        "totalCount": null,
+        "type": null
+      }
+    ],
+    "availabilityInsights": null,
+    "bdpUrl": null,
+    "bestGuessTimezone": null,
+    "bestMatchedProperty": null,
+    "bestMatchedUnit": null,
+    "bikeScore": {
+      "bikescore": null,
+      "description": null
+    },
+    "breadcrumbs": [
+      {
+        "gaLabel": null,
+        "path": null,
+        "text": null
+      }
+    ],
+    "buildingAttributes": {
+      "administrativeFee": null,
+      "airConditioning": null,
+      "appliances": null,
+      "applicationFee": null,
+      "carouselDisabled": null,
+      "communicationTypes": null,
+      "communityRooms": null,
+      "communityType": null,
+      "customAmenities": null,
+      "customPropertyAmenities": null,
+      "customUnitAmenities": null,
+      "depositFeeMax": null,
+      "depositFeeMin": null,
+      "detailedParkingPolicies": null,
+      "detailedPetPolicy": {
+        "comments": null,
+        "descriptions": null,
+        "general": null,
+        "groupedPetPolicies": null,
+        "petAmenities": null,
+        "petPolicies": [
+          {
+            "allowed": null,
+            "comment": null,
+            "deposit": null,
+            "description": null,
+            "feeRangeMax": null,
+            "feeRangeMin": null,
+            "maxNumberAllowed": null,
+            "maxWeightAllowed": null,
+            "monthlyFee": null,
+            "oneTimeFee": null,
+            "petCare": null,
+            "petSize": null,
+            "petType": null,
+            "restriction": null
+          }
+        ],
+        "restrictions": null
+      },
+      "floorCoverings": null,
+      "hasAssistedLiving": null,
+      "hasBarbecue": null,
+      "hasBicycleStorage": null,
+      "hasCeilingFan": null,
+      "hasDisabledAccess": null,
+      "hasDryCleaningDropOff": null,
+      "hasElevator": null,
+      "hasFireplace": null,
+      "hasGuestSuite": null,
+      "hasHotTub": null,
+      "hasOnlineMaintenancePortal": null,
+      "hasOnlineRentPayment": null,
+      "hasOnsiteManagement": null,
+      "hasPackageService": null,
+      "hasPatioBalcony": null,
+      "hasPetPark": null,
+      "hasSauna": null,
+      "hasSharedLaundry": null,
+      "hasSpanishSpeakingStaff": null,
+      "hasStorage": null,
+      "hasSwimmingPool": null,
+      "hasTwentyFourHourMaintenance": null,
+      "hasValetTrash": null,
+      "heatingSource": null,
+      "incomeRestrictions": null,
+      "isFurnished": null,
+      "isSmokeFree": null,
+      "leaseLengths": null,
+      "leaseTerms": null,
+      "outdoorCommonAreas": null,
+      "parkingDescription": null,
+      "parkingRentDescription": null,
+      "parkingTypes": null,
+      "petPolicies": null,
+      "petPolicyDescription": null,
+      "rentalCostAndFeesDisclaimer": null,
+      "rentalProductType": null,
+      "securityTypes": null,
+      "sportsCourts": null,
+      "unitCount": null,
+      "utilitiesIncluded": null,
+      "viewType": null
+    },
+    "buildingName": null,
+    "buildingPhoneNumber": null,
+    "buildingPropertyRules": null,
+    "buildingReviews": null,
+    "buildingType": null,
+    "city": null,
+    "commonUnitAmenities": null,
+    "communitySubType": null,
+    "comps": {
+      "compBuildings": [
+        {
+          "bdpLink": null,
+          "bedroomGroups": [
+            {
+              "beds": null,
+              "price": null
+            }
+          ],
+          "buildingAddress": null,
+          "buildingName": null,
+          "isLowIncome": null,
+          "isPaidListing": null,
+          "isSeniorHousing": null,
+          "isStudentHousing": null,
+          "latitude": null,
+          "listPriceIncludesRequiredMonthlyFees": null,
+          "longitude": null,
+          "lotId": null,
+          "marketingTreatments": null,
+          "maxBaseRent": null,
+          "maxPrice": null,
+          "minBaseRent": null,
+          "minBaths": null,
+          "minBeds": null,
+          "minLivingArea": null,
+          "minPrice": null,
+          "photo": {
+            "url": null
+          },
+          "photoCount": null,
+          "propertyRules": {
+            "agentNameIfRequired": null,
+            "agentPhoneIfRequired": null,
+            "brokerNameIfRequired": null,
+            "brokerPhoneIfRequired": null,
+            "mlsIdIfRequired": null,
+            "mlsNameIfRequired": null,
+            "providerLogoIfRequired": null
+          },
+          "providerListingId": null,
+          "showUpdateTime": null,
+          "state": null,
+          "totalRequiredMonthlyMaxFee": null,
+          "totalRequiredMonthlyMinFee": null
+        }
+      ],
+      "compForSaleMlsHomes": null,
+      "compForSaleNonMlsHomes": null,
+      "compRecentlySoldHomes": null,
+      "instantTourBuildings": [
+        {
+          "bdpLink": null,
+          "bedroomGroups": [
+            {
+              "beds": null,
+              "price": null
+            }
+          ],
+          "buildingAddress": null,
+          "buildingName": null,
+          "isLowIncome": null,
+          "isPaidListing": null,
+          "isSeniorHousing": null,
+          "isStudentHousing": null,
+          "latitude": null,
+          "listPriceIncludesRequiredMonthlyFees": null,
+          "longitude": null,
+          "lotId": null,
+          "marketingTreatments": null,
+          "maxBaseRent": null,
+          "maxPrice": null,
+          "minBaseRent": null,
+          "minBaths": null,
+          "minBeds": null,
+          "minLivingArea": null,
+          "minPrice": null,
+          "photo": {
+            "url": null
+          },
+          "photoCount": null,
+          "propertyRules": {
+            "agentNameIfRequired": null,
+            "agentPhoneIfRequired": null,
+            "brokerNameIfRequired": null,
+            "brokerPhoneIfRequired": null,
+            "mlsIdIfRequired": null,
+            "mlsNameIfRequired": null,
+            "providerLogoIfRequired": null
+          },
+          "providerListingId": null,
+          "showUpdateTime": null,
+          "state": null,
+          "totalRequiredMonthlyMaxFee": null,
+          "totalRequiredMonthlyMinFee": null
+        }
+      ],
+      "petFriendlyBuildings": [
+        {
+          "bdpLink": null,
+          "bedroomGroups": [
+            {
+              "beds": null,
+              "price": null
+            }
+          ],
+          "buildingAddress": null,
+          "buildingName": null,
+          "isLowIncome": null,
+          "isPaidListing": null,
+          "isSeniorHousing": null,
+          "isStudentHousing": null,
+          "latitude": null,
+          "listPriceIncludesRequiredMonthlyFees": null,
+          "longitude": null,
+          "lotId": null,
+          "marketingTreatments": null,
+          "maxBaseRent": null,
+          "maxPrice": null,
+          "minBaseRent": null,
+          "minBaths": null,
+          "minBeds": null,
+          "minLivingArea": null,
+          "minPrice": null,
+          "photo": {
+            "url": null
+          },
+          "photoCount": null,
+          "propertyRules": {
+            "agentNameIfRequired": null,
+            "agentPhoneIfRequired": null,
+            "brokerNameIfRequired": null,
+            "brokerPhoneIfRequired": null,
+            "mlsIdIfRequired": null,
+            "mlsNameIfRequired": null,
+            "providerLogoIfRequired": null
+          },
+          "providerListingId": null,
+          "showUpdateTime": null,
+          "state": null,
+          "totalRequiredMonthlyMaxFee": null,
+          "totalRequiredMonthlyMinFee": null
+        }
+      ]
+    },
+    "contactInfo": {
+      "agentFullName": null,
+      "contactType": null,
+      "isTrusted": null,
+      "providerListingID": null,
+      "rentalApplicationsAcceptedType": null
+    },
+    "country": null,
+    "county": null,
+    "currency": null,
+    "description": null,
+    "detailedPetPolicy": {
+      "comments": [
+        {
+          "description": null,
+          "label": null
+        }
+      ],
+      "descriptions": null,
+      "general": null,
+      "groupedPetPolicies": [
+        {
+          "allowed": null,
+          "deposit": null,
+          "depositFeeRangeMax": null,
+          "depositFeeRangeMin": null,
+          "label": null,
+          "labelDescription": null,
+          "maxNumberAllowed": null,
+          "maxWeightAllowed": null,
+          "monthlyFee": null,
+          "monthlyFeeRangeMax": null,
+          "monthlyFeeRangeMin": null,
+          "oneTimeFee": null,
+          "oneTimeFeeRangeMax": null,
+          "oneTimeFeeRangeMin": null,
+          "petCare": null,
+          "petSize": null,
+          "petType": null
+        }
+      ],
+      "petAmenities": null,
+      "petPolicies": [
+        {
+          "allowed": null,
+          "comment": null,
+          "deposit": null,
+          "description": null,
+          "feeRangeMax": null,
+          "feeRangeMin": null,
+          "maxNumberAllowed": null,
+          "maxWeightAllowed": null,
+          "monthlyFee": null,
+          "oneTimeFee": null,
+          "petCare": null,
+          "petSize": null,
+          "petType": null,
+          "restriction": null
+        }
+      ],
+      "restrictions": [
+        {
+          "description": null,
+          "label": null
+        }
+      ]
+    },
+    "engrain": null,
+    "floorPlanDisclaimer": null,
+    "floorPlans": null,
+    "fullAddress": null,
+    "galleryAmenityPhotos": null,
+    "galleryPhotos": [
+      {
+        "caption": null,
+        "mixedSources": {
+          "webp": [
+            {
+              "url": null,
+              "width": null
+            }
+          ]
+        },
+        "photoKey": null,
+        "roomType": null,
+        "url": null
+      }
+    ],
+    "homeInsights": null,
+    "homeTypes": null,
+    "housingConnector": {
+      "hcLink": null
+    },
+    "instantTourTypes": null,
+    "isInstantTourEnabled": null,
+    "isLandlordLiaisonProgram": null,
+    "isLowIncome": null,
+    "isSeniorHousing": null,
+    "isStudentHousing": null,
+    "isWaitlisted": null,
+    "latitude": null,
+    "listPriceIncludesRequiredMonthlyFees": null,
+    "listingFeatureType": null,
+    "longitude": null,
+    "lotId": null,
+    "mapTileGoogleMapUrlFullWidthMax": null,
+    "mapTileGoogleMapUrlLocationModule": null,
+    "marketInsightsUrl": null,
+    "marketTrendsSummary": {
+      "availableRentals": null,
+      "avgDaysOnMarket": null,
+      "medianRent": null,
+      "monthlyChange": null,
+      "yearlyChange": null
+    },
+    "marketingTreatments": null,
+    "metaData": {
+      "seoTags": {
+        "description": null,
+        "h1": null,
+        "title": null
+      },
+      "seoTests": null
+    },
+    "nearbyAmenities": null,
+    "nearbyBuildingLinks": [
+      {
+        "buildingUrl": {
+          "path": null,
+          "text": null
+        }
+      }
+    ],
+    "nearbyCities": [
+      {
+        "buildingSearchUrl": {
+          "path": null
+        },
+        "name": null
+      }
+    ],
+    "nearbyNeighborhoods": [
+      {
+        "buildingSearchUrl": {
+          "path": null
+        },
+        "name": null
+      }
+    ],
+    "nearbyZipcodes": [
+      {
+        "buildingSearchUrl": {
+          "path": null
+        },
+        "name": null
+      }
+    ],
+    "neighborhood": null,
+    "neighborhoodDescription": null,
+    "neighborhoodHighlights": [
+      {
+        "description": null,
+        "name": null
+      }
+    ],
+    "photoCount": null,
+    "photos": [
+      {
+        "caption": null,
+        "mixedSources": {
+          "webp": [
+            {
+              "url": null,
+              "width": null
+            }
+          ]
+        },
+        "photoKey": null
+      }
+    ],
+    "pointsOfInterest": {
+      "data": [
+        {
+          "category": null,
+          "docs": [
+            {
+              "category": null,
+              "city": null,
+              "commute": {
+                "car": {
+                  "durationMinutes": null
+                },
+                "walk": {
+                  "durationMinutes": null
+                }
+              },
+              "id": null,
+              "lat": null,
+              "lon": null,
+              "name": null,
+              "photoUrl": null,
+              "popularity": null,
+              "rating": null,
+              "state": null,
+              "title": null,
+              "url": null,
+              "zip": null
+            }
+          ],
+          "found": null
+        }
+      ]
+    },
+    "ppcLink": null,
+    "providerInfoList": null,
+    "regionIds": {
+      "city": null,
+      "county": null,
+      "neighborhood": null,
+      "state": null
+    },
+    "rentalCostsAndFees": {
+      "leaseDuration": null,
+      "selectors": {
+        "beds": null
+      }
+    },
+    "rentalFeedId": null,
+    "rentalInstantTour": null,
+    "rentalUnitsSummary": {
+      "availableUnitCount": null,
+      "listPriceIncludesRequiredMonthlyFees": null,
+      "unitCount": null
+    },
+    "reviewsInfo": null,
+    "screeningCriteria": null,
+    "showIncomeRestrictedCTA": null,
+    "signaturePhotos": [
+      {
+        "caption": null,
+        "id": null,
+        "isVSXEligible": null,
+        "mixedSources": {
+          "jpeg": [
+            {
+              "url": null,
+              "width": null
+            }
+          ],
+          "webp": [
+            {
+              "url": null,
+              "width": null
+            }
+          ]
+        },
+        "url": null,
+        "vsaiRoomType": null
+      }
+    ],
+    "specialOffers": [
+      {
+        "description": null,
+        "endDate": null
+      }
+    ],
+    "state": null,
+    "staticMap": null,
+    "staticMapSatellite": null,
+    "streetAddress": null,
+    "streetViewAddress": null,
+    "streetViewLatLong": null,
+    "streetViewMetadataUrlMediaWallAddress": null,
+    "streetViewMetadataUrlMediaWallLatLong": null,
+    "structuredAmenities": {
+      "buildingAmenities": {
+        "amenityGroups": [
+          {
+            "amenities": null,
+            "title": null
+          }
+        ],
+        "title": null
+      },
+      "policies": null,
+      "specialFeatures": null,
+      "unitFeatures": null
+    },
+    "thirdPartyVirtualTours": null,
+    "transitScore": null,
+    "ungroupedUnits": null,
+    "unitOverview": [
+      {
+        "bedCount": null,
+        "maxBaths": null,
+        "maxSqft": null,
+        "minBaths": null,
+        "minSqft": null,
+        "numberOfUnits": null
+      }
+    ],
+    "unitsVRModels": null,
+    "vaLoanStatus": null,
+    "videos": null,
+    "walkScore": {
+      "description": null,
+      "walkscore": null,
+      "ws_link": null
+    },
+    "zipcode": null,
+    "zovInsight": {
+      "description": [
+        {
+          "bold": null,
+          "text": null
+        }
+      ],
+      "tagline": null,
+      "tags": null
+    },
+    "zpid": null
+  },
+  "hasClientSideData": null,
+  "viewer": null
+}

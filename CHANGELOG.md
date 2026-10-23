@@ -5,758 +5,207 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Fixed
-- The write path takes the write lock before it reads the prior state.
-  `upsert_listings` read what had changed and then wrote it as two halves of
-  one transaction, but the lock was only taken by the first write, so a
-  second process could write the same zpids between the read and the write
-  and both writers classified the batch against stale state. The whole
-  read-and-write is now one atomic transaction. Opening an existing
-  database that is already current no longer takes the write lock just to
-  discover it has nothing to do, and a connection that fails during its
-  PRAGMAs is closed instead of left open.
-- No thread sleeps while holding a rate limiter's lock. `RateLimiter.wait`
-  held the lock through its sleep, so every other thread waited for the
-  first thread's interval instead of reserving the next slot.
-  `SharedBudgetLimiter` also reached into the shared limiter's private lock
-  and timestamp; each limiter now owns its timeline and reservation is the
-  only operation that has to be atomic.
-- A failed tile no longer throws away the listings the completed tiles
-  returned. `tiled_search` now raises `TiledSearchError` with the completed
-  results on `.partial`, and mirrors the failing request's `code`,
-  `retryable`, and `status_code`, so a blocked run is still reported as
-  blocked.
-- Every `ZillowError` subclass now survives `pickle` and `copy.copy` with the
-  same type, message, and attributes. The exceptions with a custom
-  constructor (`ZillowBlockedError`, `ZillowNotFoundError`,
-  `ZillowServerError`) used to fail to round-trip because their arguments
-  never reached `Exception.args`.
-- A home detail target is now only a positive integer zpid or an HTTPS
-  zillow.com URL. Numeric-looking strings such as `"12_3"` or `" 123 "`, a
-  boolean, `0`, a negative number, and an `http://` URL are rejected with a
-  clear `ValueError`; the zpid in a URL must be a path segment.
-- Numeric coercion is strict about grouping: `"$1,2,3"` and `"1e5"` are no
-  longer read as numbers, and NaN, infinity, and values outside SQLite's
-  signed 64-bit range become `None` instead of raising or overflowing.
-- `--where-json` applies the same numeric validation and coercion as
-  `--where`: a non-numeric or boolean value for a numeric field raises
-  `QueryValidationError`, and quoted numbers compare as numbers. A negative
-  `limit` is rejected by the library (`query_rows`/`query_database`), not
-  only by the CLI; `limit=0` returns no rows.
-- The write path reads a zpid through the shared coercion rule, so a float
-  with a fraction, a boolean, and an out-of-range value are skipped and
-  counted instead of truncated or crashing the batch.
-- An invalid proxy passed to geocoding raises its own `ValueError` rather
+
+- Value coercion is strict: thousands separators must be grouped correctly,
+  scientific notation is rejected, and non-finite or out-of-SQLite-range
+  numbers become `None` instead of raising. Normalized string fields are
+  always `str` or `None`, even when Zillow sends a number.
+- A home-detail target is only a positive integer zpid or an HTTPS zillow.com
+  URL. Numeric-looking strings, booleans, zero, negatives, and `http://` URLs
+  are rejected with a clear `ValueError`.
+- `--where-json` applies the same validation and coercion as `--where`, and a
+  negative `limit` is rejected by the library, not only by the CLI.
+- Exceptions survive `pickle` and `copy.copy` with the same type, message, and
+  attributes. An invalid proxy during geocoding raises `ValueError` rather
   than a retryable `GeocodeUnavailableError`.
-- `db sync` records the run's start time before the fetch, so time spent
-  requesting listings is part of the run's duration; the sightings keep the
-  completion time as `seen_utc`.
-- A table of something that is not a listing now shows what the rows carry.
-  The table renderer applied the listing columns to every row set, so
-  `pyzill db changes --format table` showed a single `price` column and
-  dropped the event, the zpid, and the timestamps, and `pyzill db history
-  --format table` showed a single `price` column for the same reason. A
-  change report or a price history is not a listing, so its own columns
-  are shown now. The listing tables (`search`, `normalize`, `db query`)
-  are unchanged.
-- An empty result says what was empty. `pyzill db changes` reported "No
-  listings found" when it had found no changes, and `pyzill db runs`
-  reported the same for a database with no runs.
-- The write path now rolls a failed batch back. `upsert_listings` committed
-  the transaction it owned but never undid it, so a failure part-way through
-  a batch left the rows written before the failure pending: a caller that
-  caught the error and reused the connection committed a half-applied batch,
-  with listings that had no sighting and no price history and a run record
-  that was never finished. The write path now rolls the whole transaction
-  back on failure and leaves the connection with no transaction open.
-- `load_listings` and the query engine now answer the same question the
-  same way. `load_listings` ran its own SQL: a case-sensitive equality
-  filter, and a row order that did not match the engine's, so the library
-  and `pyzill db query` could disagree about the rows a filter selects. The
-  library helper now goes through the shared engine, and the engine's
-  default order breaks ties on `kind` so both sources agree.
-- A database with a `listings` table but no schema version could not be
-  opened at all. Such a database was treated as a fresh file, so the old
-  table was left in place and building an index over a column it did not
-  have failed with `no such column: kind`, leaving the data unreachable. A
-  database of unknown provenance is now rebuilt from the current DDL: the
-  columns the old table has are carried across, a column it does not have
-  takes the DDL's default, and a price history row for a listing that is
-  not there is dropped.
-- `--json-errors` / `--no-json-errors` was ignored for an error the CLI
-  raised itself rather than a parser error. The entry point rebuilt the
-  error format from the exception, and only a `UsageError` carries a
-  context to read the flag from. The context the root callback installed
-  is now kept, and the exception is only consulted when the callback
-  never ran.
-- A column added to an existing database on open was given the wrong type.
-  The backfill kept its own list of column types, and every numeric column
-  outside that list was added as text — so a backfilled database stored
-  `beds` and `zestimate` as strings and handed back strings where the
-  `Listing` shape promises numbers. The DDL is now the one authority for
-  a column's type, and the backfill adds a missing column with the
-  definition the DDL declares.
-- A backfilled `kind` column is now `NOT NULL DEFAULT 'sale'`, as the DDL
-  declares it, instead of a nullable column with no default.
-- The write path's row order is now derived from a named order that a test
-  checks against the table's column order, so the two cannot drift into
-  putting every value in the wrong column.
-- The price history and the listing price could disagree. A batch that
-  carried two sightings of the same zpid compared the second one against
-  the pre-batch price instead of the price the first one staged, so the
-  newest history row could name a price the listing did not hold. The
-  change report derives its price moves from that history, so it could
-  announce a price increase the listing contradicted.
-- A price change was not counted when the listing held a price but the
-  price history had no row for it — the case an out-of-order batch leaves
-  behind. The counter now compares against the recorded state, falling
-  back to the price the listing's own row carries, so the counter and
-  the history always agree.
-- Normalized string fields are now always `str` or `None`, as the `Listing`
-  and `PropertyDetail` shapes promise. Zillow sometimes sends a number where
-  a string belongs — a numeric `addressZipcode` became the integer `12305`,
-  which then never matched the zipcode a search was made for, and a search
-  for a zipcode could come back empty. Numeric values are now rendered as
-  strings, and a value that is not a scalar is dropped rather than rendered.
-- One rule now decides what counts as a listing. `fetch_listings` kept
-  cards that have no usable zpid, while the rule that chooses between
-  `mapResults` and `listResults` rejected them, so the list that was chosen
-  was not the list that was kept. A search now returns only listings with an
-  integer zpid. An import is unchanged: it still passes a row with a zpid it
-  cannot coerce to the write path, which counts it as skipped.
-- `extract_listings` no longer loses `wrap_single` when the payload is a
-  response envelope. `pyzill normalize` and `db import` treated a saved
-  response's contents as an empty list.
-- Two sync runs of the same search are comparable again when they differ
-  only in the request budget. The tiling knobs (`--tile`, `--max-depth`,
-  `--max-requests`) are no longer part of the comparability key, so the
-  `suspect_empty` warning fires across a difference in budget rather than
-  silently not firing. Runs recorded before this change carry the old filter
-  shape and are not comparable with newer ones.
-- `import_rows` reports the id of the run it wrote instead of `0`.
-- `normalize_listing` no longer returns `Any` to type checkers. Its
-  overloads made every call ambiguous, so the returned dict was never
-  checked against the `Listing` shape; the honest signature is
-  `normalize_listing(listing: Any) -> Listing | None`, and callers that
-  pass an object now have to narrow the result.
-- A tiled search was always recorded as truncated. Zillow's per-search
-  result cap was applied to the union of every tile, but a union larger than
-  the cap is the whole point of tiling. Every tiled run was stored with
-  `truncated = 1`, and change detection only compares runs that were not
-  truncated — so `db sync --tile` never reported a delisting or a
-  relisting, and the `suspect_empty` heuristic never fired for it. A tiled
-  run is now truncated only when a tile hit the cap and could not be
-  subdivided any further, or when the run ran out of its request budget.
-- A tile was not subdivided when only its sidebar list reached the cap.
-  Zillow caps each result list separately, so a tile whose map rows are
-  empty but whose sidebar list is full is truncated just as much.
-- Zillow's `-1` day-count sentinel reached the normalized shape. Every map
-  row in a live capture carries `daysOnZillow: -1`, and the nested copy of
-  the field won over the top-level one, so every listing was stored with
-  `days_on_zillow = -1` and `--where days_on_zillow > 0` matched nothing.
-  A negative count is now reported as unknown (`None`), and the first known
-  count wins. Zero is still a real count.
-- A lot size was reported 43,560 times too large. A detail payload states
-  its lot size in square feet (`"1,742 sqft"`), but the number was read as
-  acres and multiplied by the acre conversion, so a 1,742 sqft lot became
-  75,881,520 sqft. A value that names its unit is now trusted, and is
-  converted only when it names acres; an unlabeled number is reported as it
-  arrived, with no unit.
-- The building-card test and the normalizer disagreed about a listing's
-  zpid. The test accepted a zpid from `hdpData.homeInfo` while the
-  normalizer read only the top-level `zpid`, so a listing that carried only
-  the nested zpid was kept by one rule and dropped by the other. Both now
-  read the zpid through one function, so they cannot disagree.
-- `db sync` reported a blocked request as an unexpected error. The command
-  did not translate the library's failures, so a 403 exited 1 with a
-  traceback instead of 3 with `{"error":{"code":"blocked"}}`; a schema drift
-  exited 1 instead of 5, and a transient failure exited 1 instead of 6. A
-  script could not tell "Zillow blocked us" from "the tool has a bug". The
-  command now reports the failures the way the search command does.
-- The sync and import summary did not say whether the run was complete. The
-  JSON summary carried the counts but not the run's id or whether it was
-  truncated, and the truncation warning was prose on stderr, so a script
-  could not tell a complete run from a partial one. The summary now carries
-  `run_id` and `truncated`.
-- A rejected `--format` was only rejected when the command found something.
-  `db import` on an empty file exited 0 with `--format csv`, while the same
-  flag on a file with rows exited 2. The check now runs before the work.
-- A comparison whose value did not match the column's type matched nothing.
-  `price=='250000'` compared the text `'250000'` with a REAL column rendered
-  as `'250000.0'`, and `zipcode==12305` compared the number 12305 with a
-  TEXT column, so both returned no rows. A value now keeps its type through
-  the comparison: a quoted number against a numeric field is compared as a
-  number, and a number against a text field is compared as the text it
-  renders to. A value that is not a number at all, compared with a numeric
-  field, is now a usage error instead of a comparison that silently matched
-  nothing.
-- `--cols` did not reduce what a query read. The projection happened in
-  Python after the query had fetched every column of every row, so a narrow
-  query still read the whole table. The projection is now part of the query.
-- The change report read the whole database. It loaded every column of
-  every listing and the whole price history, so the cost of "what changed
-  since Friday" grew with the size of the database: 50,000 listings took
-  6.8 seconds and 143 MB. The report now reads the two listing columns the
-  events need, finds the previous price with a window function in the
-  database, and accumulates the listings an earlier run saw in one pass.
-  The same report over 50,000 listings now takes 0.8 seconds and 17 MB.
-- A stored timestamp without a timezone took the whole change report down
-  with a `TypeError`. It is now read as UTC.
-- A file that is not valid JSON exited 1, the same as a file that is not
-  there exited 2. The input is the caller's, so a malformed file is now a
-  usage error, and `db import` reports a payload that is not a listing
-  array the way `pyzill normalize` does.
+- The write path is atomic: it takes the write lock before reading prior
+  state, rolls a failed batch back, and records the run's start before the
+  fetch. Opening a current database no longer takes the lock just to discover
+  there is nothing to do, and a connection that fails during its PRAGMAs is
+  closed. `import_rows` reports the id of the run it wrote.
+- `load_listings` goes through the shared query engine, so the library and
+  `pyzill db query` select and order rows the same way.
+- The write path reads a zpid through the shared coercion rule: a float with a
+  fraction, a boolean, and an out-of-range value are skipped and counted
+  instead of truncated or crashing the batch. Sparse sightings preserve known
+  fields and the price.
+- The price history and the listing price agree, including when one batch
+  carries two sightings of the same zpid and when an out-of-order batch leaves
+  no history row. A negative `daysOnZillow` is reported as unknown.
+- One rule decides what counts as a listing, so `fetch_listings`,
+  `extract_listings`, and `import_rows` keep the same listings.
+- A tiled search records `truncated` only when a tile is genuinely unfinished
+  or the request budget ran out. A failed tile raises `TiledSearchError` with
+  the completed results on `.partial` and the failing request's `code`,
+  `retryable`, and `status_code`. Tiling knobs no longer break run
+  comparability.
+- Database migrations handle a database with a `listings` table but no schema
+  version by rebuilding it, carry v1 wide columns across, and take a
+  backfilled column's type from the DDL. A backfilled `kind` is
+  `NOT NULL DEFAULT 'sale'`, and the fresh schema enforces `kind` and
+  `truncated` with CHECK constraints. A `KeyboardInterrupt` during migration
+  no longer leaks the connection and its write lock.
+- `db sync` reports blocked, not-found, drift, and transient failures with
+  exit codes 3/4/5/6 instead of a traceback and code 1. Sync and import
+  summaries carry `run_id` and `truncated`, and `--format` is validated
+  before any work. Empty `changes` and `runs` output says what is empty.
+- The table renderer uses each row set's own columns, so `db changes`,
+  `db history`, and `db runs` no longer display a single `price` column.
+- `--json-errors` / `--no-json-errors` is honored for errors the CLI raises
+  itself, not only for parser errors.
 
 ### Added
 
-- `pyzill db prune` and `pyzill.prune_database` delete old sync runs and
-  their raw sightings while keeping listings and price history.
-  `--older-than DAYS` selects runs by age, `--keep-runs N` keeps only the
-  newest N, and `--vacuum` reclaims the file space afterwards. A pruning
-  database no longer grows without bound as raw payloads accumulate.
-- The default client, fallback HTTP session, and shared rate limiter can be
-  reset. `pyzill.client.reset_default_client`,
-  `pyzill.http.reset_default_session`, and
-  `pyzill.ratelimit.reset_default_limiter` release accumulated sessions,
-  cookies, and request timelines without restarting the process; the
-  limiter reset can also set a new interval.
-- A fresh database enforces its value domain in SQL: `kind` must be one of
-  `sale`, `rent`, or `sold`, and `sync_runs.truncated` must be `0` or `1`.
-  A value the parsers never produce is now rejected by the database instead
-  of being stored and surprising every reader.
-- `pyzill db runs` lists the recorded sync runs, newest first, with the run
-  id, the query, the viewport, the filters, the result count, and whether
-  the run was truncated. A run id handed out by `db sync --format json` or
-  `db import --format json` could not be resolved afterwards; the runs
-  table was written but never read back. `--kind` and `--limit` narrow the
-  list. The reader is public as `pyzill.list_runs`, returning `pyzill.SyncRun`
-  records.
-- `pyzill geocode` resolves a place name to the viewport a search would
-  use, and prints it as JSON. A search geocodes its own query, so there was
-  no way to get the viewport for a place alone — for another tool, or for a
-  script of your own. A place that does not resolve exits with code 1; a
-  Nominatim service that cannot be reached exits with code 6 and reports the
-  error as retryable.
-- Two more published schemas. `pyzill schema db-listing` describes a row of
-  the database's `listings` table — the listing fields plus the `kind` and
-  the two timestamps the database adds, and the computed `ppsf` that
-  `--cols ppsf` projects — so the output of `pyzill db query` can be
-  validated. `pyzill schema detail` describes the normalized property
-  detail. `pyzill schema listing` is unchanged.
-- A committed contract with Zillow's payload shape. The captured fixtures
-  hold real listing data and stay local, but the *shape* of a capture -- the
-  set of key paths in it, with no values -- is committed under
-  `tests/shapes/`. A test names the fields the parsers depend on and fails
-  when the recorded shape no longer carries them, so a field Zillow renames
-  is a failure to look at rather than a column that quietly fills with
-  nulls. A second test compares a fresh capture against the recorded shape
-  and reports exactly what changed. `scripts/capture_fixture.py` writes the
-  shape next to every capture.
-- A quality gate script (`scripts/check.sh`) and a CI workflow that runs
-  it on every push and pull request: the formatter, the linter, the type
-  checker, the dead-code check, and the offline test suite, failing on the
-  first gate that fails.
+- `pyzill db prune` / `prune_database` deletes old sync runs and their raw
+  sightings while keeping listings and price history, with `--older-than`,
+  `--keep-runs`, and `--vacuum`.
+- `pyzill db runs` / `list_runs` reads back the sync runs a sync or import
+  recorded.
+- Reset helpers for the process-wide defaults:
+  `reset_default_client`, `reset_default_session`, and
+  `reset_default_limiter`.
+- `pyzill geocode` resolves a place name to the viewport a search would use.
+- `pyzill schema db-listing` and `pyzill schema detail` publish the database
+  row shape and the property-detail shape.
+- A payload-shape contract under `tests/shapes/`, with a test that names the
+  fields the parsers read and reports when Zillow's payload drifts.
+  `scripts/build_synthetic_fixtures.py` rebuilds data-free payloads for CI,
+  and a test keeps them in step with the baselines.
 
 ### Changed
 
-- The compatibility shims that duplicated a real module are deprecated, not
-  silently kept alive. `pyzill.utils.remove_space` (use
-  `pyzill.utils.normalize_whitespace`), the proxy re-exports from
-  `pyzill.utils` (use `pyzill.proxy`), the `pyzill.search` and
-  `pyzill.details` modules (use `pyzill.api` or the package root), and
-  `pyzill.http.ZILLOW_HOME` (use `pyzill.config.ZILLOW_HOME`) now raise a
-  `DeprecationWarning` when used; the private aliases that had no historical
-  caller are gone. Internal code imports the real module, so a deprecation
-  warning only means a caller is using an old name.
-- A filtered `db query` seeks instead of scanning. The query engine wrapped
-  every column in `CAST` (and `lower`) inside `WHERE`, which hides the
-  column from SQLite's indexes; a kind+price filter now uses
-  `ix_listings_kind_price`. Text equality is still case-insensitive, and
-  `kind` is compared against its lower-case stored form so the composite
-  indexes stay usable.
-- `load_listings` filters text without regard to case, and rejects a value
-  that is not a number for a numeric column instead of matching nothing.
-  It now shares the query engine's rules, so a filter means the same thing
-  in the library and in `pyzill db query`. A filter on an unknown column
-  still raises `ValueError`.
-- A failed geocoding lookup now raises `pyzill.GeocodeError` (a subclass of
-  `ValueError`, so the callers that already handle it keep working) or
-  `pyzill.GeocodeUnavailableError` when the request itself failed. The
-  second one is retryable: a place that does not resolve will not resolve on
-  a second try, but an unreachable service might.
-- The two largest modules are split by job. `pyzill.workflows` is now a
-  package: `model` (the shapes), `viewport` (resolving a viewport),
-  `extract` (pulling the real listings out of a response), `search`
-  (running one search), and `sync` (the sync and import pipelines). Every
-  name the module exported is still importable from `pyzill.workflows`.
-- The property-detail shape moved out of `pyzill.normalize` into
-  `pyzill.property_detail`, and the scalar coercion rules both shapes read
-  moved into `pyzill.values`. `pyzill.normalize.Listing` is still the one
-  listing field list the database columns and the numeric fields are
-  derived from, and `pyzill.parse_price` and
-  `pyzill.normalize.parse_price` still work.
-- A search normalizes each row once. Choosing between `mapResults` and
-  `listResults` and filtering the winner shared the same normalization
-  pass, so a 500-row response was normalized 1,000 times.
-- The search request's keyword arguments are derived from the search
-  filters through one table, so a new filter reaches Zillow by being added
-  to that table alone. A test keeps the filter and query vocabularies in
-  step.
-- A search picks the sidebar's list over the map's when the two hold the
-  same number of listings. The two lists hold the same properties, but the
-  map rows carry an abbreviated property (a `daysOnZillow` stamped `-1`)
-  while the sidebar rows carry the real values, so the sidebar is now the
-  one that is kept.
-- `pyzill.values.to_quantity` splits a Zillow measurement into its number
-  and the unit it was stated in ("1,742 sqft", "0.25 acres"), so a unit
-  that arrived with the number is no longer dropped.
-
-### Tooling
-
-- Functions that had grown past a readable branch count are split by job, and
-  `ruff` now enforces it: the `C90` rule is on with `max-complexity = 10`.
-  The query compiler, the change report, and the tiling loop each became a
-  few named steps instead of one long function.
-- The client's search methods are typed with `Unpack[SearchParams]` (and
-  `RentParams` / `TiledSearchParams` for their extra flags), so an editor
-  knows the keywords a search accepts. The HTTP session is described by a
-  small `SessionLike` protocol instead of `Any`.
-- The lint suppressions that hid a rule rather than answered it are gone.
-  The CLI's long signatures are the flag surface itself, so the
-  argument-count rule is now ignored for the CLI package in `pyproject.toml`
-  instead of being silenced at ten call sites, and every remaining
-  suppression says why it is there. The random jitter the rate limiter and
-  the retry backoff draw now comes from one helper, so the "this is not
-  cryptographic randomness" decision is made once.
+- The public surface is typed for editors: `ZillowClient` search methods take
+  `Unpack[SearchParams]` (plus `RentParams` / `TiledSearchParams`), and the
+  HTTP session is described by a `SessionLike` protocol instead of `Any`.
+- `ruff` enforces a branch limit (`C90`, `max-complexity = 10`). The query
+  compiler, the change report, and the tiling loop were split into named
+  steps.
+- Lint suppressions that hid a rule rather than answered it are gone, and
+  every remaining suppression says why it is there.
 - Packaging states its contract: `curl_cffi` has an upper bound
   (`>=0.16.3,<0.17`), the license is the SPDX expression `MIT` with the
-  license file declared, and the `dev` extra builds on the `test` extra so
-  the pytest requirement is written once.
-- The CLI reads its search filters from `SearchFilters` instead of listing
-  the same fourteen names a second time, and the query engine takes one
-  description of a query instead of ten parameters. A filter added to the
-  model reaches the commands with it.
+  license file declared, and `dev` builds on `test`.
+- The `pyzill.search`, `pyzill.details`, and `pyzill.utils.remove_space`
+  import paths still work but are deprecated and emit `DeprecationWarning`;
+  the library itself imports the real modules.
+- The CLI reads its filters from `SearchFilters`, and the query engine takes
+  one query description instead of ten parameters.
+- Documentation moved into focused guides under `docs/`. The README keeps the
+  overview, status, scope, legal note, and quick starts.
+- The test suite is split by topic (`tests/test_cli_*.py`,
+  `tests/test_db_*.py`), coverage is enforced at 90 %, and CI runs the gate
+  on Ubuntu, macOS, and Windows across Python 3.12 and 3.13.
 
 ## [1.4.0] - 2026-10
 
 ### Added
-- `pyzill.responses` holds the two host-agnostic response helpers
-  (`json_body` and `raise_for_status`), typed against a small
-  `ResponseLike` protocol so they work with any response object and need no
-  `type: ignore`. `pyzill.http` re-exports both, so `http.json_body` keeps
-  working, and the geocoder now uses them instead of borrowing the Zillow
-  transport.
-- A test that enforces the package's layer map (`tests/test_layering.py`):
-  modules may only import modules in their own layer or a lower one, the
-  package facade may not be a dependency of the package's own modules, and
-  no module may import a pyzill module inside a function body. The map is
-  documented in `AGENTS.md`.
-- A workflow layer (`pyzill.workflows`) for library users: `fetch_listings`
-  searches and normalizes in one call, `sync_to_db` upserts a search into
-  the local database, `import_rows` stores listings you already have, and
-  `extract_listings` pulls the listings out of a saved Zillow response. The
-  layer never prints and never exits the process; it returns the data plus
-  structured notices, and the caller decides what to report. The CLI now
-  uses these workflows instead of owning the pipeline itself.
-- Database tracking schema v3: `sync_runs` tracks search queries and truncation,
-  `sightings` preserves the unnormalized payload (`raw_json`) for offline re-normalization,
-  `listings` uses a composite `(zpid, kind)` primary key to keep sales and rentals distinct,
-  `price_history` records change-only rows, and `status_history` tracks status transitions.
-  A migration from schema v2 preserves existing listings and price history.
-- Added `pyzill db changes <since>` to report new listings, price drops/increases,
-  status transitions, and comparable-run delistings/relistings with days observed on market.
-- Default database path is now resolved in the XDG data directory (`$XDG_DATA_HOME/pyzill/pyzill.db`,
-  falling back to `~/.local/share/pyzill/pyzill.db`). If a legacy `./pyzill.db` exists in the
-  working directory and no explicit path is given, pyzill warns once on stderr pointing to the new default.
-- `load_listings` supports optional equality `filters` and row `limit`. Added composite database
-  indexes on `(kind, zipcode)`, `(kind, city)`, `(kind, price)`, and `last_seen_utc`.
-- Added `ZillowClient` for persistent-session search/detail workflows, with
 
-  per-client rate limiting and one fresh-session retry on a 403 when a proxy
-  list is configured. Existing module-level functions use a lazy default
-  client. Detail parsing no longer depends on BeautifulSoup and selects the
-  requested zpid from the page cache when available.
-- Saved JSON and database queries now compile typed conditions into one SQLite
-  engine; `--where-json` accepts structured filter arrays. Added a property
-  test that compares randomized file and database query results.
-- CLI failures now expose stable error codes and retryability, distinct exit
-  codes for blocked/not-found/schema/server/network failures, and structured
-  JSON diagnostics on stderr when stdout is not a TTY (overridable with
-  `--json-errors` / `--no-json-errors`). Added `pyzill schema listing` and
-  JSON-capable DB history, stats, sync, and import summaries.
-- `tiled_search` now takes `max_requests` (default 50) bounding the total
-  number of search requests in a recursive tiling run; when the budget runs
-  out mid-tree partial results are returned with a `budget_exhausted` flag
-  and a `UserWarning` is emitted (an `on_budget` callback can override the
-  warning). An optional `on_progress`
-  callback reports `(requests_used, unique_map_results_so_far)` after each
-  tile. The CLI exposes this as `--max-requests` on `search`/`db sync`
-  (default 50), lowers the `--max-depth` ceiling from 8 to 6, and prints
-  tile progress to stderr (suppressed by `--quiet`).
-- `scripts/capture_fixture.py` captures sanitized live Zillow responses
-  (sale/rent/sold search, home/apartment detail) into `tests/fixtures/` so
-  the offline suite can detect payload drift synthetic bodies cannot. It
-  requires `--confirm`, trims results to `--max-results` (default 5), and
-  redacts agent/broker/phone/email/MLS/attribution fields while keeping
-  public listing data. `tests/test_fixtures.py` validates captured fixtures
-  when present (skipping until then) and unit-tests the capture script's
-  sanitizing, trimming, and gating offline. Hypothesis is now a dev
-  dependency backing a property test that `upsert_listings` final state is
-  independent of batch application order.
-- The opt-in live smoke suite (`PYZILL_LIVE=1 pytest -m live`) now covers
-  sale/rent/sold search on a fixed Schenectady viewport, resolving a zpid
-  from the sale search for the home-detail check, and one live Nominatim
-  geocode call. Search assertions check the response shape *and* that
-  normalization yields only real listings (integer zpids), so payload drift
-  and building-card regressions surface between releases. `pytest-cov` is a
-  dev dependency for coverage runs.
+- `pyzill.responses` with host-agnostic `json_body` and `raise_for_status`
+  helpers, typed against `ResponseLike`; `pyzill.http` re-exports both.
+- A layering test (`tests/test_layering.py`) that enforces the package's
+  import map: imports only point downward, the facade is not an internal
+  dependency, and no module imports pyzill inside a function.
+- A workflow layer (`pyzill.workflows`): `fetch_listings`, `sync_to_db`,
+  `import_rows`, and `extract_listings`. It returns data and structured
+  notices and never prints or exits.
+- Database schema v3: `sync_runs` records the query, viewport, filters,
+  truncation, and timing; sightings and price history support change reports.
+- `pyzill db changes <since>` reports new listings, price moves, status
+  transitions, and delistings.
+- `pyzill db` commands for sync, import, query, changes, history, runs, stats,
+  and prune; the default database lives in the XDG data directory.
+- `load_listings` filters and limits, composite indexes, and one SQLite query
+  compiler for saved JSON and database rows.
+- `ZillowClient` with a persistent session, shared process-wide throttling,
+  and optional proxy rotation after a block.
+- Stable CLI error codes and retryability (`blocked`, `not_found`,
+  `parse_error`, `transient`, ...), rendered as JSON on stderr when stdout is
+  not a TTY.
+- `tiled_search(..., max_requests=50)` and `TiledSearchError` with partial
+  results.
+- `scripts/capture_fixture.py` and an opt-in live smoke suite
+  (`PYZILL_LIVE=1 pytest -m live`).
 
 ### Changed
-- The geocode cache directory now holds only the cache file. The cross-process
-  lock moved from a sibling `geocode.json.lock` file to the cache directory
-  itself (the cache file is replaced atomically, so a lock held on the file
-  would not survive the swap, but the directory's inode is stable), and a
-  lock file left by an older version is removed on the next write.
-- The geocode cache is now bounded and cheap to read. Expired entries are
-  pruned and the file is capped at 1000 places the next time it is written
-  (it previously grew without limit), and the parsed cache is reused between
-  lookups while the file on disk is unchanged, which makes a cache hit about
-  130 times cheaper. A cache file written by another process is still picked
-  up immediately; the worst case of a stale fingerprint is one missed cache
-  hit, never a wrong answer.
-- The geocoder was split up: `geocode()` now orchestrates four small
-  helpers (the cache lookup, the Nominatim request, the hit-to-viewport
-  conversion, and the error builder) instead of doing five jobs in one
-  131-line function. The "pass the viewport flags instead" hint now lives in
-  one constant instead of being copied into seven error messages, and the
-  messages themselves are unchanged byte for byte (a new test pins their
-  full text). The request failure handler now catches only network, HTTP,
-  and parse errors, so a bug in that block is no longer reported as a
-  failed lookup.
-- The CLI's output renderers are pure again: `pyzill.cli.output` renders
-  data into text (or a table) and raises `OutputError` when the data does
-  not fit the format, and `pyzill.cli.console` decides to emit, warn, or
-  fail. The renderer no longer receives callbacks that could exit the
-  process, and the output, exit codes, and messages are unchanged.
-- The browser identity (headers, client hints, and the impersonation
-  profile mapping) moved out of `pyzill.http` into `pyzill.http_headers`;
-  `pyzill.http.build_headers` still works.
-- The listing field lists now have a single source: the normalized `Listing`
-  shape. The database column tuple, the columns the write path fills, and
-  the numeric fields of the query engine are derived from it, and a new test
-  (`tests/test_fields.py`) fails if any of them drifts from the `CREATE
-  TABLE` statement. The schema itself is unchanged.
-- The offline query engine moved out of the CLI into `pyzill.query` (pure
-  code that raises `QueryValidationError`); `pyzill.cli.query` keeps the
-  commands and the error-to-exit-code mapping, and still re-exports the
-  engine's names.
-- The database path and timestamp helpers moved into the database package
-  (`pyzill.db.paths` for the default/environment path resolution,
-  `pyzill.db.timestamps` for `utc_now` and `normalize_utc_timestamp`), and
-  the change-event derivation moved into `pyzill.db.changes`. The public
-  `pyzill.db` names are unchanged; an invalid timestamp is still a usage
-  error (exit 2) with the same message.
-- The sync-run lifecycle now has one owner: `pyzill.db.runs` creates and
-  finishes runs, the workflow layer requests a run with its query,
-  viewport, and filters, and the write path only finishes the run it was
-  given (an import still records an anonymous ingest run).
-- The CLI is now wiring only: the search, sync, and import pipelines moved
-  into the new workflow layer (`pyzill.workflows`), the viewport/bbox and
-  filter-range checks moved with them, and the CLI keeps the flag parsing,
-  the exit-code mapping, and the rendering. The commands, flags, exit codes,
-  output shapes, and messages are unchanged.
-- Transport options are now built in one place (`pyzill.http.build_request_options`).
-  `pyzill.http.get_page`/`put_json` hand their options straight to the retry
-  loop instead of splitting them into arguments that were immediately
-  reassembled, and the search/detail entry points no longer rebuild the
-  options themselves. Search keywords are split into query fields (what to
-  search for) and transport fields (how to send it). Behavior, defaults, and
-  results are unchanged.
-- The import cycles between the transport, request, and client layers are
-  gone. `pyzill.http` no longer reaches up into `pyzill.client` for a default
-  session (it owns a fallback session and the process-wide limiter itself),
-  and no module imports another lazily any more. The module-level entry
-  points (`for_sale`, `for_rent`, `sold`, `search`, the `iter_*` helpers, and
-  the `get_from_*` detail fetchers) now live in one module above the client,
-  `pyzill.api`; `pyzill.search` and `pyzill.details` remain as
-  compatibility re-exports, so every documented import path still works.
-  The request building moved into the pure `pyzill.search_request` and
-  `pyzill.detail_request` modules, and `pyzill.client` is now only the
-  composition root (sessions, rate limiting, proxy rotation). Search
-  keywords are split into query fields and transport fields. Behavior,
-  signatures, and results are unchanged.
-- The Zillow per-search result cap is now a public constant
-  (`pyzill.tiling.RESULT_CAP`) instead of a private one.
-- Core knowledge was deduplicated: the Zillow origin constant now lives in
-  `pyzill.config` (re-exported from `pyzill.http` for compatibility), the
-  "is this an HTTPS zillow.com URL?" rule now lives in the new `pyzill.urls`
-  module (used by the detail fetchers and the CLI's detail commands instead
-  of three separate copies), the listing kinds now have a single definition in
-  `pyzill._kinds` (`Kind` plus the `ListingKind` enum the CLI uses for
-  argument choices), and credential redaction has a single implementation
-  (`pyzill.proxy.redact_credentials`) that both the proxy errors and the CLI
-  use. Proxy error messages now mask credentials as completely as the CLI
-  already did (a password containing `@` is no longer partially visible).
-  `pyzill.utils` is now documented as a compatibility re-export of the proxy
-  helpers; the public names it exposes are unchanged.
-- The database module was split into a package: `pyzill/db/runs.py` (sync-run
-  bookkeeping), `pyzill/db/schema.py` (DDL, migrations, and column backfills),
-  `pyzill/db/connection.py` (opening the database), `pyzill/db/upsert.py` (the
-  listing write path), `pyzill/db/queries.py` (listing rows, price history, and
-  change events), and `pyzill/db/stats.py` (summary figures). `pyzill.db`
-  re-exports the same names, so the import paths, the database schema, and the
-  CLI are unchanged.
-- The listing write path was split into `_prepare_rows`, `_classify_changes`,
-  `_build_params`, and `_write_batch`; the returned statistics and the stored
-  rows are unchanged.
-- The `search sale`, `search rent`, and `search sold` commands now collect
-  their options through one helper instead of repeating the filter call three
-  times. The command signatures, flags, and `--help` output are unchanged.
-- `pyzill.cli` no longer re-exports the private `_coerce_value` helper; it
-  was only ever used by tests, which now import `coerce_value` from
-  `pyzill.cli.query` directly. The package exports `app` and `main_entry`.
-- `upsert_listings` internals were rewritten for bulk syncs: existing-row
-  state and prior prices are now read in two batched (chunked) queries
-  instead of up to three SELECTs per row, and the write path is a single
-  generated `INSERT ... ON CONFLICT(zpid) DO UPDATE` per row instead of a
-  wide hand-written UPDATE. Behavior (stats, missing-field semantics,
-  kind transitions, price history) is unchanged; all database tests pass
-  without modification.
-- The CLI package was split into focused modules: `cli/options.py` (shared
-  Typer option types), `cli/search.py` (search commands and the
-  fetch/normalize pipeline), `cli/detail.py` (detail commands),
-  `cli/query.py` (offline query/normalize commands and filtering engines),
-  `cli/db.py` (database commands), and `cli/console.py` (diagnostics and
-  input helpers). `cli/app.py` now only wires the Typer app together. The
-  command surface and flags are unchanged.
+
+- The geocode cache is writes-under-lock, bounded, and kept in a directory of
+  its own; the geocoder is split into four small steps.
+- CLI output renderers are pure; the query engine moved to `pyzill.query`; the
+  database helpers moved into `pyzill.db`; the CLI is wiring only.
+- The browser identity (headers, client hints, impersonation profile) comes
+  from one module.
+- The normalized `Listing` shape is the single source of listing fields; the
+  database columns and numeric fields derive from it.
+- Transport options are built in one place, and the import cycles between
+  transport, request, and client layers are gone.
+- The database module is a package (`schema`, `runs`, `write`, `query`), and
+  the listing write path is split into prepare, classify, and write steps.
+- The CLI is split into focused modules (`options`, `output`, `search`,
+  `details`, `db`, `query`, `schema`, `geocode`).
 
 ### Changed (breaking)
-- Search functions (`for_sale`, `for_rent`, `sold`, `search`, and the
-  `iter_*` helpers) no longer fall back to a continental-US viewport when
-  `bbox` is omitted. A missing bbox now raises `ValueError` unless the caller
-  passes `allow_nationwide=True`. Previously a bare
-  `for_sale(search_value="12305")` silently searched the whole country.
-  Resolve a viewport with `pyzill.geocode.geocode(...)`, build a
-  `pyzill.BBox`, or opt in with `allow_nationwide=True`.
+
+- Search functions take keyword arguments with sane defaults and reject
+  unknown keywords. `search()` remains available for a custom `filter_state`;
+  `for_sale`, `for_rent`, and `sold` build their own and reject a
+  caller-supplied one.
+- A caller-supplied `proxy_url` pins that call's transport and is never
+  rotated away.
+- `normalize_listing` returns `Listing | None`; callers must narrow it.
 
 ### Fixed
-- `pyzill db changes` now orders events by when they happened and reports that
-  time for every event. A `new` event carries the moment the listing was
-  first seen instead of no timestamp at all, so a listing that first appeared
-  later is no longer reported before an event that happened earlier. The
-  events can be replayed in the order they occurred.
-- Sync counts are now per listing rather than per input row. A zpid that
-  appears twice in one batch used to be counted as two updates, and its price
-  change was counted once per row, so one listing could report two price
-  changes. The counts now match the listings actually stored, and a run's
-  `result_count` matches the number of sightings it kept.
-- Comparing a field with `null` using `>`, `<`, `>=`, `<=` or `~` is now a
-  usage error (exit 2) instead of quietly matching no rows. `=` and `!=` still
-  test for a missing value.
-- `pyzill db changes` no longer reports a delisting when two `db import`
-  operations ingest different files. Every run used to look alike, so two
-  unrelated imports were compared as if they were two searches of the same
-  query and every listing missing from the second file was reported as
-  delisted. Only search runs — those that record the query they ran — are
-  compared with each other now; a run without a query records an ingest,
-  whose absences mean "not in this batch". Two searches of the same query
-  still detect delistings as before.
-- `pyzill db query` now writes an empty JSON array (`[]`) to stdout when
-  nothing matches, instead of printing a warning and nothing at all. The
-  output is now valid JSON for every result set, matching `pyzill query` and
-  `pyzill db history`. The warning no longer claims the database is empty
-  when only the filter matched nothing.
-- `pyzill db sync` now rejects an empty query with a usage error (exit 2)
-  instead of failing later with a confusing geocoding error. A search run
-  that records no query would be indistinguishable from a file import to
-  change detection.
-- The geocode cache is now written under an exclusive lock, so concurrent
-  processes no longer lose each other's entries. The cache is a
-  read-modify-write of one JSON file; without the lock, eight concurrent
-  writers kept 21 of 160 entries instead of all 160. Locking is best-effort:
-  it is skipped where `fcntl` is unavailable or the lock file cannot be
-  created, and the cache update then proceeds unserialized.
-- The search payload's `filterState` no longer depends on the filter dict
-  and the query state being the same object: the beds/baths/price range
-  filters are merged into the filter state before it is put into the query
-  state.
-- `pyzill.geocode` is now bound to the module, so the documented
-  `pyzill.geocode.geocode(...)` call resolves (previously it raised
-  `AttributeError` unless something else had imported the submodule).
-  `pyzill.GeoResult` is exported as well.
-- Importing a raw listing containing `NaN` or `Infinity` no longer aborts a
-  `db import` with `ValueError: Out of range float values are not JSON
-  compliant`. `json.loads` accepts those values, so the write path now stores
-  them as `null`.
-- The default client for the search request is resolved once per request
-  instead of once per retry attempt; the lazy import stays local to the
-  function to avoid the `client -> http -> client` import cycle.
-- Several `ZillowClient` instances in one process now share one request budget
-  for Zillow. Each client used to own an independent limiter, so running two
-  clients doubled the request rate against the site. A client created without
-  an explicit `rate_limit` now uses the shared limiter; an explicit interval
-  is layered on top of it (the client may be stricter, never looser, and the
-  two limits are compared rather than added, so they never stack up), and an
-  explicit `rate_limit=0` remains an opt-out that disables throttling for
-  that client only.
-- A caller-supplied `proxy_url` now pins the transport for that call: the
-  client no longer rotates onto a different proxy when it gets a 403, because
-  the caller asked for that specific one. `proxy_url=None` counts as "not
-  specified" and no longer silently drops the client's configured proxy pool.
-- Duplicate entries in a client's proxy list are collapsed, so a pool of two
-  identical proxies no longer counts as a rotation pair and burns the retry
-  without changing the transport.
-- Invalid proxy URLs no longer leak their credentials into error messages.
-  The password is masked (`http://***@host:8080`) so it cannot reach a log,
-  a traceback, or a CI transcript.
-- The `http.request` failure path now raises a `ZillowError` in every case;
-  the unreachable fallback was a bare `RuntimeError`.
-- The CLI was unimportable: `cli/search.py` imported `_RESULT_CAP` from
-  `pyzill.search`, but the tiling refactor moved that constant to
-  `pyzill.tiling`. Every `pyzill` command failed with `ImportError` and three
-  test modules could not be collected. `pyzill.search` and `pyzill.tiling` now
-  declare `__all__`, so the `split_bbox`/`tiled_search` re-exports are explicit
-  and `mypy --strict` passes again.
-- The search endpoint now sends same-origin XHR headers instead of document
-  navigation headers. It previously carried `Sec-Fetch-Dest: document`,
-  `Sec-Fetch-Mode: navigate`, `Sec-Fetch-User: ?1`,
-  `Upgrade-Insecure-Requests: 1`, and an HTML `Accept` header alongside a JSON
-  body — a self-inflicted fingerprint mismatch on the most block-sensitive
-  request pyzill makes. It now sends `Sec-Fetch-Dest: empty`,
-  `Sec-Fetch-Mode: cors`, `Accept: application/json, text/plain, */*`, and no
-  `Upgrade-Insecure-Requests`.
-- The `User-Agent` and client hints now match the requested `--impersonate`
-  profile. A Safari, Firefox, or Edge profile previously produced a
-  `Chrome/136.0.0.0` User-Agent over a non-Chrome TLS fingerprint. Chromium
-  client hints are sent only for Chromium profiles, and Firefox no longer
-  receives `Sec-Fetch-*` metadata it would never send.
-- Geocoding a malformed Nominatim response raised a bare `KeyError`
-  (`KeyError: 0` or `KeyError: 'boundingbox'`) instead of the intended
-  actionable message. A non-list response, a hit without a bounding box, a
-  non-numeric bounding box, and non-finite bounds now all raise `ValueError`
-  with the `--north/--south/--east/--west` hint. `NaN` bounds are rejected
-  outright: they pass every `BBox` comparison and would silently produce a
-  nonsense search viewport.
-- `db.connect` now closes the connection when a `KeyboardInterrupt` or
-  `SystemExit` interrupts a schema migration. The write lock used to be left
-  held, so the next open failed with `database is locked`.
-- `db sync`/`db import` now record `truncated` on the sync run in the same
-  transaction as the listings, so an interrupted or soft-blocked sync no longer
-  reports a clean, complete run. An empty result for a query/bbox/filter
-  combination that previously returned listings is flagged truncated.
-- `db changes` compares runs by the full query identity (kind, query, viewport,
-  filters) and skips truncated runs, so unrelated searches no longer produce
-  spurious delistings and an empty soft-block does not look like a clear-out.
-- Home-detail parsing raises `ZillowParseError` when the requested `zpid` is
-  absent from the payload instead of silently returning the first property.
-- `--where` numeric fields reject non-numeric literals (`zpid` is numeric, `kind`
-  is now queryable) while still accepting `k`/`m` suffixes.
-- A per-call `timeout`/option override no longer leaks into the shared client
-  after proxy rotation; rotation updates the client options atomically.
-- PerimeterX challenge detection is centralized in `http.request`, so a 200 HTML
-  challenge page now raises `ZillowBlockedError` for detail fetches too, while
-  genuine JSON bodies are never scanned for challenge markers.
-- An empty or whitespace-only `PYZILL_PROXY`/`PYZILL_DB` (and their legacy
-  `ZILLOW_*` fallbacks) is treated as unset instead of a validation error.
-- `--timeout 0` is reported through the normal JSON error channel, the
-  `NO_COLOR` spec is honored (non-empty only), diagnostics are no longer
-  wrapped mid-line, and credential redaction covers scheme-less `user:pass@host`
-  proxies. Geocoding no longer fails to import when package metadata is absent.
-- `--where` now keeps identifier and descriptive fields as strings, preserving
-  leading-zero ZIP codes in JSON and database queries. Quoted literals remain
-  strings; only numeric listing fields are coerced.
-- Normalization treats zero area as unknown and prefers positive nested beds,
-  baths, and living area over top-level zero sentinels while retaining valid
-  zero-bed studios.
-- Opening a current-schema database no longer starts a write transaction;
-  read-only DB commands use read-only SQLite connections. Price history now
-  records only the first price and actual price changes.
-- Search response shape/JSON failures raise `ZillowParseError`, PerimeterX
-  challenge pages raise `ZillowBlockedError`, and server errors no longer
-  inherit from the block exception.
-- Database sightings now preserve known fields on sparse updates, maintain
-  order-independent first/last-seen and current-state values, and isolate
-  sale/rent/sold price history by kind. Schema version 2 migrates existing
-  version 1 stores; `db import --kind` labels imported sightings.
-- Runtime search calls reject unknown keyword arguments, request options reject
-  invalid retry/timeout values, home detail inputs and library detail URLs are
-  restricted to valid Zillow targets, and `--where` numeric coercion no longer
-  treats `nan`, `inf`, or scientific notation as numbers.
-- In-memory database statistics now report zero file bytes. SQLite connections
-  use WAL and a busy timeout.
-- Normalized zpids are integer-or-None; zero beds/area are preserved. HTTP 404,
-  5xx, parse/schema failures, and block responses have distinguishable error
-  types. Retry delays are exponential with jitter, honor `Retry-After` for 429,
-  and do not retry 403 responses.
-- Nominatim requests use a separate one-request-per-second limiter, no proxy
-  unless explicitly passed, an atomic 30-day cache keyed by country/format,
-  and a warning for synthetically expanded point-like viewports. Search warns
-  on the 500-result cap and supports `--tile --max-depth` recursive splitting.
-- CLI internals are organized under `pyzill.cli` modules, search flags share a
-  `SearchOptions` value, and command context is invocation-scoped. Database
-  filters/sort/limit now execute in parameterized SQLite queries. `PYZILL_*`
-  environment settings take precedence over `ZILLOW_*` fallbacks; proxy parsing
-  validates scheme/port and brackets IPv6. Detail functions accept
-  `RequestOptions`, and `db sync`/`db import --kind` use validated kind enums.
-- The v1-to-v2 database migration no longer appends `kind` after
-  `last_seen_utc` via `ALTER TABLE ADD COLUMN`; it rebuilds the listings
-  table so a migrated database has the same column order as a fresh one
-  (`kind` second). The rebuild stages `price_history` in a temporary
-  FK-free table first, so history rows are neither cascade-deleted nor
-  repointed by the parent-table rename. Schema DDL is now shared between
-  the fresh-create and migration paths (`_CREATE_LISTINGS_SQL` etc.) so
-  they cannot drift.
-- A retry delay from `Retry-After` is now measured from the moment the
-  response arrived rather than from the previous request's start, so a server
-  that asks for a longer pause no longer gets a request sooner than requested.
-- `detail apartment` validates its input up front (matching `detail home`): a
-  non-Zillow URL is a usage error (exit 2) instead of an unexpected error, and
-  a plain apartment ID is percent-encoded when built into a URL.
-- `normalize_property_detail` reports `lot_size` in square feet (converting
-  Zillow's acre `lotSize`) as a number, instead of mixing acres and square feet
-  in a string field.
-- Opening a database at the current schema version now backfills any listing
-  column added by a newer release, so an older same-version store is repaired
-  on open without a version bump.
-- `db changes <since>` normalizes offset timestamps the same way as
-  `db import --fetched-at`, and rejects an unparseable `<since>` with exit 2.
 
-### Changed
-- `iter_search`/`iter_sale`/`iter_rent`/`iter_sold` are documented as
-  single-response iterators (not paginators); use `tiled_search` for depth.
-- Removed unused shared Typer option aliases and pinned `curl_cffi>=0.16.3`.
-- `normalize_property_detail` now reports `lot_size_unit` and `hoa_fee_unit`
-  alongside the values, so an acre-derived lot size and an annual HOA total are
-  not mistaken for square feet or a monthly fee. `lot_size` is still reported
-  in square feet.
+- `db changes` orders events by when they happened, compares runs by their
+  full identity, and ignores imports and differently filtered runs.
+- Sync counts are per listing, not per input row; a duplicate zpid in one
+  batch counts once.
+- Comparing a field with `null` using an ordering operator is a usage error,
+  and `--where` keeps identifier fields as strings while coercing numbers
+  against numeric fields.
+- `db query` writes `[]` for an empty result; `db sync` rejects an empty
+  query with exit 2; a rejected `--format` is caught before the work starts.
+- The geocode cache is written under an exclusive lock, so concurrent
+  processes cannot corrupt it.
+- The search payload's `filterState` comes from the filters, not from
+  dictionary ordering.
+- `pyzill.geocode` is bound to the module, so patching it in tests works.
+- Raw listings containing `NaN`/`Infinity` no longer abort an import.
+- The default client is resolved once per request; several clients share one
+  request budget; duplicate proxies are collapsed.
+- Invalid proxy URLs no longer leak credentials into error messages, and
+  every `http.request` failure raises a `ZillowError`.
+- The CLI imports cleanly, sends same-origin XHR headers, and matches its
+  `User-Agent` and client hints to the requested `--impersonate` profile.
+- A malformed Nominatim response raises a typed geocode error, and geocode
+  requests use a separate one-request-per-second limiter.
+- `db.connect` closes the connection on `KeyboardInterrupt`/`SystemExit`.
+- Home-detail parsing raises `ZillowParseError` when the requested zpid is
+  missing, and `detail apartment` validates its input up front.
+- `--where` numeric fields reject non-numeric literals; a per-call timeout
+  does not leak into the shared client.
+- PerimeterX challenge detection is centralized, including for a 200 HTML
+  body. HTTP 404, block, and parse failures map to distinct exceptions.
+- Empty `PYZILL_PROXY`/`PYZILL_DB` values fall back to the default instead of
+  producing an empty path or URL. `--timeout 0` is reported through the
+  normal JSON error channel.
+- Zero area is treated as unknown; zero beds are preserved for studios.
+- Database sightings preserve known fields on sparse updates, and in-memory
+  database statistics report zero file bytes.
+- `Retry-After` is measured from the moment the response arrives.
+- `normalize_property_detail` reports lot size in square feet and carries
+  `lot_size_unit` and `hoa_fee_unit`; an unlabeled number is reported as it
+  arrived.
+- Opening a database at the current version backfills missing columns.
 
-### Unverified (live Zillow validation required)
-- TODO: Decide whether `for_rent` should expand building cards into units.
-  Building-only search results are now understood and handled rather than
-  guessed at: a card is a building when `isBuilding` is true *and* it has no
-  integer `zpid` at the top level or under `hdpData.homeInfo`. Zillow
-  sometimes stamps a `buildingId` (a lat-lng string such as
-  `"47.61503--122.34274"`) into the `zpid` field, which does not parse to an
-  integer, so the check is on the normalized zpid and not the flag alone.
-  Building cards are dropped from `normalize_listings` and the raw
-  `iter_sale`/`iter_rent`/`iter_sold` iterators, and `extract_listings`
-  prefers whichever of `mapResults`/`listResults` holds real listings --
-  `listResults` carries the individual units. Captures on 2026-10-18 against
-  a dense downtown-Seattle bbox returned *only* building cards for both sale
-  and rent, while a Schenectady NY bbox returned real listings (5/5 for
-  sale/sold, 1/5 for rent), so the effect is area-dependent. The remaining
-  open question is whether `for_rent` should fetch the building-detail
-  `floorPlans` list (unit beds/baths/description) to synthesize unit rows;
-  that is an added request per building and is deliberately not done.
-- TODO: Compare Nominatim ZIP viewports with known ZCTA boundaries. Synthetic
-  point-like viewports now trigger a CLI warning, but are not treated as ZIP
-  boundaries.
-- Live sale/rent/sold search and home/apartment-detail responses were
-  captured and sanitized locally on 2026-10-18 via
-  `scripts/capture_fixture.py` (Schenectady NY samples; mixed building and
-  individual-listing results). Captured fixtures contain real listing
-  data and are intentionally not committed (`tests/fixtures/*.json` is
-  gitignored); run the capture script on demand to regenerate them, and
-  the fixture tests skip until then.
+### Notes
+
+- `for_rent` does not expand building cards into unit rows; that would need an
+  extra detail request per building and is deliberately out of scope.
+- Nominatim ZIP viewports are synthetic point-like boxes, not ZCTA
+  boundaries. The CLI warns rather than treating them as exact.
+- Live sale/rent/sold and home/apartment responses are captured locally with
+  `scripts/capture_fixture.py`; real listing data stays out of the repository.
+
 
 ## [1.3.0] - 2026-10
 

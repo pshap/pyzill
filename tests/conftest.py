@@ -1,12 +1,18 @@
 import json
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
 from curl_cffi import requests as cffi_requests
 from curl_cffi.requests.exceptions import HTTPError
+from typer.testing import Result
 
 from pyzill import ratelimit
+from pyzill.cli import app
+from pyzill.cli import geocode as geocode_module
+from pyzill.geocode import GeoResult
+from tests.cli_helpers import _GEO_STUB, runner, write_json
 
 
 class NetworkAccessError(RuntimeError):
@@ -191,3 +197,114 @@ def home_detail_body():
 def department_detail_body():
     department_data = {"id": "CgKZT4", "name": "The Lennox"}
     return _next_data_html({"initialReduxState": {"gdp": department_data}})
+
+
+# --- CLI fixtures shared by the split CLI test modules ---------------------
+
+
+@pytest.fixture
+def _stub_geocode(monkeypatch):
+    """Keep search tests offline: no bbox means the stubbed geocode result.
+
+    The CLI test modules opt in with ``pytestmark``; tests outside the CLI
+    keep the real geocoder so they can stub its transport themselves.
+    """
+    _GEO_STUB.reset()
+    import importlib
+
+    search_module = importlib.import_module("pyzill.cli.search")
+    monkeypatch.setattr(search_module, "geocode", _GEO_STUB)
+
+
+@pytest.fixture
+def run_search(fake_http):
+    """Run the sale search against a canned Zillow response."""
+
+    def _run(body: dict[str, Any], *args: str) -> Result:
+        fake_http.install("PUT", json_data=body)
+        return runner.invoke(app, ["search", "sale", "12305", *args])
+
+    return _run
+
+
+@pytest.fixture
+def run_sync(fake_http):
+    """Run a database sync against a canned Zillow response."""
+
+    def _run(body: dict[str, Any], *args: str, db_path: Path | None = None, kind: str = "sale") -> Result:
+        fake_http.install("PUT", json_data=body)
+        argv = ["db", "sync", kind, "12305"]
+        if db_path is not None:
+            argv += ["--db", str(db_path)]
+        return runner.invoke(app, [*argv, *args])
+
+    return _run
+
+
+@pytest.fixture
+def import_rows(tmp_path):
+    """Import rows into a database file and return the database path."""
+
+    def _import(
+        rows: Any,
+        *,
+        db_path: Path | None = None,
+        fetched_at: str | None = None,
+        name: str = "rows.json",
+    ) -> Path:
+        target = db_path or tmp_path / "test.db"
+        source = write_json(tmp_path / name, rows)
+        argv = ["db", "import", str(source), "--db", str(target)]
+        if fetched_at is not None:
+            argv += ["--fetched-at", fetched_at]
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 0, result.stderr
+        return target
+
+    return _import
+
+
+@pytest.fixture
+def db_rows():
+    """Run a database query and return the rows it selected."""
+
+    def _query(db_path: Path, *args: str) -> list[dict[str, Any]]:
+        result = runner.invoke(app, ["db", "query", "--db", str(db_path), *args])
+        assert result.exit_code == 0, result.stderr
+        return json.loads(result.stdout)
+
+    return _query
+
+
+@pytest.fixture
+def normalize_file(tmp_path):
+    """Write data to a JSON file and normalize it through the CLI."""
+
+    def _normalize(data: Any, *, name: str = "input.json") -> Result:
+        source = write_json(tmp_path / name, data)
+        return runner.invoke(app, ["normalize", str(source)])
+
+    return _normalize
+
+
+@pytest.fixture
+def patch_geocode(monkeypatch):
+    """Replace the geocode service the geocode command calls.
+
+    Returns the list the patched service records the places it was asked
+    for.
+    """
+    calls: list[str] = []
+
+    def _patch(result: GeoResult | None = None, error: Exception | None = None) -> list[str]:
+        def fake_geocode(place: str, **kwargs: object) -> GeoResult:
+            calls.append(place)
+            if error is not None:
+                raise error
+            assert result is not None
+            return result
+
+        monkeypatch.setattr(geocode_module, "geocode_place", fake_geocode)
+        return calls
+
+    return _patch

@@ -1,0 +1,262 @@
+{
+  "listResults": [
+    {
+      "address": null,
+      "addressCity": null,
+      "addressState": null,
+      "addressStreet": null,
+      "addressZipcode": null,
+      "area": null,
+      "availabilityCount": null,
+      "baths": null,
+      "beds": null,
+      "buildingName": null,
+      "canSaveBuilding": null,
+      "carouselPhotosComposable": {
+        "baseUrl": null,
+        "communityBaseUrl": null,
+        "communityPhotoData": null,
+        "isStaticUrls": null,
+        "photoData": [
+          {
+            "photoKey": null
+          }
+        ]
+      },
+      "countryCurrency": null,
+      "detailUrl": null,
+      "factsAndFeatures": {
+        "fullBathroomCount": null,
+        "hasAirConditioning": null,
+        "hasFireplace": null,
+        "hasPool": null,
+        "hasSpa": null
+      },
+      "has3DModel": null,
+      "hasAdditionalAttributions": null,
+      "hasImage": null,
+      "hasVideo": null,
+      "hdpData": {
+        "homeInfo": {
+          "bathrooms": null,
+          "bedrooms": null,
+          "city": null,
+          "country": null,
+          "currency": null,
+          "daysOnZillow": null,
+          "homeStatus": null,
+          "homeStatusForHDP": null,
+          "homeType": null,
+          "isFeatured": null,
+          "isNonOwnerOccupied": null,
+          "isPreforeclosureAuction": null,
+          "isPremierBuilder": null,
+          "isRentalWithBasePrice": null,
+          "isShowcaseListing": null,
+          "isUnmappable": null,
+          "isZillowOwned": null,
+          "latitude": null,
+          "listing_sub_type": null,
+          "livingArea": null,
+          "longitude": null,
+          "price": null,
+          "priceForHDP": null,
+          "rentZestimate": null,
+          "shouldHighlight": null,
+          "state": null,
+          "streetAddress": null,
+          "timeOnZillow": null,
+          "unit": null,
+          "zipcode": null,
+          "zpid": null
+        }
+      },
+      "id": null,
+      "imgSrc": null,
+      "isBuilding": null,
+      "isContactable": null,
+      "isFeaturedListing": null,
+      "isHomeRec": null,
+      "isInstantTourEnabled": null,
+      "isPaidBuilderNewConstruction": null,
+      "isShowcaseListing": null,
+      "isUndisclosedAddress": null,
+      "isUserClaimingOwner": null,
+      "isUserConfirmedClaim": null,
+      "isZillowOwned": null,
+      "latLong": {
+        "latitude": null,
+        "longitude": null
+      },
+      "list": null,
+      "listCardRecommendation": {
+        "ctaRecommendations": [
+          {
+            "contentType": null,
+            "displayString": null
+          }
+        ],
+        "flexFieldRecommendations": [
+          {
+            "contentType": null,
+            "displayString": null
+          }
+        ],
+        "zovInsight": {
+          "amenityType": null,
+          "displayString": null,
+          "rarity": null,
+          "regionName": null
+        }
+      },
+      "listPriceIncludesRequiredMonthlyFees": null,
+      "lotId": null,
+      "marketingStatusSimplifiedCd": null,
+      "marketingTreatments": null,
+      "palsId": null,
+      "pgapt": null,
+      "price": null,
+      "providerListingId": null,
+      "rawHomeStatusCd": null,
+      "relaxed": null,
+      "rentalMarketingSubType": null,
+      "rooms": null,
+      "sgapt": null,
+      "shouldShowRequestOnPrice": null,
+      "shouldShowZestimateAsPrice": null,
+      "statusText": null,
+      "statusType": null,
+      "unformattedPrice": null,
+      "units": [
+        {
+          "beds": null,
+          "price": null,
+          "roomForRent": null
+        }
+      ],
+      "zpid": null
+    }
+  ],
+  "mapResults": [
+    {
+      "address": null,
+      "addressCity": null,
+      "addressState": null,
+      "area": null,
+      "baths": null,
+      "beds": null,
+      "buildingId": null,
+      "buildingName": null,
+      "canSaveBuilding": null,
+      "detailUrl": null,
+      "factsAndFeatures": {
+        "fullBathroomCount": null,
+        "hasAirConditioning": null,
+        "hasFireplace": null,
+        "hasPool": null,
+        "hasSpa": null
+      },
+      "has3DModel": null,
+      "hasAdditionalAttributions": null,
+      "hasImage": null,
+      "hasVideo": null,
+      "hdpData": {
+        "homeInfo": {
+          "bathrooms": null,
+          "bedrooms": null,
+          "city": null,
+          "country": null,
+          "currency": null,
+          "daysOnZillow": null,
+          "homeStatus": null,
+          "homeStatusForHDP": null,
+          "homeType": null,
+          "isFeatured": null,
+          "isNonOwnerOccupied": null,
+          "isPreforeclosureAuction": null,
+          "isPremierBuilder": null,
+          "isRentalWithBasePrice": null,
+          "isShowcaseListing": null,
+          "isUnmappable": null,
+          "isZillowOwned": null,
+          "latitude": null,
+          "listing_sub_type": null,
+          "livingArea": null,
+          "longitude": null,
+          "price": null,
+          "priceForHDP": null,
+          "rentZestimate": null,
+          "shouldHighlight": null,
+          "state": null,
+          "streetAddress": null,
+          "timeOnZillow": null,
+          "unit": null,
+          "zipcode": null,
+          "zpid": null
+        }
+      },
+      "imgSrc": null,
+      "isBuilding": null,
+      "isFeaturedListing": null,
+      "isHomeRec": null,
+      "isNewYorkState": null,
+      "isPaidBuilderNewConstruction": null,
+      "isShowcaseListing": null,
+      "isUserClaimingOwner": null,
+      "isUserConfirmedClaim": null,
+      "latLong": {
+        "latitude": null,
+        "longitude": null
+      },
+      "listCardRecommendation": {
+        "ctaRecommendations": [
+          {
+            "contentType": null,
+            "displayString": null
+          }
+        ],
+        "flexFieldRecommendations": [
+          {
+            "contentType": null,
+            "displayString": null
+          }
+        ],
+        "zovInsight": {
+          "amenityType": null,
+          "displayString": null,
+          "rarity": null,
+          "regionName": null
+        }
+      },
+      "listPriceIncludesRequiredMonthlyFees": null,
+      "listingType": null,
+      "lotId": null,
+      "marketingStatusSimplifiedCd": null,
+      "marketingTreatments": null,
+      "minArea": null,
+      "minBaths": null,
+      "minBeds": null,
+      "palsId": null,
+      "pgapt": null,
+      "plid": null,
+      "price": null,
+      "priceLabel": null,
+      "rawHomeStatusCd": null,
+      "rentalMarketingSubType": null,
+      "sgapt": null,
+      "shouldShowRequestOnPrice": null,
+      "shouldShowZestimateAsPrice": null,
+      "statusText": null,
+      "statusType": null,
+      "timeOnZillow": null,
+      "unitCount": null,
+      "visited": null,
+      "zpid": null
+    }
+  ],
+  "relaxedMapResults": null,
+  "relaxedResults": null,
+  "relaxedResultsHash": null,
+  "resultsHash": null,
+  "showForYouCount": null
+}

@@ -1,0 +1,1036 @@
+{
+  "adTargets": {
+    "aamgnrc1": null,
+    "ba": null,
+    "bd": null,
+    "city": null,
+    "cnty": null,
+    "dma": null,
+    "env": null,
+    "guid": null,
+    "hood": null,
+    "listtp": null,
+    "lot": null,
+    "pid": null,
+    "prange": null,
+    "premieragent": null,
+    "price": null,
+    "proptp": null,
+    "service_version": null,
+    "sqft": null,
+    "sqftrange": null,
+    "ssid": null,
+    "state": null,
+    "yrblt": null,
+    "zip": null
+  },
+  "address": {
+    "city": null,
+    "state": null,
+    "streetAddress": null,
+    "zipcode": null
+  },
+  "affordabilityEstimate": {
+    "totalMonthlyCost": null
+  },
+  "affordabilityEstimateV2": {
+    "mortgageChipData": {
+      "isPersonalized": null,
+      "mortgageCTA": {
+        "ctaCopyText": null,
+        "personalizedCta": {
+          "buttonType": null,
+          "navAction": {
+            "__typename": null,
+            "analyticsTag": null,
+            "showAbad": null,
+            "urlExperience": {
+              "authAssuranceLevel": null,
+              "ctaUrl": null
+            }
+          },
+          "text": null
+        },
+        "personalizedCtaCopyText": null,
+        "personalizedRoutingURL": null
+      }
+    },
+    "totalMonthlyCost": null,
+    "usedInputs": {
+      "creditScore": {
+        "rangeType": null
+      },
+      "downPaymentAmount": null,
+      "downPaymentPercent": null,
+      "fromFinancialProfile": null,
+      "isDownpaymentPreferencePercent": null,
+      "loan": {
+        "rateSource": null
+      }
+    }
+  },
+  "attributionInfo": {
+    "agentEmail": null,
+    "agentName": null,
+    "agentPhoneNumber": null,
+    "brokerName": null,
+    "brokerPhoneNumber": null,
+    "listingAttributionContact": null,
+    "mlsId": null,
+    "mlsName": null,
+    "notMLSSourcedListing": null,
+    "providerLogo": null,
+    "trueStatus": null
+  },
+  "bathrooms": null,
+  "bedrooms": null,
+  "boroughId": null,
+  "brokerId": null,
+  "buyAbilityData": {
+    "chipLabel": null,
+    "hub": {
+      "ctaButton": {
+        "enrollmentStatus": null
+      },
+      "title": null
+    },
+    "isEligibleProperty": null
+  },
+  "city": null,
+  "cityId": null,
+  "comingSoonOnMarketDate": null,
+  "contactAgentFormVariant": null,
+  "contactFormRenderData": {
+    "data": {
+      "agent_module": null,
+      "authentication": {
+        "hmac": null,
+        "request_id": null
+      },
+      "brokerage_info_must_be_shown": null,
+      "contact_button_text": null,
+      "contact_recipients": [
+        {
+          "agent_reason": null,
+          "badge_type": null,
+          "business_name": null,
+          "display_name": null,
+          "encoded_zuid": null,
+          "first_name": null,
+          "has_caliber_pal": null,
+          "has_pal": null,
+          "has_wells_fargo_pal": null,
+          "image_data": {
+            "height": null,
+            "url": null,
+            "width": null
+          },
+          "is_remnant": null,
+          "phone": {
+            "areacode": null,
+            "number": null,
+            "prefix": null
+          },
+          "profile_url": null,
+          "rating_average": null,
+          "recent_sales": null,
+          "review_count": null,
+          "reviews_url": null,
+          "services_offered": null,
+          "write_review_url": null
+        }
+      ],
+      "cv_27": {
+        "bal_checkboxes": null,
+        "brokerage_product": null,
+        "field_flags": null,
+        "form_identifier": null,
+        "mortgage_flags": null
+      },
+      "desktop_phone_number": null,
+      "display_options": {
+        "is_opaque_eligible": null
+      },
+      "displayed_agents": [
+        {
+          "agent_reason": null,
+          "badge_type": null,
+          "business_name": null,
+          "display_name": null,
+          "encoded_zuid": null,
+          "first_name": null,
+          "has_caliber_pal": null,
+          "has_pal": null,
+          "has_wells_fargo_pal": null,
+          "image_data": {
+            "height": null,
+            "url": null,
+            "width": null
+          },
+          "is_remnant": null,
+          "profile_url": null,
+          "rating_average": null,
+          "recent_sales": null,
+          "review_count": null,
+          "reviews_url": null,
+          "services_offered": null,
+          "write_review_url": null
+        }
+      ],
+      "displayed_lenders": [
+        {
+          "agent_encoded_zuid": null,
+          "display_name": null,
+          "image_data": {
+            "height": null,
+            "url": null,
+            "width": null
+          },
+          "lender_encoded_zuid": null,
+          "nmls_license": null,
+          "phone": {
+            "areacode": null,
+            "ext": null,
+            "number": null,
+            "prefix": null
+          },
+          "profile_url": null
+        }
+      ],
+      "fallback_form": {
+        "contact_recipients": null,
+        "cv_27": {
+          "bal_checkboxes": null,
+          "brokerage_product": null,
+          "field_flags": null,
+          "form_identifier": null,
+          "mortgage_flags": null
+        },
+        "footers": [
+          {
+            "external": null,
+            "text": null,
+            "url": null
+          }
+        ],
+        "hidden_fields": null,
+        "subtitle": null,
+        "title": null,
+        "tour_eligible": null,
+        "variant": null
+      },
+      "hidden_fields": [
+        {
+          "name": null,
+          "value": null
+        }
+      ],
+      "hide_textarea": null,
+      "info_box_visible": null,
+      "keller_williams": null,
+      "lender_details": {
+        "preapproval": {
+          "checked": null,
+          "label": null,
+          "message_when_checked": null
+        },
+        "preapproval_info": {
+          "property_value": null,
+          "state_abbr": null,
+          "zipcode": null
+        }
+      },
+      "listing": {
+        "direct_connect": {
+          "contact_agent_eligible_v2": null,
+          "tour_eligible": null,
+          "tour_eligible_v2": null
+        },
+        "instant_book_region": null,
+        "one_advisor": null,
+        "supports_unselected_leads": null
+      },
+      "opaque_la": null,
+      "personalized_pathway_zhl_cta_eligible": null,
+      "pixel_id": null,
+      "pixel_url": null,
+      "premier_agent_preferred_property": null,
+      "region_phone_number": {
+        "areacode": null,
+        "number": null,
+        "prefix": null
+      },
+      "request_trace": {
+        "xpi": null,
+        "xsi": null,
+        "xti": null
+      },
+      "tcpa": null,
+      "text_area": {
+        "name": null,
+        "value": null
+      },
+      "text_fields": [
+        {
+          "input_type": null,
+          "intl": null,
+          "maxlength": null,
+          "name": null,
+          "pattern": null,
+          "placeholder": null,
+          "required": null,
+          "required_for_preapproval": null,
+          "tooltip": null
+        }
+      ],
+      "title": null,
+      "tour_config": {
+        "useFoundation": null
+      },
+      "tour_eligible": null,
+      "variant": null,
+      "zhl_primary_cta_eligible": null
+    }
+  },
+  "contingentListingType": null,
+  "country": null,
+  "countyId": null,
+  "currency": null,
+  "datePosted": null,
+  "dateSoldString": null,
+  "daysOnZillow": null,
+  "description": null,
+  "downPaymentAssistance": {
+    "eligibility": {
+      "dpa": null
+    }
+  },
+  "favoriteCount": null,
+  "foreclosureTypes": {
+    "isAnyForeclosure": null,
+    "isBankOwned": null,
+    "isForeclosedNFS": null,
+    "isPreforeclosure": null,
+    "wasForeclosed": null,
+    "wasNonRetailAuction": null
+  },
+  "formattedChip": {
+    "location": [
+      {
+        "fullValue": null
+      }
+    ]
+  },
+  "hasApprovedThirdPartyVirtualTourUrl": null,
+  "hdpTypeDimension": null,
+  "hdpUrl": null,
+  "hdpVariant": null,
+  "hiResImageLink": null,
+  "hideClimateRiskScore": null,
+  "homeInsights": [
+    {
+      "insights": [
+        {
+          "modelId": null,
+          "phrases": null,
+          "treatmentId": null
+        }
+      ]
+    }
+  ],
+  "homeStatus": null,
+  "homeType": null,
+  "isPreforeclosureAuction": null,
+  "isPremierBuilder": null,
+  "isShowcaseListing": null,
+  "isUndisclosedAddress": null,
+  "lastSoldPrice": null,
+  "latitude": null,
+  "listingAccountUserId": null,
+  "listingFeedID": null,
+  "listingMetadata": {
+    "FlexibleLayoutAA": null,
+    "FlexibleLayoutAB": null,
+    "FlexibleLayoutB": null,
+    "FlexibleLayoutC": null,
+    "FlexibleLayoutD": null,
+    "FlexibleLayoutE": null,
+    "FlexibleLayoutF": null,
+    "FlexibleLayoutG": null,
+    "FlexibleLayoutH": null,
+    "FlexibleLayoutI": null,
+    "FlexibleLayoutJ": null,
+    "FlexibleLayoutK": null,
+    "FlexibleLayoutL": null,
+    "FlexibleLayoutM": null,
+    "FlexibleLayoutN": null,
+    "FlexibleLayoutO": null,
+    "FlexibleLayoutP": null,
+    "FlexibleLayoutQ": null,
+    "FlexibleLayoutR": null,
+    "FlexibleLayoutS": null,
+    "FlexibleLayoutT": null,
+    "FlexibleLayoutU": null,
+    "FlexibleLayoutV": null,
+    "FlexibleLayoutW": null,
+    "FlexibleLayoutX": null,
+    "FlexibleLayoutY": null,
+    "FlexibleLayoutZ": null,
+    "attributeListingAttributionContact": null,
+    "canCommingleComparables": null,
+    "canShowAutomatedValuationDisplay": null,
+    "canShowComparables": null,
+    "canShowCroppedPhotos": null,
+    "canShowNonIDXMedia": null,
+    "canShowOnMap": null,
+    "canShowPrequalifiedLinkInChip": null,
+    "canShowPriceHistory": null,
+    "canShowTaxHistory": null,
+    "canShowUserGeneratedContent": null,
+    "canShowZillowLogoInHeader": null,
+    "comminglingCategory": null,
+    "comminglingCategoryIsRulesApplicable": null,
+    "daysOnSiteTooltipWhenHidden": null,
+    "hidePriceAdjustmentFlexField": null,
+    "isAdsRestricted": null,
+    "isSuperTrafficOptimized": null,
+    "mustAttributeOfficeNameBeforeAgentName": null,
+    "mustDisplayAttributionAboveLocalFacts": null,
+    "mustDisplayAttributionListAgentEmail": null,
+    "mustDisplayAttributionListAgentPhone": null,
+    "mustDisplayAttributionListingOfficePhone": null,
+    "mustDisplayAuctionStatusAsSold": null,
+    "mustDisplayDisclaimerBelowAttribution": null,
+    "mustDisplayFeedLogoInContactBox": null,
+    "mustHighlightAgentName": null,
+    "mustHighlightListOfficeName": null,
+    "mustHighlightMarketingType": null,
+    "mustHighlightMlsId": null,
+    "mustHighlightMlsStatus": null,
+    "mustMakeListingAgentContactable": null,
+    "mustPreferMlsPhotos": null,
+    "passwordRequiredForZestimateMarketAnalysis": null,
+    "watermarkPhotoDisplayBottomLeft": null,
+    "watermarkPhotoDisplayBottomRight": null
+  },
+  "listingProvider": null,
+  "listingRules": {
+    "hideDaysOnSiteDisplay": null,
+    "hidePublicRemarks": null
+  },
+  "listingSubType": {
+    "isBankOwned": null,
+    "isComingSoon": null,
+    "isFSBA": null,
+    "isFSBO": null,
+    "isForAuction": null,
+    "isForeclosure": null,
+    "isNewHome": null,
+    "isOpenHouse": null,
+    "isPending": null
+  },
+  "listingTypeDimension": null,
+  "listing_sub_type": {
+    "is_FSBA": null,
+    "is_FSBO": null,
+    "is_bankOwned": null,
+    "is_comingSoon": null,
+    "is_forAuction": null,
+    "is_foreclosure": null,
+    "is_newHome": null,
+    "is_openHouse": null,
+    "is_pending": null
+  },
+  "livingArea": null,
+  "livingAreaValue": null,
+  "longitude": null,
+  "lotAreaUnits": null,
+  "lotAreaValue": null,
+  "lotSize": null,
+  "marketingTreatments": null,
+  "marketingType": null,
+  "mlsid": null,
+  "monthlyHoaFee": null,
+  "mortgageZHLRates": {
+    "arm5Bucket": {
+      "lastUpdated": null,
+      "rate": null,
+      "rateSource": null
+    },
+    "fifteenYearFixedBucket": {
+      "lastUpdated": null,
+      "rate": null,
+      "rateSource": null
+    },
+    "thirtyYearFixedBucket": {
+      "lastUpdated": null,
+      "rate": null,
+      "rateSource": null
+    }
+  },
+  "ompEndOfPhotoGalleryCtaButtons": {
+    "placementGroupDecision": {
+      "eventId": null,
+      "experienceName": null,
+      "experienceType": null,
+      "placementDecisions": [
+        {
+          "eventMetadata": {
+            "exposureBlock": {
+              "assignmentServiceCd": null,
+              "decisionToken": null,
+              "extendedInfo": null,
+              "keyTypeCd": null,
+              "randomizationKey": null,
+              "treatments": null
+            },
+            "nbaBlock": null,
+            "ompV2Block": {
+              "assignedExperienceType": null,
+              "eventId": null,
+              "placementGroup": null,
+              "placementName": null,
+              "qualifiedExperiencesDefaultName": null,
+              "qualifiedExperiencesMultivariateName": null,
+              "qualifiedExperiencesNbaName": null,
+              "qualifiedNbaActions": null,
+              "qualifiedNbaMessages": null,
+              "selectedExperienceName": null,
+              "selectedExperienceTrial": null,
+              "selectedExperienceTrialAssignment": null,
+              "selectedExperienceType": null,
+              "selectedMessage": null,
+              "selectedMessageAttributions": null,
+              "selectedNbaAction": null,
+              "selectedNbaMessage": null
+            },
+            "thirdPartyMetadataBlock": [
+              {
+                "key": null,
+                "value": null
+              }
+            ]
+          },
+          "placementName": null,
+          "selectedMessage": {
+            "component": {
+              "__typename": null,
+              "buttonComponentType": null,
+              "buttonEmphasis": null,
+              "buttonSize": null,
+              "buttonTone": null,
+              "icon": null,
+              "iconPosition": null,
+              "prefersVirtualTour": null,
+              "requestSource": null,
+              "shouldButtonWidthGrow": null,
+              "subTitle": null,
+              "title": null,
+              "variant": null
+            },
+            "id": null,
+            "name": null
+          }
+        }
+      ],
+      "placementGroup": null
+    }
+  },
+  "ompMainCtaButtons": {
+    "placementGroupDecision": {
+      "eventId": null,
+      "experienceName": null,
+      "experienceType": null,
+      "placementDecisions": [
+        {
+          "eventMetadata": {
+            "exposureBlock": {
+              "assignmentServiceCd": null,
+              "decisionToken": null,
+              "extendedInfo": null,
+              "keyTypeCd": null,
+              "randomizationKey": null,
+              "treatments": null
+            },
+            "nbaBlock": null,
+            "ompV2Block": {
+              "assignedExperienceType": null,
+              "eventId": null,
+              "placementGroup": null,
+              "placementName": null,
+              "qualifiedExperiencesDefaultName": null,
+              "qualifiedExperiencesMultivariateName": null,
+              "qualifiedExperiencesNbaName": null,
+              "qualifiedNbaActions": null,
+              "qualifiedNbaMessages": null,
+              "selectedExperienceName": null,
+              "selectedExperienceTrial": null,
+              "selectedExperienceTrialAssignment": null,
+              "selectedExperienceType": null,
+              "selectedMessage": null,
+              "selectedMessageAttributions": null,
+              "selectedNbaAction": null,
+              "selectedNbaMessage": null
+            },
+            "thirdPartyMetadataBlock": [
+              {
+                "key": null,
+                "value": null
+              }
+            ]
+          },
+          "placementName": null,
+          "selectedMessage": {
+            "component": {
+              "__typename": null,
+              "buttonComponentType": null,
+              "buttonEmphasis": null,
+              "buttonSize": null,
+              "buttonSubtext": null,
+              "buttonTone": null,
+              "icon": null,
+              "iconPosition": null,
+              "prefersVirtualTour": null,
+              "requestSource": null,
+              "shortTitle": null,
+              "shouldButtonWidthGrow": null,
+              "subTitle": null,
+              "title": null,
+              "variant": null
+            },
+            "id": null,
+            "name": null
+          }
+        }
+      ],
+      "placementGroup": null
+    }
+  },
+  "ompMediaWallCtaButtons": {
+    "placementGroupDecision": {
+      "eventId": null,
+      "experienceName": null,
+      "experienceType": null,
+      "placementDecisions": [
+        {
+          "eventMetadata": {
+            "exposureBlock": {
+              "assignmentServiceCd": null,
+              "decisionToken": null,
+              "extendedInfo": null,
+              "keyTypeCd": null,
+              "randomizationKey": null,
+              "treatments": null
+            },
+            "nbaBlock": null,
+            "ompV2Block": {
+              "assignedExperienceType": null,
+              "eventId": null,
+              "placementGroup": null,
+              "placementName": null,
+              "qualifiedExperiencesDefaultName": null,
+              "qualifiedExperiencesMultivariateName": null,
+              "qualifiedExperiencesNbaName": null,
+              "qualifiedNbaActions": null,
+              "qualifiedNbaMessages": null,
+              "selectedExperienceName": null,
+              "selectedExperienceTrial": null,
+              "selectedExperienceTrialAssignment": null,
+              "selectedExperienceType": null,
+              "selectedMessage": null,
+              "selectedMessageAttributions": null,
+              "selectedNbaAction": null,
+              "selectedNbaMessage": null
+            },
+            "thirdPartyMetadataBlock": [
+              {
+                "key": null,
+                "value": null
+              }
+            ]
+          },
+          "placementName": null,
+          "selectedMessage": {
+            "component": {
+              "__typename": null,
+              "buttonComponentType": null,
+              "buttonEmphasis": null,
+              "buttonSize": null,
+              "buttonSubtext": null,
+              "buttonTone": null,
+              "icon": null,
+              "iconPosition": null,
+              "prefersVirtualTour": null,
+              "requestSource": null,
+              "shortTitle": null,
+              "shouldButtonWidthGrow": null,
+              "subTitle": null,
+              "title": null,
+              "variant": null
+            },
+            "id": null,
+            "name": null
+          }
+        }
+      ],
+      "placementGroup": null
+    }
+  },
+  "ompMobileWebFooterButtons": {
+    "placementGroupDecision": {
+      "eventId": null,
+      "experienceName": null,
+      "experienceType": null,
+      "placementDecisions": [
+        {
+          "eventMetadata": {
+            "exposureBlock": {
+              "assignmentServiceCd": null,
+              "decisionToken": null,
+              "extendedInfo": null,
+              "keyTypeCd": null,
+              "randomizationKey": null,
+              "treatments": null
+            },
+            "nbaBlock": null,
+            "ompV2Block": {
+              "assignedExperienceType": null,
+              "eventId": null,
+              "placementGroup": null,
+              "placementName": null,
+              "qualifiedExperiencesDefaultName": null,
+              "qualifiedExperiencesMultivariateName": null,
+              "qualifiedExperiencesNbaName": null,
+              "qualifiedNbaActions": null,
+              "qualifiedNbaMessages": null,
+              "selectedExperienceName": null,
+              "selectedExperienceTrial": null,
+              "selectedExperienceTrialAssignment": null,
+              "selectedExperienceType": null,
+              "selectedMessage": null,
+              "selectedMessageAttributions": null,
+              "selectedNbaAction": null,
+              "selectedNbaMessage": null
+            },
+            "thirdPartyMetadataBlock": [
+              {
+                "key": null,
+                "value": null
+              }
+            ]
+          },
+          "placementName": null,
+          "selectedMessage": {
+            "component": {
+              "__typename": null,
+              "buttonComponentType": null,
+              "buttonEmphasis": null,
+              "buttonSize": null,
+              "buttonSubtext": null,
+              "buttonTone": null,
+              "icon": null,
+              "iconPosition": null,
+              "prefersVirtualTour": null,
+              "requestSource": null,
+              "shortTitle": null,
+              "shouldButtonWidthGrow": null,
+              "subTitle": null,
+              "title": null,
+              "variant": null
+            },
+            "id": null,
+            "name": null
+          }
+        }
+      ],
+      "placementGroup": null
+    }
+  },
+  "ompPhotoGalleryCtaButtons": {
+    "placementGroupDecision": {
+      "eventId": null,
+      "experienceName": null,
+      "experienceType": null,
+      "placementDecisions": [
+        {
+          "eventMetadata": {
+            "exposureBlock": {
+              "assignmentServiceCd": null,
+              "decisionToken": null,
+              "extendedInfo": null,
+              "keyTypeCd": null,
+              "randomizationKey": null,
+              "treatments": null
+            },
+            "nbaBlock": null,
+            "ompV2Block": {
+              "assignedExperienceType": null,
+              "eventId": null,
+              "placementGroup": null,
+              "placementName": null,
+              "qualifiedExperiencesDefaultName": null,
+              "qualifiedExperiencesMultivariateName": null,
+              "qualifiedExperiencesNbaName": null,
+              "qualifiedNbaActions": null,
+              "qualifiedNbaMessages": null,
+              "selectedExperienceName": null,
+              "selectedExperienceTrial": null,
+              "selectedExperienceTrialAssignment": null,
+              "selectedExperienceType": null,
+              "selectedMessage": null,
+              "selectedMessageAttributions": null,
+              "selectedNbaAction": null,
+              "selectedNbaMessage": null
+            },
+            "thirdPartyMetadataBlock": [
+              {
+                "key": null,
+                "value": null
+              }
+            ]
+          },
+          "placementName": null,
+          "selectedMessage": {
+            "component": {
+              "__typename": null,
+              "buttonComponentType": null,
+              "buttonEmphasis": null,
+              "buttonSize": null,
+              "buttonSubtext": null,
+              "buttonTone": null,
+              "icon": null,
+              "iconPosition": null,
+              "prefersVirtualTour": null,
+              "requestSource": null,
+              "shortTitle": null,
+              "shouldButtonWidthGrow": null,
+              "subTitle": null,
+              "title": null,
+              "variant": null
+            },
+            "id": null,
+            "name": null
+          }
+        }
+      ],
+      "placementGroup": null
+    }
+  },
+  "ompZmvPhotoGalleryCtaButtons": {
+    "placementGroupDecision": {
+      "eventId": null,
+      "experienceName": null,
+      "experienceType": null,
+      "placementDecisions": [
+        {
+          "eventMetadata": {
+            "exposureBlock": {
+              "assignmentServiceCd": null,
+              "decisionToken": null,
+              "extendedInfo": null,
+              "keyTypeCd": null,
+              "randomizationKey": null,
+              "treatments": null
+            },
+            "nbaBlock": null,
+            "ompV2Block": {
+              "assignedExperienceType": null,
+              "eventId": null,
+              "placementGroup": null,
+              "placementName": null,
+              "qualifiedExperiencesDefaultName": null,
+              "qualifiedExperiencesMultivariateName": null,
+              "qualifiedExperiencesNbaName": null,
+              "qualifiedNbaActions": null,
+              "qualifiedNbaMessages": null,
+              "selectedExperienceName": null,
+              "selectedExperienceTrial": null,
+              "selectedExperienceTrialAssignment": null,
+              "selectedExperienceType": null,
+              "selectedMessage": null,
+              "selectedMessageAttributions": null,
+              "selectedNbaAction": null,
+              "selectedNbaMessage": null
+            },
+            "thirdPartyMetadataBlock": [
+              {
+                "key": null,
+                "value": null
+              }
+            ]
+          },
+          "placementName": null,
+          "selectedMessage": {
+            "component": {
+              "__typename": null,
+              "buttonComponentType": null,
+              "buttonEmphasis": null,
+              "buttonSize": null,
+              "buttonSubtext": null,
+              "buttonTone": null,
+              "icon": null,
+              "iconPosition": null,
+              "prefersVirtualTour": null,
+              "requestSource": null,
+              "shortTitle": null,
+              "shouldButtonWidthGrow": null,
+              "subTitle": null,
+              "title": null,
+              "variant": null
+            },
+            "id": null,
+            "name": null
+          }
+        }
+      ],
+      "placementGroup": null
+    }
+  },
+  "originalPhotos": [
+    {
+      "caption": null,
+      "mixedSources": {
+        "jpeg": [
+          {
+            "url": null,
+            "width": null
+          }
+        ],
+        "webp": [
+          {
+            "url": null,
+            "width": null
+          }
+        ]
+      }
+    }
+  ],
+  "ouid": null,
+  "pageViewCount": null,
+  "pals": null,
+  "palsId": null,
+  "parentRegion": {
+    "name": null,
+    "regionId": null
+  },
+  "photoCount": null,
+  "postingUrl": null,
+  "price": null,
+  "priceChange": null,
+  "priceChangeDate": null,
+  "priceChangeDateString": null,
+  "propertyTaxRate": null,
+  "propertyTypeDimension": null,
+  "pslMarketingStatus": null,
+  "rentZestimate": null,
+  "resoFacts": {
+    "bathrooms": null,
+    "bathroomsFull": null,
+    "bathroomsHalf": null,
+    "bathroomsOneQuarter": null,
+    "bathroomsThreeQuarter": null,
+    "bedrooms": null,
+    "carportParkingCapacity": null,
+    "coveredParkingCapacity": null,
+    "garageParkingCapacity": null,
+    "hasAttachedGarage": null,
+    "hasCarport": null,
+    "hasGarage": null,
+    "hasOpenParking": null,
+    "hoaFeeTotal": null,
+    "homeType": null,
+    "lotSize": null,
+    "openParkingCapacity": null,
+    "parkingCapacity": null,
+    "parkingFeatures": null,
+    "pricePerSquareFoot": null,
+    "propertySubType": null,
+    "yearBuilt": null
+  },
+  "responsivePhotos": [
+    {
+      "caption": null,
+      "key": null,
+      "mixedSources": {
+        "jpeg": [
+          {
+            "url": null,
+            "width": null
+          }
+        ],
+        "webp": [
+          {
+            "url": null,
+            "width": null
+          }
+        ]
+      },
+      "subjectType": null,
+      "url": null
+    }
+  ],
+  "responsivePhotosOriginalRatio": [
+    {
+      "caption": null,
+      "key": null,
+      "mixedSources": {
+        "jpeg": [
+          {
+            "url": null,
+            "width": null
+          }
+        ],
+        "webp": [
+          {
+            "url": null,
+            "width": null
+          }
+        ]
+      },
+      "subjectType": null,
+      "url": null
+    }
+  ],
+  "richMedia": null,
+  "secondsOnZillow": null,
+  "sellingSoon": [
+    {
+      "modelId": null,
+      "percentile": null,
+      "treatmentId": null
+    }
+  ],
+  "ssid": null,
+  "state": null,
+  "stateId": null,
+  "streetAddress": null,
+  "thirdPartyVirtualTour": {
+    "approved": null,
+    "externalUrl": null,
+    "lightboxUrl": null,
+    "providerKey": null,
+    "staticUrl": null
+  },
+  "timeOnZillow": null,
+  "timeZone": null,
+  "tourAppointmentsForCurrentLoggedInUser": null,
+  "tourEligibility": {
+    "isPropertyTourEligible": null,
+    "propertyTourOptions": {
+      "isFinal": null,
+      "tourAvailability": [
+        {
+          "date": null,
+          "status": null,
+          "times": null
+        }
+      ],
+      "tourType": null
+    }
+  },
+  "tourViewCount": null,
+  "whatILove": null,
+  "zestimate": null,
+  "zipcode": null,
+  "zpid": null
+}
