@@ -763,3 +763,37 @@ class TestDatabaseCommands:
         result = runner.invoke(app, ["db", "import", str(input_file)])
         assert result.exit_code == 0
         assert "default database is now" in result.stderr
+
+    def test_db_enrich_persists_fetched_details(self, tmp_path, fake_http, home_detail_body):
+        """Enriching a shortlisted listing fetches its detail and persists it."""
+        rows = [{"zpid": "348914888", "price": 300000, "city": "Albany"}]
+        input_file = write_json(tmp_path / "input.json", rows)
+        db_path = tmp_path / "enrich.db"
+        assert runner.invoke(app, ["db", "import", str(input_file), "--db", str(db_path)]).exit_code == 0
+
+        fake_http.install("GET", content=home_detail_body)
+        result = runner.invoke(app, ["db", "enrich", "--db", str(db_path), "--max-requests", "1"])
+        assert result.exit_code == 0, result.stderr
+        assert "Enriched 1 listings" in result.stderr
+
+        conn = connect(db_path)
+        try:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM property_details WHERE zpid = 348914888 AND kind = 'sale'"
+            ).fetchone()[0]
+            assert count == 1
+            row = conn.execute(
+                "SELECT enriched_at_utc, raw_json FROM property_details WHERE zpid = 348914888"
+            ).fetchone()
+            assert row is not None
+            assert row[0] is not None
+            assert row[1] is not None
+        finally:
+            conn.close()
+
+    def test_db_enrich_with_no_listings(self, tmp_path):
+        db_path = tmp_path / "empty.db"
+        connect(db_path).close()  # create the schema without any listings
+        result = runner.invoke(app, ["db", "enrich", "--db", str(db_path), "--format", "json"])
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) == {"enriched": 0}

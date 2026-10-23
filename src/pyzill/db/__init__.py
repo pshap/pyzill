@@ -16,6 +16,7 @@ public names.
 
 from pyzill.db.changes import get_changes
 from pyzill.db.connection import connect, connect_readonly
+from pyzill.db.details import get_property_details, upsert_property_details
 from pyzill.db.paths import default_db_path, resolve_db_path
 from pyzill.db.prune import PruneStats, prune_database
 from pyzill.db.queries import get_price_history, load_listings
@@ -45,11 +46,13 @@ __all__ = [
     "finish_sync_run",
     "get_changes",
     "get_price_history",
+    "get_property_details",
     "list_runs",
     "load_listings",
     "normalize_utc_timestamp",
     "prune_database",
     "resolve_db_path",
     "upsert_listings",
+    "upsert_property_details",
     "utc_now",
 ]

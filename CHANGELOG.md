@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- `db enrich` fetches property details for shortlisted listings and stores
+  them in a new `property_details` table (HOA fees, tax history, descriptions,
+  schools, photos, lot size, year built, and the raw payload). Shortlist with
+  `--where`/`--sort`/`--limit` and bound the request volume with `--max-requests`
+  (default 50).
+- The query engine can filter, sort, and project the detail fields, so
+  "no HOA, taxes under $6k, description mentions 'garage'" is now a query.
+- `upsert_property_details` and `get_property_details` write and read the new
+  table from the library.
+
 ### Changed
 
 - Bumped to **1.5.0**: the stricter inputs, deprecations, and the new

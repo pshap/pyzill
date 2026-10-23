@@ -37,16 +37,20 @@ pyzill db runs --kind rent --limit 10
 pyzill db prune --older-than 90
 pyzill db prune --keep-runs 20 --vacuum
 
+# Fetch property details for shortlisted listings and store them
+pyzill db enrich --where 'price<400000' --max-requests 50
+
 # Database statistics
 pyzill db stats
 ```
 
 **Database path resolution** — `--db PATH` > `PYZILL_DB` env var > `$XDG_DATA_HOME/pyzill/pyzill.db` (falling back to `~/.local/share/pyzill/pyzill.db`). If `./pyzill.db` exists in the working directory and no explicit path is given, a warning is printed to stderr pointing to the new default location. The schema is created automatically on first use (no init command needed).
 
-**Schema** (version 3) — The database tracks:
+**Schema** (version 4) — The database tracks:
 - `listings` table: latest state view with composite primary key `(zpid, kind)` so a sale and rent for the same zpid do not overwrite each other, plus `first_seen_utc` and `last_seen_utc`
 - `price_history` table: change-only priced sightings keyed by `(zpid, kind, seen_utc)`
 - `status_history` table: transition history tracking status changes (pending/contingent/active) keyed by `(zpid, kind, status, first_seen_utc)`
+- `property_details` table: the detail page fields for shortlisted listings — HOA fee and unit, description, photo count, year built, lot size and unit, tax assessed value, tax history, price history detail, schools, the raw payload, and the moment it was enriched. Keyed by `(zpid, kind)` with a foreign key that cascades deletes into listings
 - `sync_runs` table: search sync runs recording query, bounds, filters, result count, and whether the run was truncated
 - `sightings` table: each search observation per run, preserving the raw payload (`raw_json`) for re-normalization
 
@@ -127,12 +131,37 @@ empty array (`[]`) when nothing matches, so its output can be parsed without
 special-casing an empty response. The other formats print a warning and no
 rows instead.
 
+**Enriching** — the search tables record what a search returned, but the detail
+page — HOA fees, tax history, descriptions, schools, and photos — only ever
+appeared as one-off command output, so it could not be filtered or searched.
+`db enrich` fetches the detail for shortlisted listings and stores it in the
+`property_details` table. Shortlist with the same `--where`/`--sort`/`--limit`
+flags the query command uses, and bound the request volume with `--max-requests`
+(default 50; `0` disables the budget). The detail fields then become queryable
+through the same engine, so "no HOA, taxes under $6k, description mentions
+'garage'" is a query:
+
+```bash
+pyzill db enrich --where 'price<400000' --max-requests 50
+pyzill db query --where 'hoa_fee=0' --where 'tax_assessed_value<6000' --where 'description ~ garage'
+```
+
+`tax_assessed_value` prefers the listings column and falls back to the details
+column, so a listing enriched before the field existed on the detail page still
+filters. `--cols` can project detail fields, and `--sort` can order by them.
+Enriching is idempotent: re-running it overwrites the stored detail and updates
+`enriched_at_utc`, and a listing with no detail row is simply absent from a
+detail-field query. The command emits a JSON summary (`enriched`) when stdout is
+redirected or `--format json` is given, and is available from Python as
+`pyzill.upsert_property_details` / `pyzill.get_property_details`.
+
 `pyzill schema listing` prints the versioned JSON Schema for normalized
-listings. Two more schemas are published for the other shapes pyzill emits:
+listings. Four more schemas are published for the other shapes pyzill emits:
 
 ```bash
 pyzill schema db-listing   # a row of the database's listings table, as db query returns it
-pyzill schema detail        # the normalized property detail
+pyzill schema db-detail    # a row of the database's property_details table, as db query returns it when it projects a detail field
+pyzill schema detail       # the normalized property detail
 ```
 
 `schema db-listing` describes every column the `listings` table has -- the

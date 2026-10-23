@@ -23,11 +23,14 @@ from pyzill.db import (
     connect,
     db_stats,
     default_db_path,
+    get_changes,
     get_price_history,
+    get_property_details,
     list_runs,
     load_listings,
     prune_database,
     upsert_listings,
+    upsert_property_details,
     utc_now,
 )
 from pyzill.exceptions import (
@@ -81,6 +84,7 @@ __all__ = [
     "default_db_path",
     "for_rent",
     "for_sale",
+    "get_changes",
     "get_from_apartment_id",
     "get_from_apartment_url",
     "get_from_department_id",
@@ -89,6 +93,7 @@ __all__ = [
     "get_from_home_url",
     "get_min_interval",
     "get_price_history",
+    "get_property_details",
     "is_building_result",
     "iter_rent",
     "iter_sale",
@@ -108,5 +113,6 @@ __all__ = [
     "split_bbox",
     "tiled_search",
     "upsert_listings",
+    "upsert_property_details",
     "utc_now",
 ]

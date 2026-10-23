@@ -25,8 +25,49 @@ __all__ = [
 ]
 
 _QUERY_FIELDS = frozenset(LISTING_FIELDS) | {"ppsf"}
-# "kind" is part of the listings primary key but not a normalized Listing field.
-_DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc", "kind"}
+# Property detail fields that can be queried from the database. They are kept
+# out of ``_QUERY_FIELDS`` so file-based queries cannot name them.
+_DETAIL_QUERY_FIELDS = frozenset(
+    {
+        "hoa_fee",
+        "hoa_fee_unit",
+        "description",
+        "photos_count",
+        "year_built",
+        "lot_size",
+        "lot_size_unit",
+        "tax_assessed_value",
+        "tax_history",
+        "price_history_detail",
+        "schools",
+        "enriched_at_utc",
+    }
+)
+# Detail fields stored directly on property_details. Used to compile SQL
+# columns and to decide when the listings query needs the details join.
+_PROPERTY_DETAIL_FIELDS = frozenset(
+    {
+        "hoa_fee",
+        "hoa_fee_unit",
+        "description",
+        "photos_count",
+        "year_built",
+        "lot_size",
+        "lot_size_unit",
+        "tax_history",
+        "price_history_detail",
+        "schools",
+        "enriched_at_utc",
+    }
+)
+# Detail-queryable fields that require joining property_details (the
+# COALESCE form of tax_assessed_value also reads the details table).
+_DETAIL_SQL_FIELDS = _PROPERTY_DETAIL_FIELDS | {"tax_assessed_value"}
+_DETAILS_JOIN = (
+    " LEFT JOIN property_details ON property_details.zpid = listings.zpid AND property_details.kind = listings.kind"
+)
+# Listing fields the database stores alongside the normalized shape.
+_DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc", "kind"} | _DETAIL_QUERY_FIELDS
 # The numeric listing fields, plus the computed price-per-square-foot.
 _NUMERIC_FIELDS = NUMERIC_LISTING_FIELDS | {"ppsf"}
 
@@ -221,16 +262,33 @@ def _sort_condition(spec: str, valid_fields: frozenset[str]) -> tuple[str, str]:
     return field, (direction or "asc").lower()
 
 
-def _sql_column(field: str) -> str:
+def _column_for(field: str, join_used: bool) -> str:
+    """Return the SQL column expression for a field, used for ordering and projection.
+
+    Detail fields come from the joined property_details table. ``tax_assessed_value``
+    prefers the listings value and falls back to the details value. When the details
+    join is active every listing column is qualified with ``listings.``, because both
+    tables carry ``zpid`` and ``kind`` and an unqualified one is ambiguous.
+    """
+    if field == "ppsf":
+        prefix = "listings." if join_used else ""
+        return f"(CAST({prefix}price AS REAL) / NULLIF({prefix}area, 0))"
+    if field in _PROPERTY_DETAIL_FIELDS:
+        return f'property_details."{field}"'
+    if field == "tax_assessed_value":
+        return 'COALESCE(listings."tax_assessed_value", property_details."tax_assessed_value")'
+    prefix = "listings." if join_used else ""
+    return f'{prefix}"{field}"'
+
+
+def _sql_column(field: str, join_used: bool) -> str:
     """Return the SQL expression for a field.
 
     The column is used as it stands, without a ``CAST``: wrapping a column in
     ``CAST(...)`` (or a function such as ``lower``) hides it from SQLite's
     indexes, so a filtered query reads the whole table instead of seeking.
     """
-    if field == "ppsf":
-        return "(CAST(price AS REAL) / NULLIF(area, 0))"
-    return f'"{field}"'
+    return _column_for(field, join_used)
 
 
 def _numeric_value(field: str, value: Any) -> int | float:
@@ -273,9 +331,9 @@ def _sql_equality(field: str, column: str, operator: str, value: Any) -> tuple[s
     return f"lower({column}) {sql_operator} lower(?)", [text]
 
 
-def _sql_condition(condition: Condition) -> tuple[str, list[Any]]:
+def _sql_condition(condition: Condition, join_used: bool) -> tuple[str, list[Any]]:
     field, operator, value = condition.field, condition.operator, condition.value
-    column = _sql_column(field)
+    column = _column_for(field, join_used)
     if operator in ("=", "==", "!=") and value is None:
         return f"{column} IS {'NOT ' if operator == '!=' else ''}NULL", []
     if operator == "~":
@@ -290,14 +348,21 @@ def _projection_column(field: str) -> str:
 
     ``ppsf`` is computed rather than stored, so the projection computes it in
     SQL, with the same rounding and the same "unknown" rule the in-memory
-    projection uses.
+    projection uses. Every listing column is qualified with ``listings.``:
+    this is only ever emitted alongside the details join, where both tables
+    carry ``zpid`` and ``kind`` and an unqualified one is ambiguous.
     """
     if field == "ppsf":
         return (
-            "(CASE WHEN price IS NOT NULL AND area IS NOT NULL AND price != 0 AND area != 0 "
-            'THEN ROUND(CAST(price AS REAL) / area, 2) END) AS "ppsf"'
+            "(CASE WHEN listings.price IS NOT NULL AND listings.area IS NOT NULL "
+            "AND listings.price != 0 AND listings.area != 0 "
+            'THEN ROUND(CAST(listings.price AS REAL) / listings.area, 2) END) AS "ppsf"'
         )
-    return f'"{field}"'
+    if field in _PROPERTY_DETAIL_FIELDS:
+        return f'property_details."{field}" AS "{field}"'
+    if field == "tax_assessed_value":
+        return 'COALESCE(listings."tax_assessed_value", property_details."tax_assessed_value") AS "tax_assessed_value"'
+    return f'listings."{field}" AS "{field}"'
 
 
 @dataclass(frozen=True)
@@ -320,27 +385,64 @@ class _QuerySpec:
     conditions: Sequence[Condition] | None = None
 
 
-def _build_where(conditions: Sequence[Condition]) -> tuple[list[str], list[Any]]:
+def _build_where(conditions: Sequence[Condition], join_used: bool) -> tuple[list[str], list[Any]]:
     """Compile the conditions into SQL clauses and their bound values."""
     clauses: list[str] = []
     parameters: list[Any] = []
     for condition in conditions:
-        clause, values = _sql_condition(condition)
+        clause, values = _sql_condition(condition, join_used)
         clauses.append(clause)
         parameters.extend(values)
     return clauses, parameters
 
 
-def _build_order(spec: _QuerySpec) -> str:
+def _listings_order(field: str, direction: str) -> str:
+    """ORDER BY for the listings table, with nulls last and a stable tie-breaker.
+
+    Every column is qualified with ``listings.``: this is only ever emitted
+    alongside the details join, where both tables carry ``zpid`` and ``kind``.
+    """
+    if field == "zpid":
+        column = 'listings."zpid"'
+        return f'({column}) IS NULL ASC, {column} {direction.upper()}, listings."kind" ASC'
+    if field == "kind":
+        column = 'listings."kind"'
+        return f'({column}) IS NULL ASC, {column} {direction.upper()}, listings."zpid" ASC'
+    if field == "ppsf":
+        column = "(CAST(listings.price AS REAL) / NULLIF(listings.area, 0))"
+        return f'({column}) IS NULL ASC, {column} {direction.upper()}, listings."zpid" ASC'
+    column = _sql_column(field, True)
+    return f'({column}) IS NULL ASC, {column} {direction.upper()}, listings."zpid" ASC'
+
+
+def _needs_join(spec: _QuerySpec, parsed: list[Condition], selected: list[str] | None) -> bool:
+    """Whether the listings query reads a column from the joined details table."""
+    if any(c.field in _DETAIL_SQL_FIELDS for c in parsed):
+        return True
+    if selected and any(s in _DETAIL_SQL_FIELDS for s in selected):
+        return True
+    return bool(spec.sort and _sort_condition(spec.sort, spec.valid_fields)[0] in _DETAIL_SQL_FIELDS)
+
+
+def _build_order(spec: _QuerySpec, join_used: bool) -> str:
     """Return the ORDER BY clause, with nulls last and a stable tie-breaker."""
     if spec.sort is None:
-        return spec.default_order
+        order = spec.default_order
+        if spec.table == "listings" and join_used:
+            order = (
+                order.replace('"last_seen_utc"', 'listings."last_seen_utc"')
+                .replace('"zpid"', 'listings."zpid"')
+                .replace('"kind"', 'listings."kind"')
+            )
+        return order
     field, direction = _sort_condition(spec.sort, spec.valid_fields)
-    column = _sql_column(field)
+    if spec.table == "listings":
+        return _listings_order(field, direction)
+    column = _sql_column(field, False)
     return f'({column}) IS NULL ASC, {column} {direction.upper()}, "zpid" ASC'
 
 
-def _build_select(spec: _QuerySpec, selected: list[str] | None) -> str:
+def _build_select(spec: _QuerySpec, selected: list[str] | None, join_used: bool) -> str:
     """Return the SELECT list for the query."""
     if spec.payload_column is not None:
         # A saved row is its payload; the table columns exist to filter and
@@ -350,7 +452,7 @@ def _build_select(spec: _QuerySpec, selected: list[str] | None) -> str:
         # Projecting in SQL keeps the columns that were not asked for out of
         # the result, so a narrow query does not read the whole table.
         return ", ".join(_projection_column(column) for column in selected)
-    return "*"
+    return "listings.*" if join_used else "*"
 
 
 def _compile_query(spec: _QuerySpec) -> tuple[str, list[Any], list[str] | None]:
@@ -359,11 +461,17 @@ def _compile_query(spec: _QuerySpec) -> tuple[str, list[Any], list[str] | None]:
     for condition in parsed:
         _validate_condition(condition)
     selected = _selected_columns(spec.cols, spec.valid_fields)
-    clauses, parameters = _build_where(parsed)
-    sql = f'SELECT {_build_select(spec, selected)} FROM "{spec.table}"'  # noqa: S608 - table names are internal constants
+    join_used = _needs_join(spec, parsed, selected)
+    clauses, parameters = _build_where(parsed, join_used)
+    if spec.table == "listings":
+        sql = f'SELECT {_build_select(spec, selected, join_used)} FROM "{spec.table}"'  # noqa: S608 - table names are internal constants
+        if join_used:
+            sql += _DETAILS_JOIN
+    else:
+        sql = f'SELECT {_build_select(spec, selected, join_used)} FROM "{spec.table}"'  # noqa: S608 - table names are internal constants
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY " + _build_order(spec)
+    sql += " ORDER BY " + _build_order(spec, join_used)
     if spec.limit is not None:
         sql += " LIMIT ?"
         parameters.append(spec.limit)
@@ -452,7 +560,7 @@ def query_database(  # noqa: PLR0913 - the query's whole filter surface
         conn,
         _QuerySpec(
             table="listings",
-            valid_fields=_DB_QUERY_FIELDS,
+            valid_fields=_DB_QUERY_FIELDS | _DETAIL_QUERY_FIELDS,
             default_order='"last_seen_utc" DESC, "zpid" DESC, "kind" ASC',
             where=where,
             where_json=where_json,

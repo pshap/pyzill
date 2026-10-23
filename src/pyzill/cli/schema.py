@@ -20,7 +20,7 @@ from typing import Any, Union, get_args, get_origin, get_type_hints
 
 import typer
 
-from pyzill.db.schema import LISTING_COLUMN_DEFINITIONS, LISTING_TABLE_COLUMNS
+from pyzill.db.schema import LISTING_COLUMN_DEFINITIONS, LISTING_TABLE_COLUMNS, PROPERTY_DETAIL_COLUMN_DEFINITIONS
 from pyzill.normalize import Listing
 from pyzill.property_detail import PropertyDetail
 
@@ -29,6 +29,7 @@ schema_app = typer.Typer(name="schema", help="Print versioned JSON Schemas")
 _LISTING_SCHEMA_ID = "https://github.com/pshap/pyzill/schemas/listing/1.0.0"
 _DB_LISTING_SCHEMA_ID = "https://github.com/pshap/pyzill/schemas/db-listing/1.0.0"
 _DETAIL_SCHEMA_ID = "https://github.com/pshap/pyzill/schemas/detail/1.0.0"
+_DB_DETAIL_SCHEMA_ID = "https://github.com/pshap/pyzill/schemas/db-detail/1.0.0"
 _JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 # The JSON type each storage type in the DDL maps to.
@@ -67,6 +68,34 @@ def _ddl_column_schema(definition: str) -> dict[str, Any]:
     if "NOT NULL" in definition:
         return {"type": json_type}
     return {"anyOf": [{"type": json_type}, {"type": "null"}]}
+
+
+def db_detail_schema() -> dict[str, Any]:
+    """Derive the versioned JSON Schema for a row of the property_details table.
+
+    This is the shape ``pyzill db query`` emits when it projects a detail
+    field: the detail columns, keyed by ``(zpid, kind)`` with the foreign key
+    that cascades deletes into listings. ``tax_assessed_value`` prefers the
+    listings column and falls back to this one, but the stored detail column
+    is still published here under its own name.
+    """
+    properties = {
+        column: _ddl_column_schema(definition) for column, definition in PROPERTY_DETAIL_COLUMN_DEFINITIONS.items()
+    }
+    return {
+        "$schema": _JSON_SCHEMA_DIALECT,
+        "$id": _DB_DETAIL_SCHEMA_ID,
+        "title": "Pyzill Database Property Detail",
+        "description": (
+            "A row of the local database's property_details table, as 'pyzill db query' emits "
+            "when it projects a detail field. No property is required: '--cols' projects a subset "
+            "of them; a property the table does not have is still rejected."
+        ),
+        "type": "object",
+        "properties": properties,
+        "required": [],
+        "additionalProperties": False,
+    }
 
 
 def listing_schema() -> dict[str, Any]:
@@ -142,3 +171,9 @@ def db_listing() -> None:
 def detail() -> None:
     """Print the JSON Schema for normalized property details."""
     typer.echo(json.dumps(detail_schema(), indent=2, ensure_ascii=False))
+
+
+@schema_app.command("db-detail")
+def db_detail() -> None:
+    """Print the JSON Schema for a row of the property_details table."""
+    typer.echo(json.dumps(db_detail_schema(), indent=2, ensure_ascii=False))

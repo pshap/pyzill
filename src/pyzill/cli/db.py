@@ -11,11 +11,12 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 
 from pyzill._kinds import ListingKind, as_kind
+from pyzill.api import get_from_home_id
 from pyzill.cli.console import (
     context,
     emit,
@@ -71,6 +72,7 @@ from pyzill.db import (
     normalize_utc_timestamp,
     prune_database,
     resolve_db_path,
+    upsert_property_details,
     utc_now,
 )
 from pyzill.workflows import SyncResult, fetch_listings, import_rows, prepare_import, sync_to_db
@@ -461,3 +463,55 @@ def db_prune(
         f"{stats.runs_deleted} runs, {stats.sightings_deleted} sightings"
         + (", database vacuumed" if stats.vacuumed else ""),
     )
+
+
+def _enrich_listing(conn: sqlite3.Connection, zpid: int, kind: str, http_kwargs: dict[str, Any]) -> None:
+    """Fetch one property detail record and upsert it; aborts the command on failure."""
+    with network_errors("Detail fetch failed"):
+        detail = get_from_home_id(int(zpid), **http_kwargs)
+    upsert_property_details(conn, detail, kind=str(kind))
+
+
+@db_app.command("enrich")
+def db_enrich(
+    where: WhereOpt = None,
+    where_json: WhereJSONOpt = None,
+    sort: SortOpt = None,
+    limit: LimitOpt = None,
+    max_requests: Annotated[int | None, typer.Option("--max-requests", help="Maximum detail requests to make")] = None,
+    db_path: DbPathOpt = None,
+    output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
+) -> None:
+    """Fetch property details for shortlisted listings and store them."""
+    with _db_session(db_path, must_exist=True, readonly=True) as conn:
+        rows, _ = cli_query_database(conn, where=where, where_json=where_json, sort=sort, limit=limit)
+
+    if not rows:
+        if output_format is OutputFormat.json:
+            emit(dumps({"enriched": 0}), None)
+        else:
+            warn("No listings to enrich")
+        return
+
+    budget = max_requests if max_requests is not None else 50
+    if budget < 0:
+        error("--max-requests must be non-negative", code=2)
+
+    enriched = 0
+    http_kwargs = context().http_kwargs
+    with _db_session(db_path) as conn:
+        for i, row in enumerate(rows):
+            if i >= budget:
+                break
+            zpid = row.get("zpid")
+            if zpid is None:
+                continue
+            kind = row.get("kind") or "sale"
+            _enrich_listing(conn, int(zpid), kind, http_kwargs)
+            enriched += 1
+            progress(f"enriched {enriched}:", f"{zpid}")
+
+    if output_format is OutputFormat.json:
+        emit(dumps({"enriched": enriched}), None)
+        return
+    stderr_line("green", "Enriched", f"{enriched} listings")

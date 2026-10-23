@@ -13,6 +13,7 @@ from pyzill.normalize import LISTING_FIELDS
 __all__ = [
     "LISTING_COLUMN_DEFINITIONS",
     "LISTING_TABLE_COLUMNS",
+    "PROPERTY_DETAIL_COLUMN_DEFINITIONS",
     "SCHEMA_VERSION",
     "ensure_schema",
     "schema_needs_update",
@@ -20,7 +21,7 @@ __all__ = [
 
 
 # The current schema version.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Canonical listings columns, in schema order. Derived from the normalized
 # listing shape, so the DDL, the migrations, and the write path all agree on
@@ -102,6 +103,37 @@ _CREATE_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS ix_listings_kind_price ON listings(kind, price)",
     "CREATE INDEX IF NOT EXISTS ix_listings_last_seen ON listings(last_seen_utc)",
 )
+
+_CREATE_PROPERTY_DETAILS_SQL = """CREATE TABLE IF NOT EXISTS {name} (
+    zpid INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'sale' CHECK (kind IN ('sale', 'rent', 'sold')),
+    hoa_fee INTEGER,
+    hoa_fee_unit TEXT,
+    description TEXT,
+    photos_count INTEGER,
+    year_built INTEGER,
+    lot_size REAL,
+    lot_size_unit TEXT,
+    tax_assessed_value INTEGER,
+    tax_history TEXT,
+    price_history_detail TEXT,
+    schools TEXT,
+    raw_json TEXT,
+    enriched_at_utc TEXT NOT NULL,
+    PRIMARY KEY (zpid, kind),
+    FOREIGN KEY (zpid, kind) REFERENCES listings(zpid, kind) ON DELETE CASCADE
+);"""
+
+_CREATE_PROPERTY_DETAILS_INDEX_SQL = ("CREATE INDEX IF NOT EXISTS ix_property_details_kind ON property_details(kind)",)
+
+# The property_details columns, parsed from the same DDL the table is built
+# with, so the schema command and the table can never drift apart.
+PROPERTY_DETAIL_COLUMN_DEFINITIONS: dict[str, str] = {
+    name: f"{column_type}{constraint}".strip()
+    for name, column_type, constraint in _DDL_COLUMN_RE.findall(
+        _CREATE_PROPERTY_DETAILS_SQL.format(name="property_details")
+    )
+}
 
 _CREATE_TRACKING_SQL = (
     """CREATE TABLE IF NOT EXISTS sync_runs (
@@ -209,7 +241,14 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
-_MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3}
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """Add property details table."""
+    conn.execute(_CREATE_PROPERTY_DETAILS_SQL.format(name="property_details"))
+    for statement in _CREATE_PROPERTY_DETAILS_INDEX_SQL:
+        conn.execute(statement)
+
+
+_MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4}
 
 
 def _addable_definition(definition: str) -> str:
@@ -351,7 +390,10 @@ def schema_needs_update(conn: sqlite3.Connection) -> bool:
     if version < SCHEMA_VERSION:
         return True
     existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
-    return any(column not in existing_columns for column in LISTING_TABLE_COLUMNS)
+    if any(column not in existing_columns for column in LISTING_TABLE_COLUMNS):
+        return True
+    # Also need property_details table
+    return not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='property_details'").fetchone()
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -378,14 +420,24 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
                 conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
                 for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
                     conn.execute(statement)
+            conn.execute(_CREATE_PROPERTY_DETAILS_SQL.format(name="property_details"))
+            for statement in _CREATE_PROPERTY_DETAILS_INDEX_SQL:
+                conn.execute(statement)
             version = SCHEMA_VERSION
-        while version < SCHEMA_VERSION:
-            migration = _MIGRATIONS.get(version)
-            if migration is None:
-                raise sqlite3.DatabaseError(f"No migration available from schema version {version}")
-            migration(conn)
-            version += 1
-        conn.execute(f"PRAGMA user_version = {version}")
+            conn.execute(f"PRAGMA user_version = {version}")
+        else:
+            while version < SCHEMA_VERSION:
+                migration = _MIGRATIONS.get(version)
+                if migration is None:
+                    raise sqlite3.DatabaseError(f"No migration available from schema version {version}")
+                migration(conn)
+                version += 1
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+    # The details table is part of the current schema: create it when missing.
+    # Idempotent on fresh, migrated, and already-current databases alike.
+    conn.execute(_CREATE_PROPERTY_DETAILS_SQL.format(name="property_details"))
+    for statement in _CREATE_PROPERTY_DETAILS_INDEX_SQL:
+        conn.execute(statement)
     # Backfill any columns a newer release added. Runs even when the
     # version is already current so a database that predates an additive
     # column (but not a version bump) is repaired on open.

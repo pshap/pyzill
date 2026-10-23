@@ -8,7 +8,7 @@ from typer._click.exceptions import ClickException
 
 from pyzill import ratelimit
 from pyzill.cli import app, main_entry
-from pyzill.db import connect, upsert_listings
+from pyzill.db import connect, upsert_listings, upsert_property_details
 from pyzill.query import query_database
 from tests.cli_helpers import _GEO_STUB, run_module, runner
 
@@ -20,11 +20,13 @@ class TestRootAndHelp:
 
     def test_root_help_displays_name(self):
         result = runner.invoke(app, ["--help"])
+
         assert result.exit_code == 0
         assert "pyzill" in result.stdout
 
     def test_version_shows_version(self):
         result = runner.invoke(app, ["--version"])
+
         assert result.exit_code == 0
         assert "pyzill" in result.stdout
 
@@ -78,6 +80,37 @@ class TestRootAndHelp:
             "items": {"type": "object"},
         }
         assert schema["properties"]["description"]["anyOf"][-1] == {"type": "null"}
+
+    def test_db_detail_schema_command_is_versioned_json(self):
+        result = runner.invoke(app, ["schema", "db-detail"])
+
+        assert result.exit_code == 0
+        schema = json.loads(result.stdout)
+        assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+        assert schema["$id"].endswith("/db-detail/1.0.0")
+        assert schema["additionalProperties"] is False
+        assert schema["properties"]["zpid"] == {"type": "integer"}
+        assert schema["properties"]["enriched_at_utc"] == {"type": "string"}
+        assert schema["properties"]["hoa_fee"]["anyOf"][-1] == {"type": "null"}
+        assert schema["properties"]["description"]["anyOf"][-1] == {"type": "null"}
+        assert schema["properties"]["tax_history"]["anyOf"][-1] == {"type": "null"}
+        assert schema["properties"]["raw_json"]["anyOf"][-1] == {"type": "null"}
+
+    def test_db_detail_schema_covers_every_column_db_query_returns(self, tmp_path):
+        """The published schema must describe what projecting a detail field emits."""
+        db_path = tmp_path / "detail_schema.db"
+        conn = connect(db_path)
+        upsert_listings(conn, [{"zpid": 1, "price": 250000, "city": "Albany"}], seen_utc="2026-10-01T00:00:00Z")
+        upsert_property_details(conn, {"zpid": 1, "monthlyHoaFee": 0, "description": "Detached garage"}, kind="sale")
+        # Project a detail field; every column returned must be in the schema.
+        cols = ",".join(["zpid", "kind"] + ["hoa_fee"] * 14)
+        rows, _ = query_database(conn, cols=cols)
+        conn.close()
+
+        result = runner.invoke(app, ["schema", "db-detail"])
+        schema = json.loads(result.stdout)
+
+        assert set(rows[0]) <= set(schema["properties"])
 
     def test_no_args_shows_help(self):
         result = runner.invoke(app, [])
