@@ -17,6 +17,7 @@ from pyzill.bbox import CONTINENTAL_US, BBox
 from pyzill.client import ZillowClient
 from pyzill.db import (
     DBStats,
+    PruneStats,
     SyncRun,
     SyncStats,
     connect,
@@ -25,6 +26,7 @@ from pyzill.db import (
     get_price_history,
     list_runs,
     load_listings,
+    prune_database,
     upsert_listings,
     utc_now,
 )
@@ -50,7 +52,7 @@ from pyzill.normalize import (
 )
 from pyzill.property_detail import PropertyDetail, normalize_property_detail
 from pyzill.ratelimit import get_min_interval, set_min_interval
-from pyzill.tiling import split_bbox, tiled_search
+from pyzill.tiling import TiledSearchError, split_bbox, tiled_search
 from pyzill.utils import parse_proxy, resolve_proxy
 from pyzill.values import parse_price
 
@@ -63,8 +65,10 @@ __all__ = [
     "GeocodeUnavailableError",
     "Listing",
     "PropertyDetail",
+    "PruneStats",
     "SyncRun",
     "SyncStats",
+    "TiledSearchError",
     "ZillowBlockedError",
     "ZillowClient",
     "ZillowError",
@@ -97,6 +101,7 @@ __all__ = [
     "normalize_property_detail",
     "parse_price",
     "parse_proxy",
+    "prune_database",
     "resolve_proxy",
     "set_min_interval",
     "sold",

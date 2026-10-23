@@ -198,3 +198,42 @@ def test_explicit_zero_rate_limit_opts_out_of_throttling():
 
     assert not isinstance(client.limiter, _SharedBudgetLimiter)
     assert client.limiter.min_interval == 0
+
+
+def test_reset_default_client_replaces_it_and_closes_the_old(monkeypatch):
+    from pyzill.client import get_default_client, reset_default_client
+
+    first = get_default_client()
+    assert get_default_client() is first
+    closed: list[ZillowClient] = []
+
+    def record(client: ZillowClient) -> None:
+        closed.append(client)
+
+    monkeypatch.setattr(ZillowClient, "close", record)
+
+    reset_default_client()
+    assert closed == [first]
+
+    replacement = get_default_client()
+    assert replacement is not first
+    reset_default_client()
+    assert closed == [first, replacement]
+
+
+def test_reset_default_client_can_leave_it_open(monkeypatch):
+    from pyzill.client import get_default_client, reset_default_client
+
+    closed: list[ZillowClient] = []
+
+    def record(client: ZillowClient) -> None:
+        closed.append(client)
+
+    monkeypatch.setattr(ZillowClient, "close", record)
+    first = get_default_client()
+
+    reset_default_client(close=False)
+
+    assert closed == []
+    assert get_default_client() is not first
+    reset_default_client()

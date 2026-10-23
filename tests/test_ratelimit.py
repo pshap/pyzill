@@ -1,8 +1,9 @@
+import threading
 import time
 
 import pytest
 
-from pyzill.ratelimit import RateLimiter
+from pyzill.ratelimit import RateLimiter, SharedBudgetLimiter
 
 
 def test_disabled_when_interval_zero():
@@ -60,6 +61,65 @@ def test_set_min_interval_zero_disables():
     limiter.wait()
     limiter.wait()
     assert time.monotonic() - start < 0.1
+
+
+def test_wait_releases_the_lock_while_sleeping(monkeypatch):
+    """Reserving the timeline is atomic; waiting for one's slot is not.
+
+    Sleeping while holding the lock would make every other thread wait for
+    the first one's interval instead of reserving the next slot.
+    """
+    limiter = RateLimiter(min_interval=10, jitter=0)
+    asleep = threading.Event()
+    acquired = threading.Event()
+
+    def fake_sleep(_delay: float) -> None:
+        asleep.set()
+        assert acquired.wait(timeout=2), "another thread could not take the lock during sleep"
+
+    def other_thread() -> None:
+        asleep.wait(timeout=2)
+        with limiter._lock:
+            acquired.set()
+
+    monkeypatch.setattr(time, "sleep", fake_sleep)
+    thread = threading.Thread(target=other_thread, daemon=True)
+    thread.start()
+
+    limiter.wait()
+
+    thread.join(timeout=2)
+    assert acquired.is_set()
+
+
+def test_two_clients_reserve_distinct_slots_without_waiting(monkeypatch):
+    """A second client reserves the following slot instead of the same one."""
+    shared = RateLimiter(min_interval=10, jitter=0)
+    first = SharedBudgetLimiter(shared, min_interval=0)
+    second = SharedBudgetLimiter(shared, min_interval=0)
+    monkeypatch.setattr(time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(time, "sleep", lambda _delay: None)
+
+    first.wait()
+    second.wait()
+
+    assert first._last == 0.0
+    assert second._last == 10.0
+
+
+def test_reset_default_limiter_clears_the_timeline(monkeypatch):
+    from pyzill import ratelimit
+
+    monkeypatch.setenv("PYZILL_RATE_LIMIT", "2.5")
+    limiter = ratelimit.default_limiter()
+    limiter._last = 123.0
+    limiter.set_min_interval(0)
+
+    returned = ratelimit.reset_default_limiter()
+
+    assert returned is limiter
+    assert limiter._last == float("-inf")
+    assert limiter.min_interval == 2.5
 
 
 def test_pyzill_rate_limit_env_precedes_legacy(monkeypatch):

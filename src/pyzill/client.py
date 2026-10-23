@@ -12,7 +12,6 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
-from functools import cache
 from typing import Any, TypeVar
 
 from curl_cffi import requests
@@ -91,7 +90,8 @@ class ZillowClient:
             if default_proxy:
                 self._proxy_urls = [default_proxy]
         self._proxy_index = 0
-        self._rotation_lock = threading.Lock()
+        # Re-entrant: _session_for is called while the rotation lock is held.
+        self._rotation_lock = threading.RLock()
         # One session (cookie jar) per proxy URL: PerimeterX cookies issued on
         # one IP must not be replayed through another.
         self._sessions: dict[str | None, Any] = {}
@@ -109,15 +109,19 @@ class ZillowClient:
 
     def _session_for(self, proxy_url: str | None) -> Any:
         """Return the session dedicated to ``proxy_url``, creating it if needed."""
-        session = self._sessions.get(proxy_url)
-        if session is None:
-            session = requests.Session()
-            self._sessions[proxy_url] = session
-        return session
+        with self._rotation_lock:
+            session = self._sessions.get(proxy_url)
+            if session is None:
+                session = requests.Session()
+                self._sessions[proxy_url] = session
+            return session
 
     def close(self) -> None:
         """Close every per-proxy HTTP session."""
-        for session in self._sessions.values():
+        with self._rotation_lock:
+            sessions = list(self._sessions.values())
+            self._sessions.clear()
+        for session in sessions:
             session.close()
 
     def __enter__(self) -> ZillowClient:
@@ -255,7 +259,32 @@ class ZillowClient:
         return self._invoke(call, request_options, pinned_proxy=pinned_proxy)
 
 
-@cache
+class _DefaultClientHolder:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.client: ZillowClient | None = None
+
+
+_default_client = _DefaultClientHolder()
+
+
 def get_default_client() -> ZillowClient:
     """Return the lazily initialized module-level client."""
-    return ZillowClient(_limiter_instance=default_limiter())
+    with _default_client.lock:
+        if _default_client.client is None:
+            _default_client.client = ZillowClient(_limiter_instance=default_limiter())
+        return _default_client.client
+
+
+def reset_default_client(*, close: bool = True) -> None:
+    """Drop the module-level client so the next call builds a fresh one.
+
+    Meant for tests and long-lived processes that need to release the
+    client's sessions and cookies. ``close=False`` drops the reference
+    without closing a client another caller may still be using.
+    """
+    with _default_client.lock:
+        client = _default_client.client
+        _default_client.client = None
+    if close and client is not None:
+        client.close()

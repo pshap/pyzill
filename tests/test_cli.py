@@ -1999,6 +1999,38 @@ class TestDatabaseCommands:
         assert result.stdout.splitlines()[0] == "price,seen_utc,kind"
         assert result.stdout.endswith(",sale\n")
 
+    def test_db_prune_requires_a_selector(self, tmp_path):
+        db_path = tmp_path / "prune.db"
+        runner.invoke(app, ["db", "import", "-", "--db", str(db_path)], input='[{"zpid": 1}]')
+
+        result = runner.invoke(app, ["db", "prune", "--db", str(db_path)])
+
+        assert result.exit_code == 2
+        assert "Nothing to prune" in result.stderr
+
+    def test_db_prune_keep_runs_reports_json_and_keeps_listings(self, import_rows):
+        db_path = import_rows([{"zpid": 1, "price": 100}], fetched_at="2026-10-01T00:00:00Z")
+        import_rows([{"zpid": 2, "price": 200}], db_path=db_path, fetched_at="2026-10-02T00:00:00Z")
+
+        result = runner.invoke(app, ["db", "prune", "--keep-runs", "1", "--format", "json", "--db", str(db_path)])
+
+        assert result.exit_code == 0
+        assert json.loads(result.stdout) == {
+            "runs_deleted": 1,
+            "sightings_deleted": 1,
+            "vacuumed": False,
+        }
+        stats = runner.invoke(app, ["db", "stats", "--db", str(db_path)])
+        assert json.loads(stats.stdout)["total_listings"] == 2
+
+    def test_db_prune_rejects_negative_limits(self, import_rows):
+        db_path = import_rows([{"zpid": 1, "price": 100}])
+
+        result = runner.invoke(app, ["db", "prune", "--older-than", "-1", "--db", str(db_path)])
+
+        assert result.exit_code == 2
+        assert "must be non-negative" in result.stderr
+
     def test_db_stats_can_force_human_format(self, tmp_path):
         db_path = tmp_path / "stats.db"
         runner.invoke(app, ["db", "import", "-", "--db", str(db_path)], input='[{"zpid": 1}]')

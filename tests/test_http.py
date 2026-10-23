@@ -22,6 +22,24 @@ class _FrozenDatetime:
         return self._fixed
 
 
+def test_default_session_is_per_proxy_and_resettable(monkeypatch) -> None:
+    direct = http.default_session()
+    proxied = http.default_session("http://proxy:1")
+    assert direct is not proxied
+    assert http.default_session("http://proxy:1") is proxied
+
+    closed: list[str] = []
+    monkeypatch.setattr(direct, "close", lambda: closed.append("direct"))
+    monkeypatch.setattr(proxied, "close", lambda: closed.append("proxied"))
+
+    http.reset_default_session()
+
+    assert sorted(closed) == ["direct", "proxied"]
+    fresh = http.default_session()
+    assert fresh is not direct
+    http.reset_default_session()
+
+
 def test_build_headers_derives_chrome_version() -> None:
     headers = http.build_headers("chrome145")
 

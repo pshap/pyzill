@@ -329,7 +329,15 @@ def _fetch_hits(place: str, proxy_url: str | None) -> list[Any]:
         )
         raise_for_status(response)
         hits = json_body(response)
-    except (OSError, ValueError) as exc:
+    except GeocodeError:
+        raise
+    except ValueError as exc:
+        # If it's from resolve_proxy, it's a ValueError that should not be wrapped as GeocodeUnavailableError
+        # Check if it's an "Invalid proxy" style error
+        if "proxy" in str(exc).lower() or "invalid" in str(exc).lower():
+            raise
+        raise GeocodeUnavailableError(f"Geocoding {place!r} failed: {exc}. {_NO_GEOCODE_HINT}") from exc
+    except OSError as exc:
         # Network failures, HTTP errors, and unparseable bodies all mean the
         # same thing to the caller: the place could not be resolved now. They
         # are retryable, unlike a place that simply does not resolve.

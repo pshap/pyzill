@@ -5,6 +5,26 @@ All notable changes to this project are documented here.
 ## [Unreleased]
 
 ### Fixed
+- The write path takes the write lock before it reads the prior state.
+  `upsert_listings` read what had changed and then wrote it as two halves of
+  one transaction, but the lock was only taken by the first write, so a
+  second process could write the same zpids between the read and the write
+  and both writers classified the batch against stale state. The whole
+  read-and-write is now one atomic transaction. Opening an existing
+  database that is already current no longer takes the write lock just to
+  discover it has nothing to do, and a connection that fails during its
+  PRAGMAs is closed instead of left open.
+- No thread sleeps while holding a rate limiter's lock. `RateLimiter.wait`
+  held the lock through its sleep, so every other thread waited for the
+  first thread's interval instead of reserving the next slot.
+  `SharedBudgetLimiter` also reached into the shared limiter's private lock
+  and timestamp; each limiter now owns its timeline and reservation is the
+  only operation that has to be atomic.
+- A failed tile no longer throws away the listings the completed tiles
+  returned. `tiled_search` now raises `TiledSearchError` with the completed
+  results on `.partial`, and mirrors the failing request's `code`,
+  `retryable`, and `status_code`, so a blocked run is still reported as
+  blocked.
 - Every `ZillowError` subclass now survives `pickle` and `copy.copy` with the
   same type, message, and attributes. The exceptions with a custom
   constructor (`ZillowBlockedError`, `ZillowNotFoundError`,
@@ -188,6 +208,21 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- `pyzill db prune` and `pyzill.prune_database` delete old sync runs and
+  their raw sightings while keeping listings and price history.
+  `--older-than DAYS` selects runs by age, `--keep-runs N` keeps only the
+  newest N, and `--vacuum` reclaims the file space afterwards. A pruning
+  database no longer grows without bound as raw payloads accumulate.
+- The default client, fallback HTTP session, and shared rate limiter can be
+  reset. `pyzill.client.reset_default_client`,
+  `pyzill.http.reset_default_session`, and
+  `pyzill.ratelimit.reset_default_limiter` release accumulated sessions,
+  cookies, and request timelines without restarting the process; the
+  limiter reset can also set a new interval.
+- A fresh database enforces its value domain in SQL: `kind` must be one of
+  `sale`, `rent`, or `sold`, and `sync_runs.truncated` must be `0` or `1`.
+  A value the parsers never produce is now rejected by the database instead
+  of being stored and surprising every reader.
 - `pyzill db runs` lists the recorded sync runs, newest first, with the run
   id, the query, the viewport, the filters, the result count, and whether
   the run was truncated. A run id handed out by `db sync --format json` or

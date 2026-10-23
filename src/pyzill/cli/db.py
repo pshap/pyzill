@@ -69,6 +69,7 @@ from pyzill.db import (
     get_price_history,
     list_runs,
     normalize_utc_timestamp,
+    prune_database,
     resolve_db_path,
     utc_now,
 )
@@ -411,3 +412,47 @@ def db_stats_cmd(
         lines.append(f"Newest last_seen: {stats.newest_seen}")
 
     context().stdout_console.print("\n".join(lines))
+
+
+@db_app.command("prune")
+def db_prune(
+    older_than: Annotated[
+        int | None,
+        typer.Option("--older-than", help="Delete runs that started more than this many days ago"),
+    ] = None,
+    keep_runs: Annotated[
+        int | None,
+        typer.Option("--keep-runs", help="Keep only the newest N runs"),
+    ] = None,
+    vacuum: Annotated[
+        bool,
+        typer.Option("--vacuum", help="Rebuild the database file to reclaim the freed space"),
+    ] = False,
+    db_path: DbPathOpt = None,
+    output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
+) -> None:
+    """Delete old sync runs and their raw sightings.
+
+    The listings and their price history are kept; what goes away is the
+    per-search record (including the raw payloads) that grows with every run.
+    Use --older-than DAYS, --keep-runs N, or both. --vacuum reclaims the file
+    space afterwards.
+    """
+    if older_than is None and keep_runs is None and not vacuum:
+        error("Nothing to prune: pass --older-than, --keep-runs, or --vacuum", code=2)
+    if (older_than is not None and older_than < 0) or (keep_runs is not None and keep_runs < 0):
+        error("--older-than and --keep-runs must be non-negative", code=2)
+    with _db_session(db_path, must_exist=True) as conn:
+        stats = prune_database(conn, older_than_days=older_than, keep_runs=keep_runs, vacuum=vacuum)
+
+    if output_format is OutputFormat.json or (output_format is None and not sys.stdout.isatty()):
+        emit(dumps(asdict(stats)), None)
+        return
+    if output_format is not None:
+        error("db prune only supports --format json", code=2)
+    stderr_line(
+        "green",
+        "Pruned",
+        f"{stats.runs_deleted} runs, {stats.sightings_deleted} sightings"
+        + (", database vacuumed" if stats.vacuumed else ""),
+    )

@@ -370,6 +370,32 @@ def test_tiled_search_rejects_invalid_budget():
         )
 
 
+def test_tiled_search_failure_carries_the_completed_tiles():
+    """A failing tile must not discard the listings the earlier tiles returned."""
+    root = BBox(north=10, east=10, south=0, west=0)
+    failure = exceptions.ZillowBlockedError(403, "https://zillow.example/search")
+
+    def flaky(*, bbox: BBox, **kwargs):
+        if bbox == root:
+            return {"mapResults": [{"zpid": index} for index in range(500)]}
+        raise failure
+
+    with pytest.raises(search.TiledSearchError) as caught:
+        search.tiled_search(flaky, bbox=root, max_depth=1, max_requests=2)
+
+    error = caught.value
+    assert len(error.partial["mapResults"]) == 500
+    assert error.partial["listResults"] == []
+    assert error.partial["budget_exhausted"] is False
+    assert error.requests_used == 1
+    assert error.code == "blocked"
+    assert error.retryable is False
+    assert error.status_code == 403
+    assert error.cause is failure
+    assert error.__cause__ is failure
+    assert error.tile in root.split()
+
+
 def test_normalize_listings_can_normalize_iteration(fake_http, search_success_body):
     fake_http.install("PUT", json_data=search_success_body)
 

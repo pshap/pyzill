@@ -250,6 +250,10 @@ pyzill db history 32463997
 pyzill db runs
 pyzill db runs --kind rent --limit 10
 
+# Delete old runs and their raw sightings (listings and prices are kept)
+pyzill db prune --older-than 90
+pyzill db prune --keep-runs 20 --vacuum
+
 # Database statistics
 pyzill db stats
 ```
@@ -323,6 +327,17 @@ their count summary to stdout instead of the human summary on stderr. That
 summary names the run (`run_id`) and says whether the run was complete
 (`truncated`), so a script can tell a complete run from a partial one without
 reading the warnings on stderr.
+
+**Pruning growth** — the listings and their price history are the durable
+record, while each sync run adds a sighting with the raw payload. `db prune`
+drops whole old runs and lets the foreign key cascade their sightings.
+`--older-than DAYS` deletes runs that started before the cutoff and
+`--keep-runs N` keeps only the newest N runs; either or both may be given.
+Listings and price history are never deleted, so a pruned database still
+answers "what do I know about this property?". `--vacuum` rebuilds the file
+afterwards to reclaim the space. The command emits a JSON summary
+(`runs_deleted`, `sightings_deleted`, `vacuumed`), and the same operation is
+available from Python as `pyzill.prune_database`.
 
 `db query` always writes valid JSON to stdout in `--format json`, including an
 empty array (`[]`) when nothing matches, so its output can be parsed without
@@ -580,6 +595,13 @@ the partial results are returned (the library flags them with
 `budget_exhausted=True`). Progress (tile count and listings so far) is
 printed to stderr and suppressed by `--quiet`.
 
+If a tile fails after earlier tiles returned listings, `tiled_search` raises
+`pyzill.TiledSearchError`. The listings from the completed tiles are on the
+error's `partial` attribute (the same shape a successful call returns), and
+the error carries the underlying failure's `code`, `retryable`, and
+`status_code`, so a blocked run is still reported as blocked rather than
+losing the work the earlier tiles did.
+
 ```bash
 pyzill search sale "Schenectady NY" --tile --max-depth 5 --max-requests 100
 pyzill db sync sale "Schenectady NY" --tile
@@ -831,6 +853,7 @@ that zipcode's listings are kept.
 | `search(...)` | Raw search with a custom `filter_state` (the three above reject `filter_state`) |
 | `iter_search(max_items=None, **kwargs)` / `iter_sale(...)` / `iter_rent(...)` / `iter_sold(...)` | Yield individual listings from the first `mapResults` response |
 | `tiled_search(search_fn, bbox=..., max_depth=4, max_requests=50, **kwargs)` | Recursively split capped results, deduplicate by zpid, stop at the request budget |
+| `TiledSearchError` | A tile failed mid-run; completed tiles are on `.partial` |
 | `split_bbox(bbox)` | Split a `BBox` into 4 quadrants |
 | `get_from_home_url(url, ...)` / `get_from_home_id(id, ...)` | Home details |
 | `get_from_apartment_url(url, ...)` / `get_from_apartment_id(id, ...)` | Apartment details |

@@ -12,6 +12,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from pyzill.db import (
+    PruneStats,
     begin_sync_run,
     connect,
     connect_readonly,
@@ -21,6 +22,7 @@ from pyzill.db import (
     get_changes,
     get_price_history,
     load_listings,
+    prune_database,
     upsert_listings,
     utc_now,
 )
@@ -64,6 +66,34 @@ def test_connect_creates_schema(tmp_path: Path):
     assert cursor.fetchone()[0] == 3
 
     conn.close()
+
+
+def test_fresh_database_enforces_the_value_constraints(tmp_path: Path):
+    """The DDL rejects a kind or truncated flag the parser never produces."""
+    conn = connect(tmp_path / "checks.db")
+    now = "2026-10-01T00:00:00Z"
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO listings (zpid, kind, first_seen_utc, last_seen_utc) VALUES (1, 'bogus', ?, ?)",
+            (now, now),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO price_history (zpid, kind, price, seen_utc) VALUES (1, 'bogus', 100, ?)",
+            (now,),
+        )
+    run_id = begin_sync_run(conn, kind="sale", started_utc=now)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("UPDATE sync_runs SET truncated = 2 WHERE id = ?", (run_id,))
+    conn.close()
+
+
+def test_backfill_definition_keeps_a_check_constraint_with_commas():
+    """A CHECK's commas belong to the definition, not to the column list."""
+    from pyzill.db.schema import LISTING_COLUMN_DEFINITIONS
+
+    assert LISTING_COLUMN_DEFINITIONS["kind"] == "TEXT NOT NULL DEFAULT 'sale' CHECK (kind IN ('sale', 'rent', 'sold'))"
 
 
 def test_connect_survives_concurrent_first_open(tmp_path: Path):
@@ -120,6 +150,57 @@ def test_readonly_connection_does_not_wait_for_writer(tmp_path: Path):
     try:
         reader = connect_readonly(db_path)
         assert reader.execute("SELECT price FROM listings WHERE zpid = 1").fetchone() == (100,)
+        reader.close()
+    finally:
+        writer.rollback()
+        writer.close()
+
+
+def test_upsert_takes_the_write_lock_before_reading_prior_state(tmp_path: Path, monkeypatch):
+    """The pre-reads and the writes must be one atomic transaction.
+
+    Another process could write the same zpids between the read that decides
+    what changed and the write that records it. The write lock has to be held
+    before the first read, not just before the first write.
+    """
+    from pyzill.db import upsert as upsert_module
+
+    db_path = tmp_path / "write_lock.db"
+    conn = connect(db_path)
+    other = sqlite3.connect(str(db_path), timeout=0)
+    other.execute("PRAGMA busy_timeout = 0")
+    original = upsert_module._prefetch
+    observed: list[bool] = []
+
+    def prefetch_under_lock(*args, **kwargs):
+        observed.append(conn.in_transaction)
+        # A concurrent writer must already be excluded here.
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            other.execute(
+                "INSERT INTO listings (zpid, kind, first_seen_utc, last_seen_utc) "
+                "VALUES (99, 'sale', '2026-10-01T00:00:00Z', '2026-10-01T00:00:00Z')"
+            )
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(upsert_module, "_prefetch", prefetch_under_lock)
+
+    upsert_listings(conn, [{"zpid": 1, "price": 100}], seen_utc="2026-10-01T00:00:00Z")
+
+    assert observed == [True]
+    other.close()
+    conn.close()
+
+
+def test_connect_current_schema_does_not_take_the_write_lock(tmp_path: Path):
+    """Opening a current database is a read: it must not wait for its writer."""
+    db_path = tmp_path / "current.db"
+    connect(db_path).close()
+
+    writer = connect(db_path)
+    writer.execute("BEGIN IMMEDIATE")
+    try:
+        reader = connect(db_path)
+        assert reader.execute("PRAGMA user_version").fetchone()[0] == 3
         reader.close()
     finally:
         writer.rollback()
@@ -1142,6 +1223,80 @@ def test_get_price_history_empty(tmp_path: Path):
 
     history = get_price_history(conn, 999)
     assert history == []
+
+    conn.close()
+
+
+def test_prune_database_removes_old_runs_and_keeps_listings(tmp_path: Path):
+    """Pruning drops a run's sightings, never the durable listing record."""
+    conn = connect(tmp_path / "prune.db")
+    old_run = begin_sync_run(conn, kind="sale", query="old", started_utc="2026-01-01T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 1, "price": 100}],
+        raw_rows=[{"zpid": "1", "price": "100"}],
+        run_id=old_run,
+        seen_utc="2026-01-01T00:00:00Z",
+    )
+    new_run = begin_sync_run(conn, kind="sale", query="new", started_utc="2026-10-01T00:00:00Z")
+    upsert_listings(
+        conn,
+        [{"zpid": 2, "price": 200}],
+        raw_rows=[{"zpid": "2", "price": "200"}],
+        run_id=new_run,
+        seen_utc="2026-10-01T00:00:00Z",
+    )
+
+    stats = prune_database(conn, older_than_days=30, now="2026-10-22T00:00:00Z")
+
+    assert stats == PruneStats(runs_deleted=1, sightings_deleted=1, vacuumed=False)
+    assert [row[0] for row in conn.execute("SELECT id FROM sync_runs")] == [new_run]
+    assert conn.execute("SELECT zpid FROM sightings").fetchall() == [(2,)]
+    assert conn.execute("SELECT zpid FROM listings ORDER BY zpid").fetchall() == [(1,), (2,)]
+    assert conn.execute("SELECT COUNT(*) FROM price_history").fetchone()[0] == 2
+    conn.close()
+
+
+def test_prune_database_keep_runs_keeps_the_newest(tmp_path: Path):
+    conn = connect(tmp_path / "keep.db")
+    # Inserted out of order: the selection is by start time, not by id.
+    begin_sync_run(conn, kind="sale", query="b", started_utc="2026-02-01T00:00:00Z")
+    begin_sync_run(conn, kind="sale", query="a", started_utc="2026-01-01T00:00:00Z")
+    newest = begin_sync_run(conn, kind="sale", query="c", started_utc="2026-03-01T00:00:00Z")
+    conn.commit()
+
+    stats = prune_database(conn, keep_runs=1)
+
+    assert stats.runs_deleted == 2
+    assert conn.execute("SELECT id FROM sync_runs").fetchall() == [(newest,)]
+    conn.close()
+
+
+def test_prune_database_combines_selectors_and_vacuums(tmp_path: Path):
+    conn = connect(tmp_path / "vacuum.db")
+    begin_sync_run(conn, kind="sale", query="a", started_utc="2020-01-01T00:00:00Z")
+    begin_sync_run(conn, kind="sale", query="b", started_utc="2021-01-01T00:00:00Z")
+    third = begin_sync_run(conn, kind="sale", query="c", started_utc="2026-10-01T00:00:00Z")
+    conn.commit()
+
+    # The first is old enough on its own; keep_runs=1 selects the second too.
+    stats = prune_database(conn, older_than_days=365, keep_runs=1, vacuum=True, now="2026-10-22T00:00:00Z")
+
+    assert stats.runs_deleted == 2
+    assert stats.vacuumed is True
+    assert [row[0] for row in conn.execute("SELECT id FROM sync_runs")] == [third]
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [({"older_than_days": -1}, "older_than_days"), ({"keep_runs": -1}, "keep_runs")],
+)
+def test_prune_database_rejects_negative_limits(tmp_path: Path, kwargs, message):
+    conn = connect(tmp_path / "invalid.db")
+
+    with pytest.raises(ValueError, match=message):
+        prune_database(conn, **kwargs)
 
     conn.close()
 

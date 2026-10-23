@@ -415,6 +415,12 @@ def upsert_listings(  # noqa: PLR0913 - the write path's inputs
     prepared = _prepare_rows(rows, raw_rows, stats)
     zpids = list(dict.fromkeys(entry.zpid for entry in prepared))
     try:
+        # Take the write lock before reading the prior state. The reads decide
+        # what changed, and the writes record it; between them another process
+        # could write the same zpids, so the two halves must be one atomic
+        # transaction or the classification is based on stale state.
+        if not conn.in_transaction:
+            conn.execute("BEGIN IMMEDIATE")
         existing, prior_prices = _prefetch(conn, zpids, kind, seen_utc)
         prior_statuses = _latest_statuses(conn, zpids, kind, seen_utc)
         if run_id is None:

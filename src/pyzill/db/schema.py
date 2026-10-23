@@ -15,6 +15,7 @@ __all__ = [
     "LISTING_TABLE_COLUMNS",
     "SCHEMA_VERSION",
     "ensure_schema",
+    "schema_needs_update",
 ]
 
 
@@ -38,7 +39,7 @@ LISTING_TABLE_COLUMNS: tuple[str, ...] = (
 
 _CREATE_LISTINGS_SQL = """CREATE TABLE IF NOT EXISTS {name} (
     zpid INTEGER NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'sale',
+    kind TEXT NOT NULL DEFAULT 'sale' CHECK (kind IN ('sale', 'rent', 'sold')),
     price INTEGER,
     price_label TEXT,
     beds REAL,
@@ -77,7 +78,7 @@ _CREATE_LISTINGS_SQL = """CREATE TABLE IF NOT EXISTS {name} (
 
 _CREATE_PRICE_HISTORY_SQL = """CREATE TABLE IF NOT EXISTS {name} (
     zpid INTEGER NOT NULL,
-    kind TEXT NOT NULL DEFAULT 'sale',
+    kind TEXT NOT NULL DEFAULT 'sale' CHECK (kind IN ('sale', 'rent', 'sold')),
     price INTEGER NOT NULL,
     seen_utc TEXT NOT NULL,
     PRIMARY KEY (zpid, kind, seen_utc),
@@ -87,8 +88,10 @@ _CREATE_PRICE_HISTORY_SQL = """CREATE TABLE IF NOT EXISTS {name} (
 
 # Each listings column as the DDL declares it: the storage type plus any
 # constraint. The DDL is the one authority for a column's type, so the
-# backfill parses it instead of keeping a second list of its own.
-_DDL_COLUMN_RE = re.compile(r"^[ \t]{4}(\w+)[ \t]+(INTEGER|REAL|TEXT)([^,\n]*)", re.MULTILINE)
+# backfill parses it instead of keeping a second list of its own. The
+# constraint may contain commas inside a CHECK, so the line is read to its
+# end and only the trailing column separator is dropped.
+_DDL_COLUMN_RE = re.compile(r"^[ \t]{4}(\w+)[ \t]+(INTEGER|REAL|TEXT)(.*?),?$", re.MULTILINE)
 
 LISTING_COLUMN_DEFINITIONS: dict[str, str] = {
     name: f"{column_type}{constraint}".strip()
@@ -113,7 +116,7 @@ _CREATE_TRACKING_SQL = (
                 bbox_json TEXT,
                 filters_json TEXT,
                 result_count INTEGER,
-                truncated INTEGER NOT NULL DEFAULT 0
+                truncated INTEGER NOT NULL DEFAULT 0 CHECK (truncated IN (0, 1))
         )""",
     """CREATE TABLE IF NOT EXISTS sightings (
                 run_id INTEGER NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
@@ -338,6 +341,20 @@ def _backfill_listing_columns(conn: sqlite3.Connection) -> None:
             # above and this statement; anything else is a real fault.
             if "duplicate column name" not in str(exc):
                 raise
+
+
+def schema_needs_update(conn: sqlite3.Connection) -> bool:
+    """Whether opening the database has schema work to do.
+
+    A current-version database whose columns are all present needs no write
+    lock. Only a version mismatch or a missing additive column requires the
+    migration/backfill path.
+    """
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if version < SCHEMA_VERSION:
+        return True
+    existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
+    return any(column not in existing_columns for column in LISTING_TABLE_COLUMNS)
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:

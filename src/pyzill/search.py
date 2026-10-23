@@ -18,7 +18,7 @@ from pyzill.api import (
 )
 from pyzill.search_request import SEARCH_URL, resolve_bbox
 from pyzill.search_request import SearchParams as SearchParams
-from pyzill.tiling import split_bbox, tiled_search
+from pyzill.tiling import TiledSearchError, split_bbox, tiled_search
 
 # Historical private aliases, kept so existing code that reached into this
 # module for them keeps working.
@@ -26,6 +26,7 @@ _SEARCH_URL = SEARCH_URL
 _resolve_bbox = resolve_bbox
 
 __all__ = [
+    "TiledSearchError",
     "for_rent",
     "for_sale",
     "iter_rent",

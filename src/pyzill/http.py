@@ -8,7 +8,7 @@ that search and detail requests stay consistent. The browser identity
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from functools import cache
+from threading import Lock
 from typing import Any, Literal, cast
 
 from curl_cffi.requests import ProxySpec, Response, Session
@@ -42,6 +42,7 @@ __all__ = [
     "put_json",
     "raise_for_status",
     "request",
+    "reset_default_session",
 ]
 
 # ``ZILLOW_HOME`` is re-exported here (it is listed in ``__all__``) because
@@ -111,14 +112,38 @@ def build_request_options(  # noqa: PLR0913 - one builder for every Zillow reque
     )
 
 
-@cache
-def default_session() -> Any:
-    """Return the fallback session used when a request carries no session.
+_default_sessions: dict[str | None, Any] = {}
+_default_sessions_lock = Lock()
+
+
+def default_session(proxy_url: str | None = None) -> Any:
+    """Return the fallback session for a proxy (or the direct connection).
 
     Callers that own a session (every :class:`~pyzill.client.ZillowClient`)
-    pass one in; this is the session for direct, one-off requests.
+    pass one in; this is the session for direct, one-off requests. A session
+    is kept per proxy URL, so cookies issued on one IP are not replayed
+    through another.
     """
-    return Session()
+    with _default_sessions_lock:
+        session = _default_sessions.get(proxy_url)
+        if session is None:
+            session = Session()
+            _default_sessions[proxy_url] = session
+        return session
+
+
+def reset_default_session(*, close: bool = True) -> None:
+    """Drop every fallback session, closing them unless told not to.
+
+    Tests use this to isolate cookie jars; a long-lived process can use it to
+    release a session that has accumulated cookies.
+    """
+    with _default_sessions_lock:
+        sessions = list(_default_sessions.values())
+        _default_sessions.clear()
+    if close:
+        for session in sessions:
+            session.close()
 
 
 def _looks_blocked(response: Response) -> bool:
@@ -277,8 +302,9 @@ def _send(
     This is the retry loop; :func:`request` is the public wrapper that builds
     the options for it.
     """
-    proxies = build_proxies(options.proxy_url)
-    session = options.session if options.session is not None else default_session()
+    proxy_url = resolve_proxy(options.proxy_url)
+    proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else None
+    session = options.session if options.session is not None else default_session(proxy_url)
     limiter = options.limiter if options.limiter is not None else default_limiter()
     # The retry loop always returns or raises; this typed fallback only
     # covers the "loop body never ran" case, and keeps the raised type a
