@@ -229,7 +229,7 @@ def _cache_lock(path: Path) -> Iterator[None]:
         yield
         return
     try:
-        fcntl.flock(handle, fcntl.LOCK_EX)
+        fcntl.flock(handle, fcntl.LOCK_EX)  # type: ignore[attr-defined, unused-ignore]
         yield
     finally:
         os.close(handle)
