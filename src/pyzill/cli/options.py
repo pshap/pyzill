@@ -53,6 +53,18 @@ WhereJSONOpt = Annotated[
 SortOpt = Annotated[str | None, typer.Option("--sort", help="Sort by FIELD or FIELD:asc / FIELD:desc")]
 ColsOpt = Annotated[str | None, typer.Option("--cols", help="Comma-separated columns to output")]
 LimitOpt = Annotated[int | None, typer.Option("--limit", min=1, help="Maximum rows to output")]
+MaxAgeOpt = Annotated[
+    int | None,
+    typer.Option("--max-age", help="Only enrich rows not enriched within this many days (default: 7)"),
+]
+RefreshOpt = Annotated[
+    bool,
+    typer.Option("--refresh", help="Ignore --max-age and re-enrich every shortlisted listing"),
+]
+PlanOpt = Annotated[
+    bool,
+    typer.Option("--plan", help="Show what the command would do without executing it"),
+]
 KeysOpt = Annotated[bool, typer.Option("--keys", help="List available fields instead of dumping the record")]
 PathOpt = Annotated[
     str | None,

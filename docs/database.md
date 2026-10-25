@@ -137,21 +137,29 @@ appeared as one-off command output, so it could not be filtered or searched.
 `db enrich` fetches the detail for shortlisted listings and stores it in the
 `property_details` table. Shortlist with the same `--where`/`--sort`/`--limit`
 flags the query command uses, and bound the request volume with `--max-requests`
-(default 50; `0` disables the budget). The detail fields then become queryable
-through the same engine, so "no HOA, taxes under $6k, description mentions
-'garage'" is a query:
+(default 50; the ceiling is enforced unless raised with
+`PYZILL_MAX_REQUESTS_CEILING`, `0` disables the budget). By default only
+listings not enriched within `--max-age` days (default 7) are fetched; pass
+`--refresh` to ignore the age filter, or `--plan` to print what would happen
+without making network requests. Listings Zillow reports as gone (404) are
+recorded as skipped and not retried; blocked or network errors stop the batch.
+The detail fields then become queryable through the same engine, so "no HOA,
+taxes under $6k, description mentions 'garage'" is a query:
 
 ```bash
 pyzill db enrich --where 'price<400000' --max-requests 50
-pyzill db query --where 'hoa_fee=0' --where 'tax_assessed_value<6000' --where 'description ~ garage'
+pyzill db query --where 'hoa_fee=0' --where 'tax_paid_latest<6000' --where 'description ~ garage' --where 'hoa_fee==null'
 ```
 
-`tax_assessed_value` prefers the listings column and falls back to the details
-column, so a listing enriched before the field existed on the detail page still
-filters. `--cols` can project detail fields, and `--sort` can order by them.
+`tax_assessed_latest` comes from the detail page's tax history; `tax_paid_latest`
+and `tax_year_latest` are derived from the newest tax-history entry. `tax_assessed_value`
+on the listings table is the search-listing value and can be queried directly.
+A missing HOA (`hoa_monthly`/`hoa_fee` `null`) means "no HOA" rather than "unknown".
+`--cols details` expands to the detail fields, and `--sort` can order by them.
 Enriching is idempotent: re-running it overwrites the stored detail and updates
 `enriched_at_utc`, and a listing with no detail row is simply absent from a
-detail-field query. The command emits a JSON summary (`enriched`) when stdout is
+detail-field query. The command emits a JSON summary (`enriched`, `skipped_gone`,
+`stopped_early`, `reason`, `normalization_failed`) when stdout is
 redirected or `--format json` is given, and is available from Python as
 `pyzill.upsert_property_details` / `pyzill.get_property_details`.
 

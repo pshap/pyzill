@@ -51,7 +51,7 @@ def test_connect_creates_schema(tmp_path: Path):
 
     # Check user_version is set
     cursor = conn.execute("PRAGMA user_version")
-    assert cursor.fetchone()[0] == 4
+    assert cursor.fetchone()[0] == 5
 
     conn.close()
 
@@ -107,7 +107,7 @@ def test_connect_survives_concurrent_first_open(tmp_path: Path):
 
     assert errors == []
     conn = connect(db_path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     conn.close()
 
 
@@ -153,7 +153,7 @@ def test_connect_current_schema_does_not_take_the_write_lock(tmp_path: Path):
     writer.execute("BEGIN IMMEDIATE")
     try:
         reader = connect(db_path)
-        assert reader.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert reader.execute("PRAGMA user_version").fetchone()[0] == 5
         reader.close()
     finally:
         writer.rollback()
@@ -188,7 +188,7 @@ def test_v2_database_migrates_to_v3_and_preserves_data(tmp_path: Path):
 
     conn = connect(db_path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     assert conn.execute("SELECT zpid, kind, price, city, zipcode FROM listings").fetchall() == [
         (7, "sale", 450000, "Albany", "01234")
     ]
@@ -278,7 +278,7 @@ def test_v1_database_migrates_kind_columns_and_history(tmp_path: Path):
 
     conn = connect(db_path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     assert conn.execute("SELECT kind FROM listings WHERE zpid = 1").fetchone()[0] == "sale"
     assert conn.execute("SELECT kind FROM price_history WHERE zpid = 1").fetchone()[0] == "sale"
     assert conn.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
@@ -336,7 +336,7 @@ def test_unversioned_database_with_a_listings_table_is_rebuilt(tmp_path: Path):
 
     conn = connect(db_path)
 
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     # The rows are kept, and the kind the old table did not have is filled in.
     assert conn.execute("SELECT zpid, kind, price, city FROM listings ORDER BY zpid").fetchall() == [
         (1, "sale", 100, "Albany"),
@@ -433,12 +433,12 @@ def test_connect_closes_connection_on_keyboard_interrupt(tmp_path: Path, monkeyp
         if calls[0] == 1:
             raise _FakeBaseException
 
-    monkeypatch.setattr("pyzill.db.schema._MIGRATIONS", {2: boom, 3: boom})
+    monkeypatch.setattr("pyzill.db.schema._MIGRATIONS", {2: boom, 3: boom, 4: boom})
 
     with pytest.raises(_FakeBaseException):
         connect(db_path)
 
     # A subsequent connect must succeed: no leaked write lock.
     reopened = connect(db_path)
-    assert reopened.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert reopened.execute("PRAGMA user_version").fetchone()[0] == 5
     reopened.close()

@@ -48,9 +48,12 @@ def test_upsert_and_get_property_details_round_trip(tmp_path):
         assert row["description"] == "A bright home with a garage"
         assert row["photos_count"] == 4
         assert row["year_built"] == 2001
-        assert row["tax_assessed_value"] is None
+        assert row["hoa_monthly"] == 150
+        assert row["tax_assessed_latest"] is None
+        assert row["tax_year_latest"] == 2020
+        assert row["tax_paid_latest"] == 3000
+        assert row["normalization_failed"] == 0
         assert json.loads(row["tax_history"]) == [{"year": 2020, "tax": 3000}]
-        assert json.loads(row["price_history_detail"]) == [{"date": "2020-01-01", "price": 200000}]
         assert json.loads(row["schools"]) == [{"name": "Elementary"}]
         assert row["raw_json"] is not None
         assert row["enriched_at_utc"] is not None

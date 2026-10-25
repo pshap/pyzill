@@ -8,14 +8,24 @@ from typing import Any
 
 from pyzill.db.runs import utc_now
 from pyzill.property_detail import normalize_property_detail
+from pyzill.values import to_number, to_zpid
 
-__all__ = ["get_property_details", "upsert_property_details"]
+__all__ = [
+    "get_detail_failure",
+    "get_property_details",
+    "record_detail_failure",
+    "upsert_property_details",
+]
 
 # Keys that mark a payload as a raw Zillow detail page rather than an already
 # normalized detail record. A payload carrying any of these is flattened
 # through normalize_property_detail unless it already holds normalized fields.
 _RAW_DETAIL_MARKERS = ("resoFacts", "monthlyHoaFee", "taxHistory", "schools", "property")
 _NORMALIZED_DETAIL_MARKERS = ("hoa_fee", "photos_count")
+
+# Exceptions normalize_property_detail can raise when a payload cannot be
+# flattened.  Anything else (a programming error) should not be swallowed.
+_NORMALIZATION_ERRORS = (ValueError, TypeError, KeyError, AttributeError)
 
 
 def _json_safe(value: Any) -> Any:
@@ -28,72 +38,140 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _coerce_detail(detail: Mapping[str, Any]) -> Mapping[str, Any]:
-    """Return a normalized detail record.
+def _hoa_monthly(hoa_fee: int | float | None, hoa_fee_unit: str | None) -> int | float | None:
+    """Normalize an HOA fee to a monthly figure by its unit.
+
+    ``monthly`` stays as-is, ``annual`` divides by 12, ``quarterly`` divides
+    by 3, and an unknown unit yields ``None`` rather than inventing a value.
+    No HOA is represented by ``None``.
+    """
+    if hoa_fee is None:
+        return None
+    if hoa_fee_unit == "monthly":
+        return hoa_fee
+    if hoa_fee_unit == "annual":
+        return round(hoa_fee / 12.0, 2)
+    if hoa_fee_unit == "quarterly":
+        return round(hoa_fee / 3.0, 2)
+    return None
+
+
+def _tax_latest(norm: Mapping[str, Any]) -> tuple[Any, Any, Any]:
+    """Return (tax_paid_latest, tax_year_latest, tax_assessed_latest).
+
+    The newest entry in ``tax_history`` provides the figures.  Zillow uses
+    different keys across pages (``taxPaid``, ``tax``, ``taxAssessedValue``),
+    so each is coerced through the shared numeric rules and only numeric
+    values are stored.
+    """
+    entries = norm.get("tax_history")
+    tax_paid = None
+    tax_year = None
+    tax_assessed = None
+    if isinstance(entries, list) and entries:
+        latest = entries[-1]
+        if isinstance(latest, dict):
+            tax_year = to_number(latest.get("year"))
+            if isinstance(tax_year, float) and tax_year.is_integer():
+                tax_year = int(tax_year)
+            tax_paid = to_number(
+                latest.get("taxPaid")
+                if "taxPaid" in latest
+                else latest.get("taxPaidAmount")
+                if "taxPaidAmount" in latest
+                else latest.get("tax")
+                if "tax" in latest
+                else latest.get("taxAmount")
+            )
+            tax_assessed = to_number(
+                latest.get("taxAssessedValue")
+                if "taxAssessedValue" in latest
+                else latest.get("assessedValue")
+                if "assessedValue" in latest
+                else latest.get("taxAssessed")
+            )
+    return tax_paid, tax_year, tax_assessed
+
+
+def _coerce_detail(detail: Mapping[str, Any]) -> tuple[Mapping[str, Any], bool]:
+    """Return a normalized detail record and whether normalization failed.
 
     Already-normalized records (carrying hoa_fee or photos_count) are used
-    as-is. Raw Zillow detail payloads are flattened through
-    normalize_property_detail; anything that cannot be normalized is returned
-    unchanged so the caller can still persist what it has.
+    as-is.  Raw Zillow detail payloads are flattened through
+    normalize_property_detail.  Only normalization errors are caught: anything
+    else propagates so it is not silently hidden.  When normalization fails,
+    the raw payload is returned unchanged with ``normalization_failed=True`` so
+    the caller can still persist what it has but the failure is visible.
     """
     if not isinstance(detail, Mapping) or "zpid" not in detail:
-        return detail
+        return detail, False
     has_normalized = any(field in detail for field in _NORMALIZED_DETAIL_MARKERS)
     has_raw = any(field in detail for field in _RAW_DETAIL_MARKERS)
     if has_normalized and not has_raw:
-        return detail
+        return detail, False
     try:
-        return normalize_property_detail(detail)
-    except Exception:
-        return detail
+        return normalize_property_detail(detail), False
+    except _NORMALIZATION_ERRORS:
+        return detail, True
 
 
-def _detail_values(
+def _detail_values(  # noqa: PLR0913, PLR0917 - internal helper, all fields map 1:1 to table columns
     norm: Mapping[str, Any],
     kind: str,
     zpid: int,
     raw_json: str | None,
     enriched_at: str,
+    normalization_failed: bool,
 ) -> tuple[Any, ...]:
     """Return the parameter tuple for one property_details row."""
+    hoa_fee = norm.get("hoa_fee")
+    hoa_fee_unit = norm.get("hoa_fee_unit")
+    tax_paid_latest, tax_year_latest, tax_assessed_latest = _tax_latest(norm)
     return (
         zpid,
         kind,
-        norm.get("hoa_fee"),
-        norm.get("hoa_fee_unit"),
+        hoa_fee,
+        hoa_fee_unit,
+        _hoa_monthly(hoa_fee, hoa_fee_unit),
         norm.get("description"),
         norm.get("photos_count"),
         norm.get("year_built"),
         norm.get("lot_size"),
         norm.get("lot_size_unit"),
-        None,
+        tax_assessed_latest,
+        tax_year_latest,
+        tax_paid_latest,
         json.dumps(_json_safe(norm.get("tax_history"))) if norm.get("tax_history") is not None else None,
-        json.dumps(_json_safe(norm.get("price_history"))) if norm.get("price_history") is not None else None,
         json.dumps(_json_safe(norm.get("schools"))) if norm.get("schools") is not None else None,
         raw_json,
         enriched_at,
+        1 if normalization_failed else 0,
     )
 
 
 _UPSERT_SQL = """INSERT INTO property_details (
-    zpid, kind, hoa_fee, hoa_fee_unit, description, photos_count,
-    year_built, lot_size, lot_size_unit, tax_assessed_value,
-    tax_history, price_history_detail, schools, raw_json, enriched_at_utc
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    zpid, kind, hoa_fee, hoa_fee_unit, hoa_monthly, description, photos_count,
+    year_built, lot_size, lot_size_unit, tax_assessed_latest, tax_year_latest,
+    tax_paid_latest, tax_history, schools, raw_json, enriched_at_utc,
+    normalization_failed
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(zpid, kind) DO UPDATE SET
     hoa_fee=excluded.hoa_fee,
     hoa_fee_unit=excluded.hoa_fee_unit,
+    hoa_monthly=excluded.hoa_monthly,
     description=excluded.description,
     photos_count=excluded.photos_count,
     year_built=excluded.year_built,
     lot_size=excluded.lot_size,
     lot_size_unit=excluded.lot_size_unit,
-    tax_assessed_value=excluded.tax_assessed_value,
+    tax_assessed_latest=excluded.tax_assessed_latest,
+    tax_year_latest=excluded.tax_year_latest,
+    tax_paid_latest=excluded.tax_paid_latest,
     tax_history=excluded.tax_history,
-    price_history_detail=excluded.price_history_detail,
     schools=excluded.schools,
     raw_json=COALESCE(excluded.raw_json, property_details.raw_json),
-    enriched_at_utc=excluded.enriched_at_utc"""
+    enriched_at_utc=excluded.enriched_at_utc,
+    normalization_failed=excluded.normalization_failed"""
 
 
 def upsert_property_details(
@@ -115,10 +193,11 @@ def upsert_property_details(
     conn.execute("BEGIN IMMEDIATE")
     try:
         for i, detail in enumerate(detail_list):
-            norm = _coerce_detail(detail)
+            norm, normalization_failed = _coerce_detail(detail)
             zpid = norm.get("zpid") if isinstance(norm, Mapping) else None
-            if zpid is None and isinstance(detail, Mapping):
-                zpid = detail.get("zpid")
+            if zpid is None:
+                zpid = detail.get("zpid") if isinstance(detail, Mapping) else None
+            zpid = to_zpid(zpid)
             if zpid is None:
                 continue
             raw_json = None
@@ -131,12 +210,51 @@ def upsert_property_details(
                     raw_json = None
             conn.execute(
                 _UPSERT_SQL,
-                _detail_values(norm, kind, int(zpid), raw_json, enriched_at),
+                _detail_values(norm, kind, zpid, raw_json, enriched_at, normalization_failed),
             )
         conn.commit()
     except Exception:
         conn.rollback()
         raise
+
+
+_FAILURE_UPSERT_SQL = """INSERT INTO detail_failures (
+    zpid, kind, recorded_at_utc, reason, status_code
+) VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(zpid, kind) DO UPDATE SET
+    recorded_at_utc=excluded.recorded_at_utc,
+    reason=excluded.reason,
+    status_code=excluded.status_code"""
+
+
+def record_detail_failure(  # noqa: PLR0913 - caller supplies all failure fields
+    conn: sqlite3.Connection,
+    zpid: int,
+    kind: str,
+    *,
+    reason: str,
+    status_code: int | None = None,
+    recorded_at_utc: str | None = None,
+) -> None:
+    """Record that a detail fetch failed for a listing, so it is not retried
+    within ``--max-age`` days."""
+    conn.execute(
+        _FAILURE_UPSERT_SQL,
+        (zpid, kind, recorded_at_utc or utc_now(), reason, status_code),
+    )
+
+
+def get_detail_failure(conn: sqlite3.Connection, zpid: int, kind: str = "sale") -> dict[str, Any] | None:
+    """Return the recorded failure for a listing, or None if none was recorded."""
+    cur = conn.execute(
+        "SELECT * FROM detail_failures WHERE zpid = ? AND kind = ?",
+        (zpid, kind),
+    )
+    row = cur.fetchone()
+    if row is None:
+        return None
+    cols = [d[0] for d in cur.description]
+    return dict(zip(cols, row, strict=True))
 
 
 def get_property_details(conn: sqlite3.Connection, zpid: int, kind: str = "sale") -> dict[str, Any] | None:

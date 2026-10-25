@@ -13,6 +13,7 @@ from pyzill.config import ZILLOW_HOME
 __all__ = [
     "ZILLOW_HOST",
     "apartment_detail_url",
+    "apartment_id_from_url",
     "home_detail_url",
     "is_zillow_https_url",
 ]
@@ -42,3 +43,28 @@ def home_detail_url(zpid: int | str) -> str:
 def apartment_detail_url(apartment_id: str) -> str:
     """Return the canonical detail URL for an apartment (building) id."""
     return f"{ZILLOW_HOME}/apartments/{quote(apartment_id.strip(), safe='')}/"
+
+
+def apartment_id_from_url(url: str) -> str | None:
+    """Return the apartment (building) id in a Zillow apartment URL.
+
+    Zillow writes the id as the last path segment of an
+    ``/apartments/<place>/<name>/<id>/`` URL, which may be absolute or
+    relative. A home URL, or anything that is not an apartment URL, yields
+    ``None`` so the caller can fall back to the home-detail endpoint.
+    """
+    try:
+        path = urlsplit(url).path
+    except ValueError:
+        return None
+    segments = [segment for segment in path.split("/") if segment]
+    if "apartments" not in segments:
+        return None
+    tail = segments[segments.index("apartments") + 1 :]
+    # A building URL has at least a place/name segment and the id.
+    if len(tail) < _APARTMENT_ID_MIN_SEGMENTS:
+        return None
+    return tail[-1]
+
+
+_APARTMENT_ID_MIN_SEGMENTS = 2

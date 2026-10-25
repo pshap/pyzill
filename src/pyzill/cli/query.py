@@ -21,7 +21,7 @@ from pyzill.cli.options import (
     WhereJSONOpt,
     WhereOpt,
 )
-from pyzill.cli.output import OutputFormat
+from pyzill.cli.output import OutputFormat, expand_cols_preset
 from pyzill.normalize import normalize_listings
 from pyzill.query import QueryValidationError, coerce_value, query_database, query_rows
 from pyzill.workflows import extract_listings
@@ -71,6 +71,7 @@ def query(
     if data and not rows:
         error("query input contains no listing objects", code=2)
 
+    cols = expand_cols_preset(cols)
     rows, selected = cli_query_rows(rows, where=where, where_json=where_json, sort=sort, cols=cols, limit=limit)
     write_output(rows, output_format, output, columns=selected)
 

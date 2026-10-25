@@ -248,7 +248,7 @@ pyzill search sale "12305"  # uses proxy from environment
 
 - `0` - Success (including zero results, --help, --version)
 - `2` - Invalid invocation (missing arguments, invalid options, unsupported combinations)
-- `3` - Zillow blocked the request
+- `3` - Zillow blocked the request, or a recent block cooldown is active
 - `4` - Requested Zillow resource was not found
 - `5` - Zillow response could not be parsed or its schema drifted
 - `6` - Transient server or network failure
@@ -257,7 +257,17 @@ pyzill search sale "12305"  # uses proxy from environment
 Errors are JSON objects on stderr when stdout is not a TTY. Use
 `--json-errors` to force JSON errors or `--no-json-errors` for human-readable
 diagnostics. The JSON shape is `{"error":{"code":"blocked","message":"...","retryable":false,"status_code":403}}`;
-`status_code` is omitted when unavailable. Proxy credentials are redacted.
+`status_code` and `retry_after` are omitted when unavailable. Proxy credentials are redacted.
+
+**Safety floors and block memory** — `--max-requests` is capped (default 50; raise with
+`PYZILL_MAX_REQUESTS_CEILING`) and `--rate-limit` is floored (default 1.0s; lower with
+`PYZILL_MIN_RATE_LIMIT_FLOOR`). Blocked responses are remembered and requests are paused during
+an escalating cooldown (15m / 1h / 4h / 24h) at the default state path
+`$XDG_STATE_HOME/pyzill/block.json` (or `~/.local/state/pyzill/block.json`). Set
+`PYZILL_BLOCK_STATE` to a custom path, or `off` to disable block memory. A successful
+network request clears the remembered block. Offline commands and `--plan` never trigger
+cooldown enforcement. Network commands support `--plan` to print a JSON plan and exit
+without making requests or calling the geocoder.
 
 ## Module Invocation
 

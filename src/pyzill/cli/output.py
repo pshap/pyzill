@@ -40,11 +40,13 @@ class OutputUsageError(OutputError):
 
 __all__ = [
     "DB_LISTING_TABLE_COLUMNS",
+    "DETAILS_COLUMNS",
     "LISTING_TABLE_COLUMNS",
     "OutputError",
     "OutputFormat",
     "OutputUsageError",
     "dumps",
+    "expand_cols_preset",
     "render_csv",
     "render_json",
     "render_jsonl",
@@ -57,6 +59,33 @@ __all__ = [
 # keeps, so a listing read back from the database carries those as well.
 LISTING_TABLE_COLUMNS = ("address", "price", "beds", "baths", "area", "city", "state", "home_type", "status")
 DB_LISTING_TABLE_COLUMNS = (*LISTING_TABLE_COLUMNS, "first_seen_utc", "last_seen_utc")
+
+# Column preset: ``--cols details`` expands to these property-detail columns,
+# plus the listing identifiers so rows can be matched back to a listing.
+DETAILS_COLUMNS = (
+    "zpid",
+    "kind",
+    "hoa_fee",
+    "hoa_fee_unit",
+    "hoa_monthly",
+    "description",
+    "photos_count",
+    "year_built",
+    "lot_size",
+    "lot_size_unit",
+    "tax_assessed_latest",
+    "tax_year_latest",
+    "tax_paid_latest",
+    "tax_history",
+    "schools",
+)
+
+
+def expand_cols_preset(cols: str | None) -> str | None:
+    """Expand a column preset name (e.g. ``details``) to a comma-separated list."""
+    if cols == "details":
+        return ",".join(DETAILS_COLUMNS)
+    return cols
 
 
 def _cell(value: Any) -> str:

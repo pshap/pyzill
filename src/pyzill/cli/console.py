@@ -27,7 +27,13 @@ from pyzill.cli.output import (
     render_table_text,
     require_list,
 )
-from pyzill.cli.safety import record_block
+from pyzill.cli.safety import (
+    clear_block_state,
+    cooldown_until,
+    is_in_cooldown,
+    record_block,
+    seconds_until_unblock,
+)
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 from pyzill.exceptions import (
     ZillowError,
@@ -49,7 +55,6 @@ class Context:
     max_retries: int = DEFAULT_MAX_RETRIES
     json_errors: bool = False
     rate_limit: float | None = None
-    force: bool = False
 
     @cached_property
     def stderr_console(self) -> Console:
@@ -130,6 +135,7 @@ def error(
     error_code: str | None = None,
     retryable: bool = False,
     status_code: int | None = None,
+    retry_after: str | None = None,
 ) -> NoReturn:
     """Print a redacted diagnostic to stderr and exit."""
     message = _redact(message)
@@ -143,10 +149,34 @@ def error(
         }
         if status_code is not None:
             payload["error"]["status_code"] = status_code
+        if retry_after is not None:
+            payload["error"]["retry_after"] = retry_after
         typer.echo(json.dumps(payload, ensure_ascii=False), err=True)
     else:
         stderr_line("red", "Error:", message)
     raise typer.Exit(code)
+
+
+def enforce_cooldown() -> None:
+    """Refuse a network command while a recorded Zillow block is cooling down.
+
+    Offline commands never call this, and ``--plan`` checks it only after it
+    has decided not to make a request, so neither is blocked by a stale
+    cooldown.
+    """
+    if not is_in_cooldown():
+        return
+    remaining = seconds_until_unblock()
+    retry_after = cooldown_until()
+    error(
+        f"Zillow blocked us recently; retry in {remaining} second(s)"
+        + (f" (after {retry_after})" if retry_after else "")
+        + " (set PYZILL_BLOCK_STATE=off to disable block memory)",
+        code=3,
+        error_code="cooling_down",
+        retryable=True,
+        retry_after=retry_after,
+    )
 
 
 def warn(message: str) -> None:
@@ -204,7 +234,11 @@ def report_notices(notices: Iterable[Notice]) -> None:
 
 @contextmanager
 def network_errors(failure: str) -> Iterator[None]:
-    """Translate known library failures to stable CLI errors."""
+    """Translate known library failures to stable CLI errors.
+
+    A successful request clears any remembered block: the block cooldown has
+    done its job, and the next command should be allowed to run.
+    """
     try:
         yield
     except ZillowError as e:
@@ -237,6 +271,10 @@ def network_errors(failure: str) -> Iterator[None]:
         if context().verbose:
             raise
         error(f"Unexpected error during {failure}: {e}", code=1)
+    else:
+        # Every request the block guarded has succeeded; the remembered block
+        # is stale now.
+        clear_block_state()
 
 
 def version_callback(value: bool) -> None:

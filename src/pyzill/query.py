@@ -31,16 +31,19 @@ _DETAIL_QUERY_FIELDS = frozenset(
     {
         "hoa_fee",
         "hoa_fee_unit",
+        "hoa_monthly",
         "description",
         "photos_count",
         "year_built",
         "lot_size",
         "lot_size_unit",
-        "tax_assessed_value",
+        "tax_assessed_latest",
+        "tax_year_latest",
+        "tax_paid_latest",
         "tax_history",
-        "price_history_detail",
         "schools",
         "enriched_at_utc",
+        "normalization_failed",
     }
 )
 # Detail fields stored directly on property_details. Used to compile SQL
@@ -49,20 +52,23 @@ _PROPERTY_DETAIL_FIELDS = frozenset(
     {
         "hoa_fee",
         "hoa_fee_unit",
+        "hoa_monthly",
         "description",
         "photos_count",
         "year_built",
         "lot_size",
         "lot_size_unit",
+        "tax_assessed_latest",
+        "tax_year_latest",
+        "tax_paid_latest",
         "tax_history",
-        "price_history_detail",
         "schools",
         "enriched_at_utc",
+        "normalization_failed",
     }
 )
-# Detail-queryable fields that require joining property_details (the
-# COALESCE form of tax_assessed_value also reads the details table).
-_DETAIL_SQL_FIELDS = _PROPERTY_DETAIL_FIELDS | {"tax_assessed_value"}
+# Detail-queryable fields that require joining property_details.
+_DETAIL_SQL_FIELDS = _PROPERTY_DETAIL_FIELDS
 _DETAILS_JOIN = (
     " LEFT JOIN property_details ON property_details.zpid = listings.zpid AND property_details.kind = listings.kind"
 )
@@ -265,18 +271,15 @@ def _sort_condition(spec: str, valid_fields: frozenset[str]) -> tuple[str, str]:
 def _column_for(field: str, join_used: bool) -> str:
     """Return the SQL column expression for a field, used for ordering and projection.
 
-    Detail fields come from the joined property_details table. ``tax_assessed_value``
-    prefers the listings value and falls back to the details value. When the details
-    join is active every listing column is qualified with ``listings.``, because both
-    tables carry ``zpid`` and ``kind`` and an unqualified one is ambiguous.
+    Detail fields come from the joined property_details table. When the details
+    join is active every listing column is qualified with ``listings.``, because
+    both tables carry ``zpid`` and ``kind`` and an unqualified one is ambiguous.
     """
     if field == "ppsf":
         prefix = "listings." if join_used else ""
         return f"(CAST({prefix}price AS REAL) / NULLIF({prefix}area, 0))"
     if field in _PROPERTY_DETAIL_FIELDS:
         return f'property_details."{field}"'
-    if field == "tax_assessed_value":
-        return 'COALESCE(listings."tax_assessed_value", property_details."tax_assessed_value")'
     prefix = "listings." if join_used else ""
     return f'{prefix}"{field}"'
 
@@ -360,8 +363,6 @@ def _projection_column(field: str) -> str:
         )
     if field in _PROPERTY_DETAIL_FIELDS:
         return f'property_details."{field}" AS "{field}"'
-    if field == "tax_assessed_value":
-        return 'COALESCE(listings."tax_assessed_value", property_details."tax_assessed_value") AS "tax_assessed_value"'
     return f'listings."{field}" AS "{field}"'
 
 

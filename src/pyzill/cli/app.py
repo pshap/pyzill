@@ -21,18 +21,15 @@ from pyzill.cli.db import db_app
 from pyzill.cli.detail import detail_app
 from pyzill.cli.geocode import register as register_geocode_command
 from pyzill.cli.query import register as register_offline_commands
+from pyzill.cli.safety import min_rate_limit
 from pyzill.cli.schema import schema_app
 from pyzill.cli.search import search_app
 from pyzill.config import DEFAULT_IMPERSONATE, DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT
 from pyzill.proxy import resolve_proxy
 from pyzill.ratelimit import set_min_interval
 
-# Floors that keep an automated agent from hammering Zillow. They are
-# overridable with --force, but the override is explicit: an agent that
-# disables throttling must say so on every invocation.
-_MIN_RATE_LIMIT = 1.0
-_MAX_REQUESTS_CAP = 50
-
+# Floors that keep an automated agent from hammering Zillow. Override with
+# PYZILL_MIN_RATE_LIMIT_FLOOR and PYZILL_MAX_REQUESTS_CEILING env vars.
 app = typer.Typer(
     name="pyzill",
     pretty_exceptions_show_locals=False,
@@ -102,18 +99,11 @@ def main(
             "--rate-limit",
             help=(
                 "Minimum seconds between requests (default: PYZILL_RATE_LIMIT "
-                "or 1.5; 0 disables; floor 1.0 without --force)"
+                f"or 1.5; 0 disables; floor {min_rate_limit()})"
             ),
             envvar="PYZILL_RATE_LIMIT",
         ),
     ] = None,
-    force: Annotated[
-        bool,
-        typer.Option(
-            "--force",
-            help="Override the safety floors on --rate-limit and --max-requests",
-        ),
-    ] = False,
     _version: Annotated[
         bool,
         typer.Option(
@@ -140,7 +130,6 @@ def main(
         max_retries=max_retries,
         json_errors=json_errors if json_errors is not None else not sys.stdout.isatty(),
         rate_limit=rate_limit,
-        force=force,
     )
     ctx.obj = cli_context
     set_context(cli_context)
@@ -160,9 +149,10 @@ def main(
         error(f"Invalid proxy: {e}", code=2)
 
     if rate_limit is not None:
-        if not force and rate_limit < _MIN_RATE_LIMIT:
+        floor = min_rate_limit()
+        if rate_limit < floor:
             error(
-                f"--rate-limit must be at least {_MIN_RATE_LIMIT} second(s) (use --force to override)",
+                f"--rate-limit must be at least {floor} second(s) (raise PYZILL_MIN_RATE_LIMIT_FLOOR to lower)",
                 code=2,
             )
         set_min_interval(rate_limit)

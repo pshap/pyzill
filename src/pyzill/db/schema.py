@@ -4,11 +4,13 @@ The DDL, the canonical column list, and the migration steps live here so the
 fresh-schema path and the upgrade path can never drift apart.
 """
 
+import json
 import re
 import sqlite3
 from typing import Any
 
 from pyzill.normalize import LISTING_FIELDS
+from pyzill.values import to_number
 
 __all__ = [
     "LISTING_COLUMN_DEFINITIONS",
@@ -21,7 +23,7 @@ __all__ = [
 
 
 # The current schema version.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Canonical listings columns, in schema order. Derived from the normalized
 # listing shape, so the DDL, the migrations, and the write path all agree on
@@ -109,22 +111,37 @@ _CREATE_PROPERTY_DETAILS_SQL = """CREATE TABLE IF NOT EXISTS {name} (
     kind TEXT NOT NULL DEFAULT 'sale' CHECK (kind IN ('sale', 'rent', 'sold')),
     hoa_fee INTEGER,
     hoa_fee_unit TEXT,
+    hoa_monthly REAL,
     description TEXT,
     photos_count INTEGER,
     year_built INTEGER,
     lot_size REAL,
     lot_size_unit TEXT,
-    tax_assessed_value INTEGER,
+    tax_assessed_latest INTEGER,
+    tax_year_latest INTEGER,
+    tax_paid_latest INTEGER,
     tax_history TEXT,
-    price_history_detail TEXT,
     schools TEXT,
     raw_json TEXT,
     enriched_at_utc TEXT NOT NULL,
+    normalization_failed INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (zpid, kind),
     FOREIGN KEY (zpid, kind) REFERENCES listings(zpid, kind) ON DELETE CASCADE
 );"""
 
 _CREATE_PROPERTY_DETAILS_INDEX_SQL = ("CREATE INDEX IF NOT EXISTS ix_property_details_kind ON property_details(kind)",)
+
+_CREATE_DETAIL_FAILURES_SQL = """CREATE TABLE IF NOT EXISTS {name} (
+    zpid INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'sale' CHECK (kind IN ('sale', 'rent', 'sold')),
+    recorded_at_utc TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    status_code INTEGER,
+    PRIMARY KEY (zpid, kind),
+    FOREIGN KEY (zpid, kind) REFERENCES listings(zpid, kind) ON DELETE CASCADE
+);"""
+
+_CREATE_DETAIL_FAILURES_INDEX_SQL = ("CREATE INDEX IF NOT EXISTS ix_detail_failures_kind ON detail_failures(kind)",)
 
 # The property_details columns, parsed from the same DDL the table is built
 # with, so the schema command and the table can never drift apart.
@@ -248,7 +265,142 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
-_MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4}
+def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """Rebuild property_details around derived numeric columns and add detail_failures.
+
+    The v4 table carried ``tax_assessed_value`` (always NULL) and
+    ``price_history_detail`` (a JSON duplicate of tax_history).  Neither is
+    kept: the v5 table derives ``hoa_monthly`` from ``hoa_fee``/``hoa_fee_unit``
+    and ``tax_*_latest`` from the newest ``tax_history`` entry at write time,
+    and the migration backfills those derivations from stored JSON.
+    """
+    old_columns = {row[1] for row in conn.execute("PRAGMA table_info(property_details)")}
+    conn.execute("CREATE TABLE property_details_v5_staging AS SELECT * FROM property_details")
+    conn.execute("DROP TABLE property_details")
+    conn.execute(_CREATE_PROPERTY_DETAILS_SQL.format(name="property_details"))
+    for statement in _CREATE_PROPERTY_DETAILS_INDEX_SQL:
+        conn.execute(statement)
+
+    if old_columns:
+        rows = conn.execute(
+            f"SELECT {', '.join(f's."{col}"' for col in sorted(old_columns))} FROM property_details_v5_staging s"  # noqa: S608 - column names come from PRAGMA table_info
+        ).fetchall()
+        old_col_list = sorted(old_columns)
+        for row in rows:
+            values = dict(zip(old_col_list, row, strict=False))
+            conn.execute(
+                _V5_PROPERTY_DETAIL_INSERT_SQL,
+                _v5_property_detail_row(values),
+            )
+    conn.execute("DROP TABLE property_details_v5_staging")
+
+    conn.execute(_CREATE_DETAIL_FAILURES_SQL.format(name="detail_failures"))
+    for statement in _CREATE_DETAIL_FAILURES_INDEX_SQL:
+        conn.execute(statement)
+
+
+_V5_PROPERTY_DETAIL_INSERT_SQL = """INSERT INTO property_details (
+    zpid, kind, hoa_fee, hoa_fee_unit, hoa_monthly, description, photos_count,
+    year_built, lot_size, lot_size_unit, tax_assessed_latest, tax_year_latest,
+    tax_paid_latest, tax_history, schools, raw_json, enriched_at_utc,
+    normalization_failed
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
+
+def _int_if_whole(value: Any) -> Any:
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _hoa_monthly_from_fee(hoa_fee: Any, hoa_fee_unit: Any) -> Any:
+    if hoa_fee is None:
+        return None
+    if hoa_fee_unit == "monthly":
+        return hoa_fee
+    if hoa_fee_unit == "annual":
+        return round(float(hoa_fee) / 12.0, 2)
+    if hoa_fee_unit == "quarterly":
+        return round(float(hoa_fee) / 3.0, 2)
+    return None
+
+
+def _tax_latest_from_history(tax_history_raw: Any) -> tuple[Any, Any, Any]:
+    tax_year_latest = None
+    tax_paid_latest = None
+    tax_assessed_latest = None
+    if not tax_history_raw:
+        return tax_year_latest, tax_paid_latest, tax_assessed_latest
+    try:
+        entries = json.loads(tax_history_raw)
+    except (ValueError, TypeError):
+        entries = None
+    if not isinstance(entries, list) or not entries:
+        return tax_year_latest, tax_paid_latest, tax_assessed_latest
+    latest = entries[-1]
+    if not isinstance(latest, dict):
+        return tax_year_latest, tax_paid_latest, tax_assessed_latest
+    tax_year_latest = _int_if_whole(to_number(latest.get("year")))
+    tax_paid_latest = _int_if_whole(
+        to_number(
+            latest.get("taxPaid")
+            if "taxPaid" in latest
+            else latest.get("taxPaidAmount")
+            if "taxPaidAmount" in latest
+            else latest.get("tax")
+            if "tax" in latest
+            else latest.get("taxAmount")
+        )
+    )
+    tax_assessed_latest = _int_if_whole(
+        to_number(
+            latest.get("taxAssessedValue")
+            if "taxAssessedValue" in latest
+            else latest.get("assessedValue")
+            if "assessedValue" in latest
+            else latest.get("taxAssessed")
+        )
+    )
+    return tax_year_latest, tax_paid_latest, tax_assessed_latest
+
+
+def _v5_property_detail_row(values: dict[str, Any]) -> tuple[Any, ...]:
+    """Return the parameter tuple for one rebuilt property_details row.
+
+    Derived columns come from the stored JSON: ``hoa_monthly`` normalizes
+    ``hoa_fee`` by its unit, and ``tax_*_latest`` come from the newest entry
+    of ``tax_history``.
+    """
+    hoa_fee = _int_if_whole(to_number(values.get("hoa_fee")))
+    hoa_fee_unit = values.get("hoa_fee_unit")
+    hoa_monthly = _hoa_monthly_from_fee(hoa_fee, hoa_fee_unit)
+    tax_year_latest, tax_paid_latest, tax_assessed_latest = _tax_latest_from_history(values.get("tax_history"))
+    normalization_failed = values.get("normalization_failed")
+    normalization_failed = 0 if normalization_failed is None else 1 if int(normalization_failed) else 0
+
+    return (
+        values.get("zpid"),
+        values.get("kind"),
+        hoa_fee,
+        hoa_fee_unit,
+        hoa_monthly,
+        values.get("description"),
+        values.get("photos_count"),
+        values.get("year_built"),
+        values.get("lot_size"),
+        values.get("lot_size_unit"),
+        tax_assessed_latest,
+        tax_year_latest,
+        tax_paid_latest,
+        values.get("tax_history"),
+        values.get("schools"),
+        values.get("raw_json"),
+        values.get("enriched_at_utc"),
+        normalization_failed,
+    )
+
+
+_MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4, 4: _migrate_v4_to_v5}
 
 
 def _addable_definition(definition: str) -> str:
@@ -392,11 +544,14 @@ def schema_needs_update(conn: sqlite3.Connection) -> bool:
     existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
     if any(column not in existing_columns for column in LISTING_TABLE_COLUMNS):
         return True
-    # Also need property_details table
-    return not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='property_details'").fetchone()
+    # Also need property_details and detail_failures tables
+    return not (
+        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='property_details'").fetchone()
+        and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='detail_failures'").fetchone()
+    )
 
 
-def ensure_schema(conn: sqlite3.Connection) -> None:
+def ensure_schema(conn: sqlite3.Connection) -> None:  # noqa: C901, PLR0912 - full schema lifecycle is inherently complex
     """Bring the database up to the current schema version.
 
     Must run inside a write transaction: the version is re-read under the
@@ -423,6 +578,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute(_CREATE_PROPERTY_DETAILS_SQL.format(name="property_details"))
             for statement in _CREATE_PROPERTY_DETAILS_INDEX_SQL:
                 conn.execute(statement)
+            conn.execute(_CREATE_DETAIL_FAILURES_SQL.format(name="detail_failures"))
+            for statement in _CREATE_DETAIL_FAILURES_INDEX_SQL:
+                conn.execute(statement)
             version = SCHEMA_VERSION
             conn.execute(f"PRAGMA user_version = {version}")
         else:
@@ -437,6 +595,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     # Idempotent on fresh, migrated, and already-current databases alike.
     conn.execute(_CREATE_PROPERTY_DETAILS_SQL.format(name="property_details"))
     for statement in _CREATE_PROPERTY_DETAILS_INDEX_SQL:
+        conn.execute(statement)
+    conn.execute(_CREATE_DETAIL_FAILURES_SQL.format(name="detail_failures"))
+    for statement in _CREATE_DETAIL_FAILURES_INDEX_SQL:
         conn.execute(statement)
     # Backfill any columns a newer release added. Runs even when the
     # version is already current so a database that predates an additive

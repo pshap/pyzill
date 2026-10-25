@@ -308,3 +308,9 @@ def patch_geocode(monkeypatch):
         return calls
 
     return _patch
+
+
+@pytest.fixture(autouse=True)
+def _isolate_block_state(tmp_path, monkeypatch):
+    """Keep block memory isolated per test."""
+    monkeypatch.setenv("PYZILL_BLOCK_STATE", str(tmp_path / "block.json"))

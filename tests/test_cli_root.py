@@ -252,9 +252,10 @@ class TestMainEntry:
         assert code == 2
         assert json.loads(capsys.readouterr().err)["error"]["code"] == "usage"
 
-    def test_force_overrides_the_max_requests_floor(self, fake_http, search_success_body) -> None:
+    def test_force_overrides_the_max_requests_floor(self, monkeypatch, fake_http, search_success_body) -> None:
+        monkeypatch.setenv("PYZILL_MAX_REQUESTS_CEILING", "1000")
         fake_http.install("PUT", json_data=search_success_body)
-        result = runner.invoke(app, ["--force", "search", "sale", "12305", "--max-requests", "1000"])
+        result = runner.invoke(app, ["search", "sale", "12305", "--max-requests", "1000"])
         assert result.exit_code == 0
 
     def test_rate_limit_below_the_floor_is_rejected(
@@ -264,9 +265,10 @@ class TestMainEntry:
         assert code == 2
         assert json.loads(capsys.readouterr().err)["error"]["code"] == "usage"
 
-    def test_force_overrides_the_rate_limit_floor(self, fake_http, search_success_body, no_sleep) -> None:  # noqa: ARG002
+    def test_force_overrides_the_rate_limit_floor(self, monkeypatch, fake_http, search_success_body, no_sleep) -> None:  # noqa: ARG002
+        monkeypatch.setenv("PYZILL_MIN_RATE_LIMIT_FLOOR", "0")
         fake_http.install("PUT", json_data=search_success_body)
-        result = runner.invoke(app, ["--force", "--rate-limit", "0", "search", "sale", "12305"])
+        result = runner.invoke(app, ["--rate-limit", "0", "search", "sale", "12305"])
         assert result.exit_code == 0
         assert ratelimit.get_min_interval() == 0.0
 

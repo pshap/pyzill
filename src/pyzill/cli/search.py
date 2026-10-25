@@ -15,6 +15,8 @@ from pyzill._kinds import Kind
 from pyzill.cli.console import (
     context,
     debug,
+    emit,
+    enforce_cooldown,
     error,
     network_errors,
     progress,
@@ -36,6 +38,7 @@ from pyzill.cli.options import (
     MinPrice,
     North,
     OutputOpt,
+    PlanOpt,
     Query,
     Raw,
     South,
@@ -43,8 +46,8 @@ from pyzill.cli.options import (
     West,
     Zoom,
 )
-from pyzill.cli.output import OutputFormat
-from pyzill.cli.safety import MAX_REQUESTS_CAP
+from pyzill.cli.output import OutputFormat, dumps
+from pyzill.cli.safety import max_requests_cap
 from pyzill.geocode import GeocodeError, GeocodeUnavailableError, geocode
 from pyzill.workflows import (
     BoundingBoxError,
@@ -102,22 +105,34 @@ def search_options_from_args(args: Mapping[str, Any]) -> SearchRequest:
 
 
 def _enforce_budget_floor(args: Mapping[str, Any]) -> None:
-    """Refuse a dangerous ``--max-requests`` unless ``--force`` was passed.
+    """Refuse a dangerous ``--max-requests`` unless the ceiling is raised.
 
-    The floor lives in the CLI layer, not the library: a script that builds
+    The ceiling lives in the CLI layer, not the library: a script that builds
     its own client is free to pace itself however it likes. An agent running
-    the CLI gets the conservative default unless it says ``--force`` on the
-    same invocation. ``--rate-limit`` is floored by the root callback, so it
-    is checked there and is not re-checked here.
+    the CLI gets the conservative default unless ``PYZILL_MAX_REQUESTS_CEILING``
+    raises it. ``--rate-limit`` is floored by the root callback, so it is
+    checked there and is not re-checked here.
     """
-    if context().force:
-        return
     max_requests = args.get("max_requests")
-    if max_requests is not None and max_requests > MAX_REQUESTS_CAP:
+    cap = max_requests_cap()
+    if max_requests is not None and max_requests > cap:
         error(
-            f"--max-requests must be at most {MAX_REQUESTS_CAP} (use --force to override)",
+            f"--max-requests must be at most {cap} (raise PYZILL_MAX_REQUESTS_CEILING to override)",
             code=2,
         )
+
+
+def enforce_max_requests(max_requests: int | None) -> int:
+    """Return the request budget, refusing a value above the ceiling."""
+    cap = max_requests_cap()
+    if max_requests is None:
+        return cap
+    if max_requests > cap:
+        error(
+            f"--max-requests must be at most {cap} (raise PYZILL_MAX_REQUESTS_CEILING to override)",
+            code=2,
+        )
+    return max_requests
 
 
 def _viewport_error(exc: BoundingBoxError) -> NoReturn:
@@ -155,11 +170,12 @@ def resolve_search_viewport(request: SearchRequest) -> Viewport:
     return viewport
 
 
-def prepare_search(request: SearchRequest) -> Viewport:
-    """Validate a search request and resolve its viewport.
+def validate_search_request(request: SearchRequest) -> None:
+    """Check the CLI-owned rules of a search request, without any network use.
 
-    The checks the CLI owns (mutually exclusive flags, inverted filter
-    ranges) are reported as usage errors before any request is made.
+    This is what ``--plan`` runs: mutually exclusive flags and inverted filter
+    ranges are reported as usage errors before any request is made, and the
+    viewport is left unresolved so no geocoder is contacted.
     """
     if request.is_room and request.is_entire_place:
         error("--room and --entire-place can't be used together", code=2)
@@ -170,7 +186,43 @@ def prepare_search(request: SearchRequest) -> Viewport:
         check_range("price", filters.min_price, filters.max_price)
     except RangeError as exc:
         _range_error(exc)
+
+
+def prepare_search(request: SearchRequest) -> Viewport:
+    """Validate a search request and resolve its viewport.
+
+    The checks the CLI owns (mutually exclusive flags, inverted filter
+    ranges) are reported as usage errors before any request is made.
+    """
+    validate_search_request(request)
     return resolve_search_viewport(request)
+
+
+def plan_requests(*, tile: bool, max_requests: int) -> int:
+    """Return the most requests a search command would make.
+
+    A plain search makes one request. A tiled search may stop earlier when it
+    runs out of listings, so its request budget is the upper bound.
+    """
+    return max_requests if tile else 1
+
+
+def plan_search(kind: Kind, args: Mapping[str, Any]) -> None:
+    """Print what a search would do, without contacting Zillow or the geocoder."""
+    request = search_options_from_args(args)
+    validate_search_request(request)
+    max_requests = args.get("max_requests") or 50
+    payload = {
+        "plan": {
+            "command": "search",
+            "kind": kind,
+            "requests": plan_requests(tile=bool(args.get("tile")), max_requests=max_requests),
+            "tile": bool(args.get("tile")),
+            "max_depth": args.get("max_depth"),
+            "max_requests": max_requests,
+        }
+    }
+    emit(dumps(payload), None)
 
 
 def fetch_and_normalize(
@@ -183,6 +235,7 @@ def fetch_and_normalize(
 
     Returns the raw response if raw=True, else the normalized listings.
     """
+    enforce_cooldown()
     viewport = prepare_search(request)
     debug(f"{_SEARCH_NAMES.get(kind, kind)}: query={request.query!r} bbox={viewport.bbox}")
 
@@ -221,6 +274,9 @@ def _search_command(kind: Kind, args: Mapping[str, Any]) -> None:
     ``args`` is the calling command's ``locals()``, so the shared options are
     collected without repeating them at every call site.
     """
+    if args.get("plan"):
+        plan_search(kind, args)
+        return
     request = search_options_from_args(args)
     run_search(
         kind,
@@ -248,6 +304,7 @@ def search_sale(
     tile: Tile = False,
     max_depth: MaxDepth = 4,
     max_requests: MaxRequests = 50,
+    plan: PlanOpt = False,
     raw: Raw = False,
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
@@ -275,6 +332,7 @@ def search_rent(
     max_requests: MaxRequests = 50,
     is_room: IsRoom = False,
     is_entire_place: IsEntirePlace = False,
+    plan: PlanOpt = False,
     raw: Raw = False,
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,
@@ -300,6 +358,7 @@ def search_sold(
     tile: Tile = False,
     max_depth: MaxDepth = 4,
     max_requests: MaxRequests = 50,
+    plan: PlanOpt = False,
     raw: Raw = False,
     output_format: FormatOpt = OutputFormat.json,
     output: OutputOpt = None,

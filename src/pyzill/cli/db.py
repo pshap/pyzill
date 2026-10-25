@@ -7,7 +7,7 @@ renders the result.
 
 import sqlite3
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -16,10 +16,11 @@ from typing import Annotated, Any
 import typer
 
 from pyzill._kinds import ListingKind, as_kind
-from pyzill.api import get_from_home_id
+from pyzill.api import get_from_apartment_id, get_from_home_id
 from pyzill.cli.console import (
     context,
     emit,
+    enforce_cooldown,
     error,
     network_errors,
     progress,
@@ -37,6 +38,7 @@ from pyzill.cli.options import (
     IsEntirePlace,
     IsRoom,
     LimitOpt,
+    MaxAgeOpt,
     MaxBaths,
     MaxBeds,
     MaxDepth,
@@ -47,7 +49,9 @@ from pyzill.cli.options import (
     MinPrice,
     North,
     OutputOpt,
+    PlanOpt,
     Query,
+    RefreshOpt,
     SortOpt,
     South,
     Tile,
@@ -56,9 +60,16 @@ from pyzill.cli.options import (
     WhereOpt,
     Zoom,
 )
-from pyzill.cli.output import DB_LISTING_TABLE_COLUMNS, OutputFormat, dumps
+from pyzill.cli.output import DB_LISTING_TABLE_COLUMNS, OutputFormat, dumps, expand_cols_preset
 from pyzill.cli.query import cli_query_database
-from pyzill.cli.search import prepare_search, search_options_from_args
+from pyzill.cli.safety import clear_block_state
+from pyzill.cli.search import (
+    enforce_max_requests,
+    plan_requests,
+    prepare_search,
+    search_options_from_args,
+    validate_search_request,
+)
 from pyzill.config import read_env
 from pyzill.db import (
     SyncStats,
@@ -71,10 +82,23 @@ from pyzill.db import (
     list_runs,
     normalize_utc_timestamp,
     prune_database,
+    record_detail_failure,
     resolve_db_path,
     upsert_property_details,
     utc_now,
 )
+from pyzill.exceptions import ZillowError, ZillowNotFoundError
+from pyzill.query import (
+    _DB_QUERY_FIELDS,
+    _DETAILS_JOIN,
+    _build_order,
+    _build_where,
+    _parse_conditions,
+    _QuerySpec,
+    _validate_condition,
+)
+from pyzill.urls import apartment_id_from_url
+from pyzill.values import to_zpid
 from pyzill.workflows import SyncResult, fetch_listings, import_rows, prepare_import, sync_to_db
 
 db_app = typer.Typer(name="db", help="Local SQLite database for tracking listings")
@@ -202,6 +226,7 @@ def db_sync(
     confirm_empty: Annotated[
         bool, typer.Option("--confirm-empty", help="Treat an empty response as a complete search")
     ] = False,
+    plan: PlanOpt = False,
     db_path: DbPathOpt = None,
     output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
 ) -> None:
@@ -215,6 +240,28 @@ def db_sync(
         error("Query must not be empty", code=2)
     _require_json_summary(output_format)
 
+    if plan:
+        request = search_options_from_args(locals())
+        validate_search_request(request)
+        max_requests = max_requests or 50
+        emit(
+            dumps(
+                {
+                    "plan": {
+                        "command": "sync",
+                        "kind": kind,
+                        "requests": plan_requests(tile=tile, max_requests=max_requests),
+                        "tile": tile,
+                        "max_depth": max_depth,
+                        "max_requests": max_requests,
+                    }
+                }
+            ),
+            None,
+        )
+        return
+
+    enforce_cooldown()
     request = search_options_from_args(locals())
     viewport = prepare_search(request)
     with network_errors("Search failed"):
@@ -297,6 +344,7 @@ def db_query(
     output: OutputOpt = None,
 ) -> None:
     """Query listings from the local database."""
+    cols = expand_cols_preset(cols)
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
         rows, selected = cli_query_database(
             conn,
@@ -465,53 +513,290 @@ def db_prune(
     )
 
 
-def _enrich_listing(conn: sqlite3.Connection, zpid: int, kind: str, http_kwargs: dict[str, Any]) -> None:
-    """Fetch one property detail record and upsert it; aborts the command on failure."""
-    with network_errors("Detail fetch failed"):
-        detail = get_from_home_id(int(zpid), **http_kwargs)
+_DETAIL_FETCHERS: dict[str, Callable[..., Any]] = {
+    "sale": get_from_home_id,
+    "sold": get_from_home_id,
+    "rent": get_from_home_id,
+}
+
+
+def _detail_target(zpid: int, kind: str, detail_url: str | None) -> tuple[Callable[..., Any], int | str]:
+    """Return the fetcher and identifier for one listing.
+
+    Every row in the database is keyed by a numeric zpid, so the home-detail
+    endpoint is the correct one for sale, sold, and ordinary rental units.
+    The exception is a rental whose recorded ``detail_url`` is an apartment
+    building URL: then the building id in that URL is a string (``CgKZT4``),
+    not a zpid, and the apartment endpoint is the one that can read it.
+    """
+    if kind == "rent" and detail_url:
+        apartment_id = apartment_id_from_url(detail_url)
+        if apartment_id is not None:
+            return get_from_apartment_id, apartment_id
+    return _DETAIL_FETCHERS.get(kind, get_from_home_id), zpid
+
+
+def _fetch_detail_for_kind(
+    zpid: int,
+    kind: str,
+    http_kwargs: dict[str, Any],
+    detail_url: str | None = None,
+) -> Any:
+    """Fetch a detail record using the endpoint that matches the listing.
+
+    Sale and sold listings are homes; a rental is a home too unless its
+    recorded URL names an apartment building.  ``ZillowNotFoundError`` is
+    left unhandled here: the caller decides whether a 404 means "gone"
+    (skip and record) or something else.
+    """
+    fetch, target = _detail_target(zpid, kind, detail_url)
+    detail = fetch(target, **http_kwargs)
+    if fetch is get_from_apartment_id and isinstance(detail, dict) and detail.get("zpid") is None:
+        # The database keys details by the listing's zpid; an apartment page
+        # does not carry one, so stamp the listing's own key onto the record.
+        detail = {**detail, "zpid": zpid}
+    return detail
+
+
+def _enrich_listing(
+    conn: sqlite3.Connection,
+    zpid: int,
+    kind: str,
+    http_kwargs: dict[str, Any],
+    detail_url: str | None = None,
+) -> str:
+    """Fetch one property detail record and upsert it.
+
+    Returns ``"enriched"`` on success, ``"normalization_failed"`` when the
+    payload was stored but could not be normalized, and ``"gone"`` when
+    Zillow says the listing no longer exists (404). Blocked and network
+    errors are raised so the batch stops.
+    """
+    try:
+        detail = _fetch_detail_for_kind(zpid, kind, http_kwargs, detail_url)
+    except ZillowNotFoundError:
+        record_detail_failure(
+            conn,
+            zpid,
+            kind,
+            reason="not_found",
+            status_code=404,
+        )
+        conn.commit()
+        return "gone"
+    # The request succeeded, so any remembered block is stale.
+    clear_block_state()
     upsert_property_details(conn, detail, kind=str(kind))
+    # A listing that comes back is no longer gone.
+    conn.execute("DELETE FROM detail_failures WHERE zpid = ? AND kind = ?", (zpid, kind))
+    conn.commit()
+    row = conn.execute(
+        "SELECT normalization_failed FROM property_details WHERE zpid = ? AND kind = ?",
+        (zpid, kind),
+    ).fetchone()
+    if row is not None and row[0]:
+        return "normalization_failed"
+    return "enriched"
 
 
 @db_app.command("enrich")
-def db_enrich(
+def db_enrich(  # noqa: C901, PLR0912, PLR0915 - multiple error paths and output branches are inherent
     where: WhereOpt = None,
     where_json: WhereJSONOpt = None,
     sort: SortOpt = None,
     limit: LimitOpt = None,
+    plan: PlanOpt = False,
     max_requests: Annotated[int | None, typer.Option("--max-requests", help="Maximum detail requests to make")] = None,
+    max_age: MaxAgeOpt = 7,
+    refresh: RefreshOpt = False,
     db_path: DbPathOpt = None,
     output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
 ) -> None:
-    """Fetch property details for shortlisted listings and store them."""
-    with _db_session(db_path, must_exist=True, readonly=True) as conn:
-        rows, _ = cli_query_database(conn, where=where, where_json=where_json, sort=sort, limit=limit)
+    """Fetch property details for shortlisted listings and store them.
 
-    if not rows:
+    Shortlist with the same ``--where``/``--where-json``/``--sort``/``--limit``
+    flags ``db query`` uses.  By default only listings not enriched within
+    ``--max-age`` days (default 7) are fetched; pass ``--refresh`` to ignore
+    the age filter.  Listings Zillow reports as gone (404) are recorded and
+    skipped, not retried; blocked or network errors stop the batch.
+    """
+    if max_age is not None and max_age < 0:
+        error("--max-age must be non-negative", code=2)
+
+    budget = max_requests if max_requests is not None else 50
+    budget = enforce_max_requests(budget)
+    if budget < 0:
+        error("--max-requests must be non-negative", code=2)
+
+    # Select candidates in SQL so --limit counts only rows that will actually
+    # be fetched: no property_details row, or one older than --max-age days,
+    # and no recent detail_failure row either.
+    with _db_session(db_path, must_exist=True, readonly=True) as conn:
+        candidates = _select_enrich_candidates(
+            conn,
+            where=where,
+            where_json=where_json,
+            sort=sort,
+            limit=limit,
+            max_age_days=None if refresh else max_age,
+        )
+
+    if plan:
+        emit(
+            dumps(
+                {
+                    "plan": {
+                        "command": "enrich",
+                        "requests": min(len(candidates), budget),
+                        "candidates": len(candidates),
+                        "budget": budget,
+                        "max_age": None if refresh else max_age,
+                        "refresh": refresh,
+                    }
+                }
+            ),
+            None,
+        )
+        return
+
+    if not candidates:
         if output_format is OutputFormat.json:
-            emit(dumps({"enriched": 0}), None)
+            emit(
+                dumps(
+                    {
+                        "enriched": 0,
+                        "skipped_gone": 0,
+                        "stopped_early": False,
+                        "reason": None,
+                        "normalization_failed": 0,
+                    }
+                ),
+                None,
+            )
         else:
             warn("No listings to enrich")
         return
 
-    budget = max_requests if max_requests is not None else 50
-    if budget < 0:
-        error("--max-requests must be non-negative", code=2)
+    enforce_cooldown()
 
     enriched = 0
+    skipped_gone = 0
+    normalization_failed = 0
+    stopped_early = False
+    stop_reason: str | None = None
     http_kwargs = context().http_kwargs
+
     with _db_session(db_path) as conn:
-        for i, row in enumerate(rows):
+        for i, row in enumerate(candidates):
             if i >= budget:
                 break
             zpid = row.get("zpid")
             if zpid is None:
                 continue
+            zpid = to_zpid(zpid)
+            if zpid is None:
+                continue
             kind = row.get("kind") or "sale"
-            _enrich_listing(conn, int(zpid), kind, http_kwargs)
-            enriched += 1
-            progress(f"enriched {enriched}:", f"{zpid}")
+            detail_url = row.get("detail_url")
+            try:
+                result = _enrich_listing(conn, zpid, kind, http_kwargs, detail_url)
+            except ZillowError as e:
+                stopped_early = True
+                stop_reason = e.code
+                break
+            except Exception as e:
+                stopped_early = True
+                stop_reason = getattr(e, "code", None) or "detail fetch failed"
+                break
+            if result == "enriched":
+                enriched += 1
+                progress(f"enriched {enriched}:", f"{zpid}")
+            elif result == "normalization_failed":
+                normalization_failed += 1
+                progress(f"normalization_failed {normalization_failed}:", f"{zpid}")
+            elif result == "gone":
+                skipped_gone += 1
+                progress(f"gone {skipped_gone}:", f"{zpid}")
 
     if output_format is OutputFormat.json:
-        emit(dumps({"enriched": enriched}), None)
+        emit(
+            dumps(
+                {
+                    "enriched": enriched,
+                    "skipped_gone": skipped_gone,
+                    "stopped_early": stopped_early,
+                    "reason": stop_reason,
+                    "normalization_failed": normalization_failed,
+                }
+            ),
+            None,
+        )
         return
     stderr_line("green", "Enriched", f"{enriched} listings")
+    if normalization_failed:
+        stderr_line("yellow", "Normalization failed", f"{normalization_failed} listings")
+    if skipped_gone:
+        stderr_line("yellow", "Skipped (gone)", f"{skipped_gone} listings")
+    if stopped_early:
+        stderr_line("red", "Stopped early", stop_reason or "unknown")
+
+
+def _select_enrich_candidates(
+    conn: sqlite3.Connection,
+    where: list[str] | None,
+    where_json: str | None,
+    sort: str | None,
+    limit: int | None,
+    max_age_days: int | None,
+) -> list[dict[str, Any]]:
+    """Select listings that need detail enrichment.
+
+    A listing is a candidate when it has no ``property_details`` row, or its
+    ``enriched_at_utc`` is older than ``max_age_days`` days, and it has no
+    ``detail_failures`` row recorded within ``max_age_days`` days.  When
+    ``max_age_days`` is None every matching listing is a candidate.
+    """
+    spec = _QuerySpec(
+        table="listings",
+        valid_fields=_DB_QUERY_FIELDS,
+        default_order='"last_seen_utc" DESC, "zpid" DESC, "kind" ASC',
+        where=where,
+        where_json=where_json,
+        sort=sort,
+    )
+    parsed = _parse_conditions(spec.where, spec.where_json, spec.valid_fields)
+    for condition in parsed:
+        _validate_condition(condition)
+    # The query always joins property_details and detail_failures for the
+    # max-age check, so columns must be qualified as listings.*.
+    join_used = True
+    clauses, parameters = _build_where(parsed, join_used)
+
+    sql = 'SELECT listings."zpid", listings."kind", listings."detail_url" FROM "listings"'
+    if join_used:
+        sql += _DETAILS_JOIN
+    else:
+        # Need property_details for the max-age check even when no user
+        # condition references a detail field.
+        sql += (
+            ' LEFT JOIN property_details ON property_details."zpid" = listings."zpid"'
+            ' AND property_details."kind" = listings."kind"'
+        )
+    sql += ' LEFT JOIN detail_failures df ON df."zpid" = listings."zpid" AND df."kind" = listings."kind"'
+
+    extra_clauses = list(clauses)
+    if max_age_days is not None:
+        cutoff = f"strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-{max_age_days} days')"
+        extra_clauses.append(f'(property_details."zpid" IS NULL OR property_details."enriched_at_utc" < {cutoff})')
+        extra_clauses.append(f'(df."zpid" IS NULL OR df."recorded_at_utc" < {cutoff})')
+    if extra_clauses:
+        sql += " WHERE " + " AND ".join(extra_clauses)
+
+    sql += " ORDER BY " + _build_order(spec, join_used)
+    if limit is not None:
+        sql += " LIMIT ?"
+        parameters.append(limit)
+
+    cursor = conn.execute(sql, parameters)
+    names = [description[0] for description in cursor.description]
+    return [dict(zip(names, record, strict=True)) for record in cursor.fetchall()]
