@@ -9,7 +9,8 @@ import sqlite3
 import sys
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -109,6 +110,37 @@ class _WarningState:
 
 
 _warning_state = _WarningState()
+
+
+class EnrichResult(StrEnum):
+    ENRICHED = "enriched"
+    GONE = "gone"
+    NORMALIZATION_FAILED = "normalization_failed"
+
+
+@dataclass(slots=True)
+class EnrichStats:
+    enriched: int = 0
+    skipped_gone: int = 0
+    normalization_failed: int = 0
+    stopped_early: bool = False
+    stop_reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enriched": self.enriched,
+            "skipped_gone": self.skipped_gone,
+            "stopped_early": self.stopped_early,
+            "reason": self.stop_reason,
+            "normalization_failed": self.normalization_failed,
+        }
+
+
+_DETAIL_FETCHERS: dict[str, Callable[..., Any]] = {
+    "sale": get_from_home_id,
+    "sold": get_from_home_id,
+    "rent": get_from_home_id,
+}
 
 
 def _timestamp(value: str, *, label: str) -> str:
@@ -513,13 +545,6 @@ def db_prune(
     )
 
 
-_DETAIL_FETCHERS: dict[str, Callable[..., Any]] = {
-    "sale": get_from_home_id,
-    "sold": get_from_home_id,
-    "rent": get_from_home_id,
-}
-
-
 def _detail_target(zpid: int, kind: str, detail_url: str | None) -> tuple[Callable[..., Any], int | str]:
     """Return the fetcher and identifier for one listing.
 
@@ -583,7 +608,7 @@ def _enrich_listing(
             status_code=404,
         )
         conn.commit()
-        return "gone"
+        return EnrichResult.GONE
     # The request succeeded, so any remembered block is stale.
     clear_block_state()
     upsert_property_details(conn, detail, kind=str(kind))
@@ -595,12 +620,69 @@ def _enrich_listing(
         (zpid, kind),
     ).fetchone()
     if row is not None and row[0]:
-        return "normalization_failed"
-    return "enriched"
+        return EnrichResult.NORMALIZATION_FAILED
+    return EnrichResult.ENRICHED
+
+
+def _handle_enrich_result(result: str, zpid: int, stats: EnrichStats) -> None:
+    """Update stats and show progress for enrich result."""
+    if result == EnrichResult.ENRICHED:
+        stats.enriched += 1
+        progress(f"enriched {stats.enriched}:", f"{zpid}")
+    elif result == EnrichResult.NORMALIZATION_FAILED:
+        stats.normalization_failed += 1
+        progress(f"normalization_failed {stats.normalization_failed}:", f"{zpid}")
+    elif result == EnrichResult.GONE:
+        stats.skipped_gone += 1
+        progress(f"gone {stats.skipped_gone}:", f"{zpid}")
+
+
+def _process_enrich_candidates(
+    conn: sqlite3.Connection, candidates: list[dict[str, Any]], budget: int, http_kwargs: dict[str, Any]
+) -> EnrichStats:
+    """Process enrichment candidates and return statistics."""
+    stats = EnrichStats()
+    for i, row in enumerate(candidates):
+        if i >= budget:
+            break
+        zpid = row.get("zpid")
+        if zpid is None:
+            continue
+        zpid = to_zpid(zpid)
+        if zpid is None:
+            continue
+        kind = row.get("kind") or "sale"
+        detail_url = row.get("detail_url")
+        try:
+            result = _enrich_listing(conn, zpid, kind, http_kwargs, detail_url)
+        except ZillowError as e:
+            stats.stopped_early = True
+            stats.stop_reason = e.code
+            break
+        except Exception as e:
+            stats.stopped_early = True
+            stats.stop_reason = getattr(e, "code", None) or "detail fetch failed"
+            break
+        _handle_enrich_result(result, zpid, stats)
+    return stats
+
+
+def _report_enrich_results(stats: EnrichStats, output_format: OutputFormat | None) -> None:
+    """Report enrichment results."""
+    if output_format is OutputFormat.json:
+        emit(dumps(stats.to_dict()), None)
+        return
+    stderr_line("green", "Enriched", f"{stats.enriched} listings")
+    if stats.normalization_failed:
+        stderr_line("yellow", "Normalization failed", f"{stats.normalization_failed} listings")
+    if stats.skipped_gone:
+        stderr_line("yellow", "Skipped (gone)", f"{stats.skipped_gone} listings")
+    if stats.stopped_early:
+        stderr_line("red", "Stopped early", stats.stop_reason or "unknown")
 
 
 @db_app.command("enrich")
-def db_enrich(  # noqa: C901, PLR0912, PLR0915 - multiple error paths and output branches are inherent
+def db_enrich(
     where: WhereOpt = None,
     where_json: WhereJSONOpt = None,
     sort: SortOpt = None,
@@ -661,84 +743,18 @@ def db_enrich(  # noqa: C901, PLR0912, PLR0915 - multiple error paths and output
 
     if not candidates:
         if output_format is OutputFormat.json:
-            emit(
-                dumps(
-                    {
-                        "enriched": 0,
-                        "skipped_gone": 0,
-                        "stopped_early": False,
-                        "reason": None,
-                        "normalization_failed": 0,
-                    }
-                ),
-                None,
-            )
+            emit(dumps(EnrichStats().to_dict()), None)
         else:
             warn("No listings to enrich")
         return
 
     enforce_cooldown()
-
-    enriched = 0
-    skipped_gone = 0
-    normalization_failed = 0
-    stopped_early = False
-    stop_reason: str | None = None
     http_kwargs = context().http_kwargs
 
     with _db_session(db_path) as conn:
-        for i, row in enumerate(candidates):
-            if i >= budget:
-                break
-            zpid = row.get("zpid")
-            if zpid is None:
-                continue
-            zpid = to_zpid(zpid)
-            if zpid is None:
-                continue
-            kind = row.get("kind") or "sale"
-            detail_url = row.get("detail_url")
-            try:
-                result = _enrich_listing(conn, zpid, kind, http_kwargs, detail_url)
-            except ZillowError as e:
-                stopped_early = True
-                stop_reason = e.code
-                break
-            except Exception as e:
-                stopped_early = True
-                stop_reason = getattr(e, "code", None) or "detail fetch failed"
-                break
-            if result == "enriched":
-                enriched += 1
-                progress(f"enriched {enriched}:", f"{zpid}")
-            elif result == "normalization_failed":
-                normalization_failed += 1
-                progress(f"normalization_failed {normalization_failed}:", f"{zpid}")
-            elif result == "gone":
-                skipped_gone += 1
-                progress(f"gone {skipped_gone}:", f"{zpid}")
+        stats = _process_enrich_candidates(conn, candidates, budget, http_kwargs)
 
-    if output_format is OutputFormat.json:
-        emit(
-            dumps(
-                {
-                    "enriched": enriched,
-                    "skipped_gone": skipped_gone,
-                    "stopped_early": stopped_early,
-                    "reason": stop_reason,
-                    "normalization_failed": normalization_failed,
-                }
-            ),
-            None,
-        )
-        return
-    stderr_line("green", "Enriched", f"{enriched} listings")
-    if normalization_failed:
-        stderr_line("yellow", "Normalization failed", f"{normalization_failed} listings")
-    if skipped_gone:
-        stderr_line("yellow", "Skipped (gone)", f"{skipped_gone} listings")
-    if stopped_early:
-        stderr_line("red", "Stopped early", stop_reason or "unknown")
+    _report_enrich_results(stats, output_format)
 
 
 def _select_enrich_candidates(
