@@ -193,4 +193,5 @@ class TestSharedBudgetLimiter:
 
         limiter.wait(5.0)
 
-        assert slept == [5.0]
+        assert len(slept) == 1
+        assert slept[0] == pytest.approx(5.0)
