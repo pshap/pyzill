@@ -253,7 +253,11 @@ def test_expired_cache_entry_is_refetched(monkeypatch, cache_path):
 
 def test_cache_updates_are_serialized_across_writers(tmp_path):
     """Concurrent writers must not lose each other's cache entries."""
+    import os
     import threading
+
+    if os.name == "nt":  # pragma: no cover - Windows lacks fcntl locking
+        pytest.skip("Directory locking not implemented on Windows")
 
     from pyzill.geocode import _store_cache
 
