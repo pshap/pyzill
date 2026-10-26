@@ -42,7 +42,7 @@ class TaxLatest(NamedTuple):
     assessed: int | float | None
 
 
-def int_if_whole(value: Any) -> Any:
+def int_if_whole[T](value: T) -> T | int:
     """Return a whole float as an int, so 2023.0 is stored as 2023.
 
     The target columns have INTEGER affinity, so SQLite stores either value

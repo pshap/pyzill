@@ -199,6 +199,8 @@ def _parse_conditions(
     parsed = [_parse_where(expression, valid_fields) for expression in (where or [])]
     parsed.extend(_validated_conditions(conditions or [], valid_fields))
     if where_json is None:
+        for condition in parsed:
+            _validate_condition(condition)
         return parsed
     try:
         raw_conditions = json.loads(where_json)
@@ -217,6 +219,8 @@ def _parse_conditions(
         if not isinstance(value, (str, int, float, bool, type(None))):
             raise QueryValidationError("--where-json values must be strings, numbers, booleans, or null")
         parsed.append(Condition(field, operator, _condition_value(field, value)))
+    for condition in parsed:
+        _validate_condition(condition)
     return parsed
 
 
@@ -481,8 +485,6 @@ def _compiled_filter(spec: _QuerySpec, parsed: list[Condition], join_used: bool)
     here, so the filter pipeline has one implementation rather than two that
     can drift.
     """
-    for condition in parsed:
-        _validate_condition(condition)
     clauses, parameters = _build_where(parsed, join_used)
     return CompiledFilter(clauses=clauses, parameters=parameters, order_by=_build_order(spec, join_used))
 

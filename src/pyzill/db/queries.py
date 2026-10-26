@@ -46,11 +46,9 @@ def load_listings(
 
 
 class EnrichCandidate(NamedTuple):
-    """One listing the enrichment shortlist selected.
+    """One listing chosen for enrichment.
 
-    All three values come from the listings row, whose ``zpid`` and ``kind``
-    are NOT NULL, so they are stripped of the "missing key" checks a dict row
-    invited.
+    zpid and kind come from the listings primary key, so neither can be missing.
     """
 
     zpid: int

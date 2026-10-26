@@ -187,3 +187,10 @@ def test_compiled_filter_emits_the_order_query_database_uses(conn, sort):
     query_database(cast(sqlite3.Connection, recorder), sort=sort)
 
     assert recorder.statements[-1].split(" ORDER BY ", 1)[1] == compile_listing_filter(sort=sort).order_by
+
+
+def test_null_operator_error_takes_precedence_over_unknown_cols(conn):
+    with pytest.raises(QueryValidationError, match="cannot be compared with null"):
+        query_database(conn, where=["price > null"], cols="not_a_column")
+    with pytest.raises(QueryValidationError, match="cannot be compared with null"):
+        compile_listing_filter(where=["price > null"])
