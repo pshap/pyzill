@@ -442,3 +442,63 @@ def test_connect_closes_connection_on_keyboard_interrupt(tmp_path: Path, monkeyp
     reopened = connect(db_path)
     assert reopened.execute("PRAGMA user_version").fetchone()[0] == 5
     reopened.close()
+
+
+def test_v4_details_migration_backfills_hoa_and_tax(tmp_path: Path):
+    """The v4->v5 rebuild derives the same values the write path derives.
+
+    The legacy row's ``tax_history`` carries a null ``taxPaid`` before the
+    populated ``tax`` alias, which the shared derivation must fall through.
+    """
+    db_path = tmp_path / "v4_details.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.executescript(
+        """
+        CREATE TABLE listings (
+            zpid INTEGER NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'sale',
+            first_seen_utc TEXT NOT NULL,
+            last_seen_utc TEXT NOT NULL,
+            PRIMARY KEY (zpid, kind)
+        );
+        CREATE TABLE property_details (
+            zpid INTEGER NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'sale',
+            hoa_fee INTEGER,
+            hoa_fee_unit TEXT,
+            tax_assessed_value INTEGER,
+            description TEXT,
+            photos_count INTEGER,
+            year_built INTEGER,
+            lot_size REAL,
+            lot_size_unit TEXT,
+            tax_history TEXT,
+            price_history_detail TEXT,
+            schools TEXT,
+            raw_json TEXT,
+            enriched_at_utc TEXT NOT NULL,
+            normalization_failed INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (zpid, kind)
+        );
+        INSERT INTO listings VALUES (1, 'sale', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+        INSERT INTO property_details (
+            zpid, kind, hoa_fee, hoa_fee_unit, description, tax_history, enriched_at_utc, normalization_failed
+        ) VALUES (
+            1, 'sale', 1200, 'annual', 'A home',
+            '[{"year": 2020, "taxPaid": 1000}, {"year": 2022, "taxPaid": null, "tax": 3000, "assessedValue": 4000.0}]',
+            '2026-01-01T00:00:00Z', 0
+        );
+        PRAGMA user_version = 4;
+        """
+    )
+    legacy.close()
+
+    conn = connect(db_path)
+
+    row = conn.execute(
+        "SELECT hoa_monthly, tax_year_latest, tax_paid_latest, tax_assessed_latest, description "
+        "FROM property_details WHERE zpid = 1"
+    ).fetchone()
+    conn.close()
+
+    assert row == (100.0, 2022, 3000, 4000, "A home")

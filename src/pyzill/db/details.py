@@ -6,9 +6,10 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
+from pyzill.db.derive import hoa_monthly, tax_latest
 from pyzill.db.runs import utc_now
 from pyzill.property_detail import normalize_property_detail
-from pyzill.values import to_number, to_zpid
+from pyzill.values import to_zpid
 
 __all__ = [
     "get_detail_failure",
@@ -36,61 +37,6 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, list):
         return [_json_safe(v) for v in value]
     return value
-
-
-def _hoa_monthly(hoa_fee: int | float | None, hoa_fee_unit: str | None) -> int | float | None:
-    """Normalize an HOA fee to a monthly figure by its unit.
-
-    ``monthly`` stays as-is, ``annual`` divides by 12, ``quarterly`` divides
-    by 3, and an unknown unit yields ``None`` rather than inventing a value.
-    No HOA is represented by ``None``.
-    """
-    if hoa_fee is None:
-        return None
-    if hoa_fee_unit == "monthly":
-        return hoa_fee
-    if hoa_fee_unit == "annual":
-        return round(hoa_fee / 12.0, 2)
-    if hoa_fee_unit == "quarterly":
-        return round(hoa_fee / 3.0, 2)
-    return None
-
-
-def _tax_latest(norm: Mapping[str, Any]) -> tuple[Any, Any, Any]:
-    """Return (tax_paid_latest, tax_year_latest, tax_assessed_latest).
-
-    The newest entry in ``tax_history`` provides the figures.  Zillow uses
-    different keys across pages (``taxPaid``, ``tax``, ``taxAssessedValue``),
-    so each is coerced through the shared numeric rules and only numeric
-    values are stored.
-    """
-    entries = norm.get("tax_history")
-    tax_paid = None
-    tax_year = None
-    tax_assessed = None
-    if isinstance(entries, list) and entries:
-        latest = entries[-1]
-        if isinstance(latest, dict):
-            tax_year = to_number(latest.get("year"))
-            if isinstance(tax_year, float) and tax_year.is_integer():
-                tax_year = int(tax_year)
-            tax_paid = to_number(
-                latest.get("taxPaid")
-                if "taxPaid" in latest
-                else latest.get("taxPaidAmount")
-                if "taxPaidAmount" in latest
-                else latest.get("tax")
-                if "tax" in latest
-                else latest.get("taxAmount")
-            )
-            tax_assessed = to_number(
-                latest.get("taxAssessedValue")
-                if "taxAssessedValue" in latest
-                else latest.get("assessedValue")
-                if "assessedValue" in latest
-                else latest.get("taxAssessed")
-            )
-    return tax_paid, tax_year, tax_assessed
 
 
 def _coerce_detail(detail: Mapping[str, Any]) -> tuple[Mapping[str, Any], bool]:
@@ -126,21 +72,21 @@ def _detail_values(  # noqa: PLR0913, PLR0917 - internal helper, all fields map 
     """Return the parameter tuple for one property_details row."""
     hoa_fee = norm.get("hoa_fee")
     hoa_fee_unit = norm.get("hoa_fee_unit")
-    tax_paid_latest, tax_year_latest, tax_assessed_latest = _tax_latest(norm)
+    tax = tax_latest(norm.get("tax_history"))
     return (
         zpid,
         kind,
         hoa_fee,
         hoa_fee_unit,
-        _hoa_monthly(hoa_fee, hoa_fee_unit),
+        hoa_monthly(hoa_fee, hoa_fee_unit),
         norm.get("description"),
         norm.get("photos_count"),
         norm.get("year_built"),
         norm.get("lot_size"),
         norm.get("lot_size_unit"),
-        tax_assessed_latest,
-        tax_year_latest,
-        tax_paid_latest,
+        tax.assessed,
+        tax.year,
+        tax.paid,
         json.dumps(_json_safe(norm.get("tax_history"))) if norm.get("tax_history") is not None else None,
         json.dumps(_json_safe(norm.get("schools"))) if norm.get("schools") is not None else None,
         raw_json,

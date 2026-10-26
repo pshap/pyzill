@@ -4,11 +4,11 @@ The DDL, the canonical column list, and the migration steps live here so the
 fresh-schema path and the upgrade path can never drift apart.
 """
 
-import json
 import re
 import sqlite3
 from typing import Any
 
+from pyzill.db.derive import hoa_monthly, int_if_whole, tax_latest_from_json
 from pyzill.normalize import LISTING_FIELDS
 from pyzill.values import to_number
 
@@ -307,63 +307,6 @@ _V5_PROPERTY_DETAIL_INSERT_SQL = """INSERT INTO property_details (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
 
-def _int_if_whole(value: Any) -> Any:
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return value
-
-
-def _hoa_monthly_from_fee(hoa_fee: Any, hoa_fee_unit: Any) -> Any:
-    if hoa_fee is None:
-        return None
-    if hoa_fee_unit == "monthly":
-        return hoa_fee
-    if hoa_fee_unit == "annual":
-        return round(float(hoa_fee) / 12.0, 2)
-    if hoa_fee_unit == "quarterly":
-        return round(float(hoa_fee) / 3.0, 2)
-    return None
-
-
-def _tax_latest_from_history(tax_history_raw: Any) -> tuple[Any, Any, Any]:
-    tax_year_latest = None
-    tax_paid_latest = None
-    tax_assessed_latest = None
-    if not tax_history_raw:
-        return tax_year_latest, tax_paid_latest, tax_assessed_latest
-    try:
-        entries = json.loads(tax_history_raw)
-    except (ValueError, TypeError):
-        entries = None
-    if not isinstance(entries, list) or not entries:
-        return tax_year_latest, tax_paid_latest, tax_assessed_latest
-    latest = entries[-1]
-    if not isinstance(latest, dict):
-        return tax_year_latest, tax_paid_latest, tax_assessed_latest
-    tax_year_latest = _int_if_whole(to_number(latest.get("year")))
-    tax_paid_latest = _int_if_whole(
-        to_number(
-            latest.get("taxPaid")
-            if "taxPaid" in latest
-            else latest.get("taxPaidAmount")
-            if "taxPaidAmount" in latest
-            else latest.get("tax")
-            if "tax" in latest
-            else latest.get("taxAmount")
-        )
-    )
-    tax_assessed_latest = _int_if_whole(
-        to_number(
-            latest.get("taxAssessedValue")
-            if "taxAssessedValue" in latest
-            else latest.get("assessedValue")
-            if "assessedValue" in latest
-            else latest.get("taxAssessed")
-        )
-    )
-    return tax_year_latest, tax_paid_latest, tax_assessed_latest
-
-
 def _v5_property_detail_row(values: dict[str, Any]) -> tuple[Any, ...]:
     """Return the parameter tuple for one rebuilt property_details row.
 
@@ -371,10 +314,10 @@ def _v5_property_detail_row(values: dict[str, Any]) -> tuple[Any, ...]:
     ``hoa_fee`` by its unit, and ``tax_*_latest`` come from the newest entry
     of ``tax_history``.
     """
-    hoa_fee = _int_if_whole(to_number(values.get("hoa_fee")))
+    hoa_fee = int_if_whole(to_number(values.get("hoa_fee")))
     hoa_fee_unit = values.get("hoa_fee_unit")
-    hoa_monthly = _hoa_monthly_from_fee(hoa_fee, hoa_fee_unit)
-    tax_year_latest, tax_paid_latest, tax_assessed_latest = _tax_latest_from_history(values.get("tax_history"))
+    monthly_hoa = hoa_monthly(hoa_fee, hoa_fee_unit)
+    tax_latest = tax_latest_from_json(values.get("tax_history"))
     normalization_failed = values.get("normalization_failed")
     normalization_failed = 0 if normalization_failed is None else 1 if int(normalization_failed) else 0
 
@@ -383,15 +326,15 @@ def _v5_property_detail_row(values: dict[str, Any]) -> tuple[Any, ...]:
         values.get("kind"),
         hoa_fee,
         hoa_fee_unit,
-        hoa_monthly,
+        monthly_hoa,
         values.get("description"),
         values.get("photos_count"),
         values.get("year_built"),
         values.get("lot_size"),
         values.get("lot_size_unit"),
-        tax_assessed_latest,
-        tax_year_latest,
-        tax_paid_latest,
+        tax_latest.assessed,
+        tax_latest.year,
+        tax_latest.paid,
         values.get("tax_history"),
         values.get("schools"),
         values.get("raw_json"),

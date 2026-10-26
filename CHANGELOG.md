@@ -23,6 +23,7 @@ All notable changes to this project are documented here.
 ### Fixed
 - Detail normalization failures are recorded (`normalization_failed`) without breaking the batch; invalid zpids are skipped.
 - v4→v5 property_details migration preserves rows and correctly derives `hoa_monthly`/`tax_*_latest` from stored tax history.
+- Tax figures whose preferred alias is null or non-numeric now fall through to the next alias in `tax_history`; the migration and the detail upsert share one derivation.
 ## [1.1.0] - 2025-10
 
 ### Added
