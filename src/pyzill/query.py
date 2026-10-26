@@ -28,9 +28,11 @@ __all__ = [
 ]
 
 _QUERY_FIELDS = frozenset(LISTING_FIELDS) | {"ppsf"}
-# Property detail fields that can be queried from the database. They are kept
-# out of ``_QUERY_FIELDS`` so file-based queries cannot name them.
-_DETAIL_QUERY_FIELDS = frozenset(
+# Detail fields stored on property_details. Used to compile SQL columns,
+# decide when the listings query needs the details join, and as valid query
+# fields for the database. Kept out of ``_QUERY_FIELDS`` so file-based
+# queries cannot name them.
+_DETAIL_FIELDS = frozenset(
     {
         "hoa_fee",
         "hoa_fee_unit",
@@ -49,41 +51,18 @@ _DETAIL_QUERY_FIELDS = frozenset(
         "normalization_failed",
     }
 )
-# Detail fields stored directly on property_details. Used to compile SQL
-# columns and to decide when the listings query needs the details join.
-_PROPERTY_DETAIL_FIELDS = frozenset(
-    {
-        "hoa_fee",
-        "hoa_fee_unit",
-        "hoa_monthly",
-        "description",
-        "photos_count",
-        "year_built",
-        "lot_size",
-        "lot_size_unit",
-        "tax_assessed_latest",
-        "tax_year_latest",
-        "tax_paid_latest",
-        "tax_history",
-        "schools",
-        "enriched_at_utc",
-        "normalization_failed",
-    }
-)
-# Detail-queryable fields that require joining property_details.
-_DETAIL_SQL_FIELDS = _PROPERTY_DETAIL_FIELDS
 DETAILS_JOIN = (
     " LEFT JOIN property_details ON property_details.zpid = listings.zpid AND property_details.kind = listings.kind"
 )
 # Listing fields the database stores alongside the normalized shape.
-_DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc", "kind"} | _DETAIL_QUERY_FIELDS
+_DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc", "kind"} | _DETAIL_FIELDS
 # The order ``db query`` and the enrichment shortlist both fall back to.
 _DB_DEFAULT_ORDER = '"last_seen_utc" DESC, "zpid" DESC, "kind" ASC'
 # The numeric listing fields, plus the computed price-per-square-foot.
 _NUMERIC_FIELDS = NUMERIC_LISTING_FIELDS | {"ppsf"}
 
 _QUOTED_LITERAL_LENGTH = 2
-_STRING_OPS = frozenset({"=", "==", "!=", "~"})
+_STRING_OPS = frozenset({"=", "==", "!="})
 # The operators the engine knows how to compile. An operator is written into
 # the SQL, so only these may be used.
 _OPERATORS = frozenset({">", "<", ">=", "<=", "==", "=", "!=", "~"})
@@ -198,16 +177,22 @@ def _parse_conditions(
 ) -> list[Condition]:
     parsed = [_parse_where(expression, valid_fields) for expression in (where or [])]
     parsed.extend(_validated_conditions(conditions or [], valid_fields))
-    if where_json is None:
-        for condition in parsed:
-            _validate_condition(condition)
-        return parsed
+    if where_json is not None:
+        parsed.extend(_parse_where_json(where_json, valid_fields))
+    for condition in parsed:
+        _validate_condition(condition)
+    return parsed
+
+
+def _parse_where_json(where_json: str, valid_fields: frozenset[str]) -> list[Condition]:
+    """Parse ``--where-json`` into validated :class:`Condition` objects."""
     try:
         raw_conditions = json.loads(where_json)
     except json.JSONDecodeError as exc:
         raise QueryValidationError(f"--where-json must be a JSON array: {exc.msg}") from exc
     if not isinstance(raw_conditions, list):
         raise QueryValidationError("--where-json must be a JSON array of condition objects")
+    parsed: list[Condition] = []
     for item in raw_conditions:
         if not isinstance(item, dict) or not {"field", "op", "value"} <= item.keys():
             raise QueryValidationError("Each --where-json condition needs field, op, and value")
@@ -216,11 +201,9 @@ def _parse_conditions(
             raise QueryValidationError(f"Unknown field {field!r} in --where-json")
         if not isinstance(operator, str) or operator not in _OPERATORS:
             raise QueryValidationError(f"Unknown operator {operator!r} in --where-json")
-        if not isinstance(value, (str, int, float, bool, type(None))):
+        if not isinstance(value, str | int | float | bool | None):
             raise QueryValidationError("--where-json values must be strings, numbers, booleans, or null")
         parsed.append(Condition(field, operator, _condition_value(field, value)))
-    for condition in parsed:
-        _validate_condition(condition)
     return parsed
 
 
@@ -300,20 +283,10 @@ def _column_for(field: str, join_used: bool) -> str:
     if field == "ppsf":
         prefix = "listings." if join_used else ""
         return f"(CAST({prefix}price AS REAL) / NULLIF({prefix}area, 0))"
-    if field in _PROPERTY_DETAIL_FIELDS:
+    if field in _DETAIL_FIELDS:
         return f'property_details."{field}"'
     prefix = "listings." if join_used else ""
     return f'{prefix}"{field}"'
-
-
-def _sql_column(field: str, join_used: bool) -> str:
-    """Return the SQL expression for a field.
-
-    The column is used as it stands, without a ``CAST``: wrapping a column in
-    ``CAST(...)`` (or a function such as ``lower``) hides it from SQLite's
-    indexes, so a filtered query reads the whole table instead of seeking.
-    """
-    return _column_for(field, join_used)
 
 
 def _numeric_value(field: str, value: Any) -> int | float:
@@ -383,7 +356,7 @@ def _projection_column(field: str) -> str:
             "AND listings.price != 0 AND listings.area != 0 "
             'THEN ROUND(CAST(listings.price AS REAL) / listings.area, 2) END) AS "ppsf"'
         )
-    if field in _PROPERTY_DETAIL_FIELDS:
+    if field in _DETAIL_FIELDS:
         return f'property_details."{field}" AS "{field}"'
     return f'listings."{field}" AS "{field}"'
 
@@ -434,17 +407,17 @@ def _listings_order(field: str, direction: str) -> str:
     if field == "ppsf":
         column = "(CAST(listings.price AS REAL) / NULLIF(listings.area, 0))"
         return f'({column}) IS NULL ASC, {column} {direction.upper()}, listings."zpid" ASC'
-    column = _sql_column(field, True)
+    column = _column_for(field, True)
     return f'({column}) IS NULL ASC, {column} {direction.upper()}, listings."zpid" ASC'
 
 
 def _needs_join(spec: _QuerySpec, parsed: list[Condition], selected: list[str] | None) -> bool:
     """Whether the listings query reads a column from the joined details table."""
-    if any(c.field in _DETAIL_SQL_FIELDS for c in parsed):
+    if any(c.field in _DETAIL_FIELDS for c in parsed):
         return True
-    if selected and any(s in _DETAIL_SQL_FIELDS for s in selected):
+    if selected and any(s in _DETAIL_FIELDS for s in selected):
         return True
-    return bool(spec.sort and _sort_condition(spec.sort, spec.valid_fields)[0] in _DETAIL_SQL_FIELDS)
+    return bool(spec.sort and _sort_condition(spec.sort, spec.valid_fields)[0] in _DETAIL_FIELDS)
 
 
 def _build_order(spec: _QuerySpec, join_used: bool) -> str:
@@ -461,7 +434,7 @@ def _build_order(spec: _QuerySpec, join_used: bool) -> str:
     field, direction = _sort_condition(spec.sort, spec.valid_fields)
     if spec.table == "listings":
         return _listings_order(field, direction)
-    column = _sql_column(field, False)
+    column = _column_for(field, False)
     return f'({column}) IS NULL ASC, {column} {direction.upper()}, "zpid" ASC'
 
 
@@ -622,7 +595,7 @@ def query_database(  # noqa: PLR0913 - the query's whole filter surface
         conn,
         _QuerySpec(
             table="listings",
-            valid_fields=_DB_QUERY_FIELDS | _DETAIL_QUERY_FIELDS,
+            valid_fields=_DB_QUERY_FIELDS,
             default_order=_DB_DEFAULT_ORDER,
             where=where,
             where_json=where_json,
