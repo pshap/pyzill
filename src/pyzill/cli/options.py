@@ -38,6 +38,7 @@ FormatOpt = Annotated[
     OutputFormat,
     typer.Option("--format", "-f", help="Output format (default: json)"),
 ]
+SummaryFormatOpt = Annotated[OutputFormat | None, typer.Option("--format", "-f")]
 OutputOpt = Annotated[
     str | None,
     typer.Option("--output", "-o", help="Output file (default: stdout)"),

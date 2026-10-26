@@ -5,6 +5,7 @@ parses the flags, calls the workflow, maps its errors to exit codes, and
 renders the result.
 """
 
+import itertools
 import sqlite3
 import sys
 from collections.abc import Callable, Iterator
@@ -55,6 +56,7 @@ from pyzill.cli.options import (
     RefreshOpt,
     SortOpt,
     South,
+    SummaryFormatOpt,
     Tile,
     West,
     WhereJSONOpt,
@@ -99,11 +101,7 @@ from pyzill.workflows import SyncResult, fetch_listings, import_rows, prepare_im
 db_app = typer.Typer(name="db", help="Local SQLite database for tracking listings")
 
 
-class _WarningState:
-    legacy_db_shown: bool = False
-
-
-_warning_state = _WarningState()
+_database_path_warned: list[bool] = [False]
 
 
 class EnrichResult(StrEnum):
@@ -130,13 +128,6 @@ class EnrichStats:
         }
 
 
-_DETAIL_FETCHERS: dict[str, Callable[..., Any]] = {
-    "sale": get_from_home_id,
-    "sold": get_from_home_id,
-    "rent": get_from_home_id,
-}
-
-
 def _timestamp(value: str, *, label: str) -> str:
     """Normalize a timestamp, reporting an invalid one as a usage error."""
     try:
@@ -151,13 +142,13 @@ def _resolve_db_path(db_path: str | None) -> Path:
     if db_path is None and environment_path is None:
         path = default_db_path()
         legacy_path = Path.cwd() / "pyzill.db"
-        if legacy_path.exists() and legacy_path.resolve() != path.resolve() and not _warning_state.legacy_db_shown:
+        if legacy_path.exists() and legacy_path.resolve() != path.resolve() and not _database_path_warned[0]:
             stderr_line(
                 "yellow",
                 "Warning:",
                 f"Found {legacy_path}; default database is now {path}. Use --db to select it.",
             )
-            _warning_state.legacy_db_shown = True
+            _database_path_warned[0] = True
         return path
     return resolve_db_path(db_path, environment_path, default_db_path())
 
@@ -183,6 +174,11 @@ def _db_session(
             yield conn
     except sqlite3.Error as e:
         error(f"Database operation failed: {e}", code=1)
+
+
+def _wants_json(output_format: OutputFormat | None) -> bool:
+    """Whether the command should emit JSON instead of human-readable output."""
+    return output_format is OutputFormat.json or (output_format is None and not sys.stdout.isatty())
 
 
 def _require_json_summary(output_format: OutputFormat | None) -> None:
@@ -254,7 +250,7 @@ def db_sync(
     ] = False,
     plan: PlanOpt = False,
     db_path: DbPathOpt = None,
-    output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
+    output_format: SummaryFormatOpt = None,
 ) -> None:
     """Fetch listings from Zillow and upsert to local database."""
     if (is_room or is_entire_place) and kind is not ListingKind.rent:
@@ -325,7 +321,7 @@ def db_import(
         typer.Option("--kind", help="Listing kind for this import: sale, rent, or sold"),
     ] = ListingKind.sale,
     db_path: DbPathOpt = None,
-    output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
+    output_format: SummaryFormatOpt = None,
 ) -> None:
     """Import listings from a saved JSON file (raw response or normalized array)."""
     _require_json_summary(output_format)
@@ -342,7 +338,7 @@ def db_import(
     if not rows:
         if output_format is OutputFormat.json:
             _report_sync_stats(
-                SyncResult(stats=SyncStats(added=0, updated=0, price_changes=0, skipped=0)),
+                SyncResult(stats=SyncStats()),
                 "Imported",
                 output_format,
             )
@@ -450,13 +446,13 @@ def db_runs(
 @db_app.command("stats")
 def db_stats_cmd(
     db_path: DbPathOpt = None,
-    output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
+    output_format: SummaryFormatOpt = None,
 ) -> None:
     """Show database statistics."""
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
         stats = db_stats(conn)
 
-    if output_format is OutputFormat.json or (output_format is None and not sys.stdout.isatty()):
+    if _wants_json(output_format):
         emit(
             dumps(
                 {
@@ -509,7 +505,7 @@ def db_prune(
         typer.Option("--dry-run", help="Report what would be deleted without changing the database"),
     ] = False,
     db_path: DbPathOpt = None,
-    output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
+    output_format: SummaryFormatOpt = None,
 ) -> None:
     """Delete old sync runs and their raw sightings.
 
@@ -526,14 +522,14 @@ def db_prune(
     with _db_session(db_path, must_exist=True) as conn:
         stats = prune_database(conn, older_than_days=older_than, keep_runs=keep_runs, vacuum=vacuum, dry_run=dry_run)
 
-    if output_format is OutputFormat.json or (output_format is None and not sys.stdout.isatty()):
+    if _wants_json(output_format):
         emit(dumps(asdict(stats)), None)
         return
     if output_format is not None:
         error("db prune only supports --format json", code=2)
     stderr_line(
         "green",
-        "Pruned" if not dry_run else "Would prune",
+        "Would prune" if dry_run else "Pruned",
         f"{stats.runs_deleted} runs, {stats.sightings_deleted} sightings"
         + (", database vacuumed" if stats.vacuumed else ""),
     )
@@ -552,7 +548,7 @@ def _detail_target(zpid: int, kind: str, detail_url: str | None) -> tuple[Callab
         apartment_id = apartment_id_from_url(detail_url)
         if apartment_id is not None:
             return get_from_apartment_id, apartment_id
-    return _DETAIL_FETCHERS.get(kind, get_from_home_id), zpid
+    return get_from_home_id, zpid
 
 
 def _fetch_detail_for_kind(
@@ -632,9 +628,7 @@ def _process_enrich_candidates(
 ) -> EnrichStats:
     """Process enrichment candidates and return statistics."""
     stats = EnrichStats()
-    for i, candidate in enumerate(candidates):
-        if i >= budget:
-            break
+    for candidate in itertools.islice(candidates, budget):
         # zpid and kind come from the listings primary key, where both are NOT NULL.
         try:
             result = _enrich_listing(conn, candidate.zpid, candidate.kind, http_kwargs, candidate.detail_url)
@@ -675,7 +669,7 @@ def db_enrich(
     max_age: MaxAgeOpt = 7,
     refresh: RefreshOpt = False,
     db_path: DbPathOpt = None,
-    output_format: Annotated[OutputFormat | None, typer.Option("--format", "-f")] = None,
+    output_format: SummaryFormatOpt = None,
 ) -> None:
     """Fetch property details for shortlisted listings and store them.
 

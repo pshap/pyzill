@@ -772,7 +772,7 @@ class TestDatabaseCommands:
     def test_db_legacy_warning_when_local_pyzill_db_exists(self, tmp_path, monkeypatch):
         import pyzill.cli.db as cli_db
 
-        monkeypatch.setattr(cli_db._warning_state, "legacy_db_shown", False)
+        monkeypatch.setattr(cli_db, "_database_path_warned", [False])
         legacy_db = tmp_path / "pyzill.db"
 
         legacy_db.touch()
