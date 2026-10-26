@@ -6,6 +6,7 @@ fresh-schema path and the upgrade path can never drift apart.
 
 import re
 import sqlite3
+from collections.abc import Callable
 from typing import Any
 
 from pyzill.db.derive import hoa_monthly, int_if_whole, tax_latest_from_json
@@ -265,6 +266,14 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+_V5_PROPERTY_DETAIL_INSERT_SQL = """INSERT INTO property_details (
+    zpid, kind, hoa_fee, hoa_fee_unit, hoa_monthly, description, photos_count,
+    year_built, lot_size, lot_size_unit, tax_assessed_latest, tax_year_latest,
+    tax_paid_latest, tax_history, schools, raw_json, enriched_at_utc,
+    normalization_failed
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+
+
 def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
     """Rebuild property_details around derived numeric columns and add detail_failures.
 
@@ -282,29 +291,19 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
     if old_columns:
-        rows = conn.execute(
-            f"SELECT {', '.join(f's."{col}"' for col in sorted(old_columns))} FROM property_details_v5_staging s"  # noqa: S608 - column names come from PRAGMA table_info
-        ).fetchall()
         old_col_list = sorted(old_columns)
-        for row in rows:
-            values = dict(zip(old_col_list, row, strict=False))
-            conn.execute(
-                _V5_PROPERTY_DETAIL_INSERT_SQL,
-                _v5_property_detail_row(values),
-            )
+        rows = conn.execute(
+            f"SELECT {', '.join(f's."{col}"' for col in old_col_list)} FROM property_details_v5_staging s"  # noqa: S608 - column names come from PRAGMA table_info
+        ).fetchall()
+        conn.executemany(
+            _V5_PROPERTY_DETAIL_INSERT_SQL,
+            (_v5_property_detail_row(dict(zip(old_col_list, row, strict=True))) for row in rows),
+        )
     conn.execute("DROP TABLE property_details_v5_staging")
 
     conn.execute(_CREATE_DETAIL_FAILURES_SQL.format(name="detail_failures"))
     for statement in _CREATE_DETAIL_FAILURES_INDEX_SQL:
         conn.execute(statement)
-
-
-_V5_PROPERTY_DETAIL_INSERT_SQL = """INSERT INTO property_details (
-    zpid, kind, hoa_fee, hoa_fee_unit, hoa_monthly, description, photos_count,
-    year_built, lot_size, lot_size_unit, tax_assessed_latest, tax_year_latest,
-    tax_paid_latest, tax_history, schools, raw_json, enriched_at_utc,
-    normalization_failed
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
 
 
 def _v5_property_detail_row(values: dict[str, Any]) -> tuple[Any, ...]:
@@ -343,7 +342,12 @@ def _v5_property_detail_row(values: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-_MIGRATIONS: dict[int, Any] = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4, 4: _migrate_v4_to_v5}
+_MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    1: _migrate_v1_to_v2,
+    2: _migrate_v2_to_v3,
+    3: _migrate_v3_to_v4,
+    4: _migrate_v4_to_v5,
+}
 
 
 def _addable_definition(definition: str) -> str:
@@ -369,9 +373,9 @@ _LEGACY_COLUMN_FALLBACKS = {
 }
 
 
-def _has_listings_table(conn: sqlite3.Connection) -> bool:
-    """True when the database already holds a listings table."""
-    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'listings'").fetchone()
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    """True when the database already holds a table of the given name."""
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone()
     return row is not None
 
 
@@ -398,10 +402,7 @@ def _rebuild_legacy_tables(conn: sqlite3.Connection) -> None:
     table is dropped, because the rebuilt history references the listings.
     """
     old_columns = {row[1] for row in conn.execute("PRAGMA table_info(listings)")}
-    has_history = (
-        conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'price_history'").fetchone()
-        is not None
-    )
+    has_history = _table_exists(conn, "price_history")
     history_columns: set[str] = set()
     if has_history:
         history_columns = {row[1] for row in conn.execute("PRAGMA table_info(price_history)")}
@@ -426,21 +427,16 @@ def _rebuild_legacy_tables(conn: sqlite3.Connection) -> None:
     if has_history:
         # A history row keeps the kind it had; a history table that has no
         # kind column holds sale prices.
-        if "kind" in history_columns:
-            kind_select = 'h."kind"'
-            kind_match = 'h."kind"'
-        else:
-            kind_select = "'sale'"
-            kind_match = "'sale'"
+        kind = 'h."kind"' if "kind" in history_columns else "'sale'"
         zpid_select = 'h."zpid"' if "zpid" in history_columns else "NULL"
         price_select = 'h."price"' if "price" in history_columns else "NULL"
         seen_select = 'h."seen_utc"' if "seen_utc" in history_columns else _NOW_SQL
         # The column names come from the fixed schema constants, not user input.
         conn.execute(
             "INSERT INTO price_history (zpid, kind, price, seen_utc) "  # noqa: S608
-            f"SELECT {zpid_select}, {kind_select}, {price_select}, {seen_select} "
+            f"SELECT {zpid_select}, {kind}, {price_select}, {seen_select} "
             "FROM price_history_legacy_staging h "
-            f"WHERE EXISTS (SELECT 1 FROM listings l WHERE l.zpid = h.zpid AND l.kind = {kind_match})"
+            f"WHERE EXISTS (SELECT 1 FROM listings l WHERE l.zpid = h.zpid AND l.kind = {kind})"
         )
         conn.execute("DROP TABLE price_history_legacy_staging")
 
@@ -488,13 +484,20 @@ def schema_needs_update(conn: sqlite3.Connection) -> bool:
     if any(column not in existing_columns for column in LISTING_TABLE_COLUMNS):
         return True
     # Also need property_details and detail_failures tables
-    return not (
-        conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='property_details'").fetchone()
-        and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='detail_failures'").fetchone()
-    )
+    return not (_table_exists(conn, "property_details") and _table_exists(conn, "detail_failures"))
 
 
-def ensure_schema(conn: sqlite3.Connection) -> None:  # noqa: C901, PLR0912 - full schema lifecycle is inherently complex
+def _create_detail_tables(conn: sqlite3.Connection) -> None:
+    """Create the property_details and detail_failures tables and their indexes."""
+    conn.execute(_CREATE_PROPERTY_DETAILS_SQL.format(name="property_details"))
+    for statement in _CREATE_PROPERTY_DETAILS_INDEX_SQL:
+        conn.execute(statement)
+    conn.execute(_CREATE_DETAIL_FAILURES_SQL.format(name="detail_failures"))
+    for statement in _CREATE_DETAIL_FAILURES_INDEX_SQL:
+        conn.execute(statement)
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
     """Bring the database up to the current schema version.
 
     Must run inside a write transaction: the version is re-read under the
@@ -507,7 +510,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:  # noqa: C901, PLR0912 - fu
         )
     if version < SCHEMA_VERSION:
         if version == 0:
-            if _has_listings_table(conn):
+            if _table_exists(conn, "listings"):
                 # A listings table with no version stamp is a database of
                 # unknown provenance, not a fresh file. Assuming it is fresh
                 # would leave the old table in place and then fail to build
@@ -518,14 +521,6 @@ def ensure_schema(conn: sqlite3.Connection) -> None:  # noqa: C901, PLR0912 - fu
                 conn.execute(_CREATE_PRICE_HISTORY_SQL.format(name="price_history"))
                 for statement in _CREATE_INDEX_SQL + _CREATE_TRACKING_SQL:
                     conn.execute(statement)
-            conn.execute(_CREATE_PROPERTY_DETAILS_SQL.format(name="property_details"))
-            for statement in _CREATE_PROPERTY_DETAILS_INDEX_SQL:
-                conn.execute(statement)
-            conn.execute(_CREATE_DETAIL_FAILURES_SQL.format(name="detail_failures"))
-            for statement in _CREATE_DETAIL_FAILURES_INDEX_SQL:
-                conn.execute(statement)
-            version = SCHEMA_VERSION
-            conn.execute(f"PRAGMA user_version = {version}")
         else:
             while version < SCHEMA_VERSION:
                 migration = _MIGRATIONS.get(version)
@@ -536,12 +531,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:  # noqa: C901, PLR0912 - fu
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     # The details table is part of the current schema: create it when missing.
     # Idempotent on fresh, migrated, and already-current databases alike.
-    conn.execute(_CREATE_PROPERTY_DETAILS_SQL.format(name="property_details"))
-    for statement in _CREATE_PROPERTY_DETAILS_INDEX_SQL:
-        conn.execute(statement)
-    conn.execute(_CREATE_DETAIL_FAILURES_SQL.format(name="detail_failures"))
-    for statement in _CREATE_DETAIL_FAILURES_INDEX_SQL:
-        conn.execute(statement)
+    _create_detail_tables(conn)
     # Backfill any columns a newer release added. Runs even when the
     # version is already current so a database that predates an additive
     # column (but not a version bump) is repaired on open.
