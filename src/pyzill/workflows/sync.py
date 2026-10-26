@@ -98,7 +98,7 @@ def import_rows(
     listings exist, so its absences never count as delistings.
     """
     if not rows:
-        return SyncResult(stats=SyncStats(added=0, updated=0, price_changes=0, skipped=0))
+        return SyncResult(stats=SyncStats())
     seen_utc = seen_utc or utc_now()
     run_id = begin_sync_run(conn, kind=kind, started_utc=seen_utc)
     stats = upsert_listings(

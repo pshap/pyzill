@@ -5,6 +5,7 @@ and the write path that stores listings, price history, sightings, and status
 transitions inside one transaction.
 """
 
+import itertools
 import json
 import math
 import sqlite3
@@ -37,10 +38,10 @@ class SyncStats:
     ``price_history`` for that.
     """
 
-    added: int
-    updated: int
-    price_changes: int
-    skipped: int
+    added: int = 0
+    updated: int = 0
+    price_changes: int = 0
+    skipped: int = 0
 
 
 class _PreparedRow(NamedTuple):
@@ -82,19 +83,7 @@ class _WriteBatch:
 # and the two timestamps are supplied by the write path itself.
 _DATA_COLUMNS: tuple[str, ...] = tuple(field for field in LISTING_FIELDS if field not in ("zpid", "price"))
 
-# The order a listings row's values are written in. It must match
-# ``LISTING_TABLE_COLUMNS``: the UPSERT names its columns, so a mismatch
-# would put every value in the wrong column. A test keeps the two in step.
-_LISTING_ROW_ORDER: tuple[str, ...] = (
-    "zpid",
-    "kind",
-    "price",
-    *_DATA_COLUMNS,
-    "first_seen_utc",
-    "last_seen_utc",
-)
-
-
+# 500 stays under SQLite's SQLITE_MAX_VARIABLE_NUMBER (default 999) bound-variable limit.
 _CHUNK = 500
 
 
@@ -115,11 +104,10 @@ def _listing_upsert_sql() -> str:
     columns = ", ".join(LISTING_TABLE_COLUMNS)
     placeholders = _placeholders(len(LISTING_TABLE_COLUMNS))
     current = "excluded.last_seen_utc >= listings.last_seen_utc"
-    assignments = [f"price = CASE WHEN {current} THEN COALESCE(excluded.price, listings.price) ELSE listings.price END"]
-    assignments.extend(
+    assignments = [
         f"{column} = CASE WHEN {current} THEN COALESCE(excluded.{column}, listings.{column}) ELSE listings.{column} END"
-        for column in _DATA_COLUMNS
-    )
+        for column in ("price", *_DATA_COLUMNS)
+    ]
     assignments.append("first_seen_utc = MIN(listings.first_seen_utc, excluded.first_seen_utc)")
     assignments.append("last_seen_utc = MAX(listings.last_seen_utc, excluded.last_seen_utc)")
     assignment_sql = ",\n        ".join(assignments)
@@ -145,8 +133,7 @@ def _prefetch(
     """
     existing: dict[tuple[int, str], int | None] = {}
     prior_prices: dict[tuple[int, str], int | None] = {}
-    for start in range(0, len(zpids), _CHUNK):
-        chunk = zpids[start : start + _CHUNK]
+    for chunk in itertools.batched(zpids, _CHUNK):
         # The only thing interpolated into these statements is the run of
         # placeholders; every value is bound.
         marks = _placeholders(len(chunk))
@@ -181,8 +168,7 @@ def _latest_statuses(conn: sqlite3.Connection, zpids: list[int], kind: str, seen
     one per listing.
     """
     latest: dict[int, tuple[str, str]] = {}
-    for start in range(0, len(zpids), _CHUNK):
-        chunk = zpids[start : start + _CHUNK]
+    for chunk in itertools.batched(zpids, _CHUNK):
         marks = _placeholders(len(chunk))
         query = (
             "SELECT zpid, status, first_seen_utc FROM status_history "  # noqa: S608 - values are bound
@@ -207,7 +193,7 @@ def _json_safe(value: Any) -> Any:
         return value if math.isfinite(value) else None
     if isinstance(value, dict):
         return {key: _json_safe(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_json_safe(item) for item in value]
     return value
 
@@ -272,7 +258,7 @@ def _classify_changes(prepared: Sequence[_PreparedRow], state: _BatchState, stat
 
 
 def _listing_values(entry: _PreparedRow, state: _BatchState) -> tuple[Any, ...]:
-    """Return one listings row's values, in :data:`_LISTING_ROW_ORDER`.
+    """Return one listings row's values, in :data:`LISTING_TABLE_COLUMNS` order.
 
     The values are looked up by column name and placed by the shared
     order, so they cannot drift from the columns the UPSERT names.
@@ -286,7 +272,7 @@ def _listing_values(entry: _PreparedRow, state: _BatchState) -> tuple[Any, ...]:
     }
     for column in _DATA_COLUMNS:
         values[column] = entry.row.get(column)
-    return tuple(values[column] for column in _LISTING_ROW_ORDER)
+    return tuple(values[column] for column in LISTING_TABLE_COLUMNS)
 
 
 def _build_params(prepared: Sequence[_PreparedRow], state: _BatchState) -> _WriteBatch:
@@ -409,9 +395,9 @@ def upsert_listings(  # noqa: PLR0913 - the write path's inputs
     if seen_utc is None:
         seen_utc = utc_now()
     if kind not in KINDS:
-        raise ValueError("kind must be one of: sale, rent, sold")
+        raise ValueError(f"kind must be one of: {', '.join(KINDS)}")
 
-    stats = SyncStats(added=0, updated=0, price_changes=0, skipped=0)
+    stats = SyncStats()
     prepared = _prepare_rows(rows, raw_rows, stats)
     zpids = list(dict.fromkeys(entry.zpid for entry in prepared))
     try:

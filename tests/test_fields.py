@@ -20,7 +20,7 @@ from pyzill.db.schema import (
     LISTING_COLUMN_DEFINITIONS,
     LISTING_TABLE_COLUMNS,
 )
-from pyzill.db.upsert import _DATA_COLUMNS, _LISTING_ROW_ORDER
+from pyzill.db.upsert import _DATA_COLUMNS
 from pyzill.normalize import LISTING_FIELDS, NUMERIC_LISTING_FIELDS, Listing
 from pyzill.query import _NUMERIC_FIELDS
 
@@ -91,15 +91,6 @@ def test_every_numeric_field_is_annotated_as_a_number():
     for name in numeric:
         annotation = Listing.__annotations__[name]
         assert "int" in str(annotation) or "float" in str(annotation), name
-
-
-def test_the_write_path_fills_the_columns_in_the_table_order():
-    """The values must land in the columns the UPSERT names.
-
-    The write path builds its row in its own order; if that order drifts
-    from the table's, every value would land in the wrong column.
-    """
-    assert _LISTING_ROW_ORDER == LISTING_TABLE_COLUMNS
 
 
 def test_the_column_types_come_from_the_ddl():
