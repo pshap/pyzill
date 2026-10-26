@@ -7,6 +7,7 @@ from hypothesis import strategies as st
 
 from pyzill.cli.query import QueryValidationError, query_database, query_rows
 from pyzill.db import connect, load_listings, upsert_listings
+from pyzill.query import _field_value
 
 
 @st.composite
@@ -298,6 +299,123 @@ class TestValueTypes:
             assert file_result == database_result == [{"zpid": 1, "ppsf": 166.67}]
         finally:
             connection.close()
+
+
+class TestPpsfZeroAndNull:
+    """A zero price or area yields NULL, never 0.0, in filter, sort and projection."""
+
+    @pytest.mark.parametrize(
+        "row",
+        [
+            {"zpid": 1, "price": 0, "area": 1500},
+            {"zpid": 2, "price": 250000, "area": 0},
+            {"zpid": 3, "price": 0, "area": 0},
+            {"zpid": 4, "price": None, "area": 1500},
+            {"zpid": 5, "price": 250000, "area": None},
+            {"zpid": 6, "price": None, "area": None},
+        ],
+    )
+    def test_projection_is_null_for_zero_or_missing_inputs(self, row: dict[str, Any]) -> None:
+        """The projected ppsf column is NULL when price or area is zero or null."""
+        rows = [dict(row)]
+        connection = connect(":memory:")
+        try:
+            upsert_listings(connection, rows, seen_utc="2026-10-01T00:00:00Z")
+            file_result, _ = query_rows(rows, cols="zpid,ppsf")
+            database_result, _ = query_database(connection, cols="zpid,ppsf")
+            assert file_result == database_result == [{"zpid": row["zpid"], "ppsf": None}]
+        finally:
+            connection.close()
+
+    def test_normal_values_agree_between_python_and_sql(self) -> None:
+        """The in-memory ``_field_value`` and the SQL expression agree on real data."""
+        rows = [
+            {"zpid": 1, "price": 250000, "area": 1500},
+            {"zpid": 2, "price": 300000, "area": 1200},
+            {"zpid": 3, "price": 0, "area": 1500},
+            {"zpid": 4, "price": 250000, "area": 0},
+            {"zpid": 5, "price": None, "area": 1500},
+        ]
+        connection = connect(":memory:")
+        try:
+            upsert_listings(connection, rows, seen_utc="2026-10-01T00:00:00Z")
+            # The two sources have different default orders, so sort both by zpid
+            # before comparing the projected rows.
+            file_result, _ = query_rows(rows, cols="zpid,ppsf", sort="zpid:asc")
+            database_result, _ = query_database(connection, cols="zpid,ppsf", sort="zpid:asc")
+            assert file_result == database_result
+            for row in rows:
+                assert _field_value(row, "ppsf") == next(
+                    result["ppsf"] for result in file_result if result["zpid"] == row["zpid"]
+                )
+        finally:
+            connection.close()
+
+    def test_filter_on_ppsf_treats_zero_and_null_inputs_as_null(self) -> None:
+        """``ppsf>100`` matches only rows with a real quotient in both sources."""
+        rows = [
+            {"zpid": 1, "price": 250000, "area": 1500},
+            {"zpid": 2, "price": 0, "area": 1500},
+            {"zpid": 3, "price": 250000, "area": 0},
+            {"zpid": 4, "price": None, "area": 1500},
+            {"zpid": 5, "price": 500000, "area": 2000},
+        ]
+        connection = connect(":memory:")
+        try:
+            upsert_listings(connection, rows, seen_utc="2026-10-01T00:00:00Z")
+            # The two sources have different default orders (file: rowid, db:
+            # last_seen_utc DESC), so sort explicitly before comparing sets.
+            file_result, _ = query_rows(rows, where=["ppsf>100"], sort="zpid:asc")
+            database_result, _ = query_database(connection, where=["ppsf>100"], sort="zpid:asc")
+            assert [row["zpid"] for row in file_result] == [1, 5]
+            assert [row["zpid"] for row in database_result] == [1, 5]
+        finally:
+            connection.close()
+
+    def test_sort_on_ppsf_puts_nulls_last_in_both_sources(self) -> None:
+        """A null ppsf sorts after every real value, with a stable tie-breaker."""
+        rows = [
+            {"zpid": 1, "price": 0, "area": 1500},
+            {"zpid": 2, "price": 250000, "area": 1500},
+            {"zpid": 3, "price": 500000, "area": 2000},
+            {"zpid": 4, "price": None, "area": 1500},
+        ]
+        connection = connect(":memory:")
+        try:
+            upsert_listings(connection, rows, seen_utc="2026-10-01T00:00:00Z")
+            file_result, _ = query_rows(rows, sort="ppsf:asc")
+            database_result, _ = query_database(connection, sort="ppsf:asc")
+            assert [row["zpid"] for row in file_result] == [2, 3, 1, 4]
+            assert [row["zpid"] for row in database_result] == [2, 3, 1, 4]
+        finally:
+            connection.close()
+
+
+@pytest.mark.parametrize(
+    ("row", "expected"),
+    [
+        ({"price": 250000, "area": 1500}, 166.67),
+        ({"price": 0, "area": 1500}, None),
+        ({"price": 250000, "area": 0}, None),
+        ({"price": None, "area": 1500}, None),
+        ({"price": 250000, "area": None}, None),
+    ],
+)
+def test_field_value_and_sql_ppsf_expression_agree(row: dict[str, Any], expected: float | None) -> None:
+    """The Python helper and the SQL expression compute ppsf the same way.
+
+    The SQL expression is evaluated through the query engine on a one-row
+    table, so the comparison is between two implementations of the same rule.
+    """
+    rows = [{"zpid": 1, **row}]
+    connection = connect(":memory:")
+    try:
+        upsert_listings(connection, rows, seen_utc="2026-10-01T00:00:00Z")
+        database_result, _ = query_database(connection, cols="zpid,ppsf")
+        assert database_result[0]["ppsf"] == expected
+        assert _field_value(row, "ppsf") == expected
+    finally:
+        connection.close()
 
 
 @pytest.mark.parametrize("value", ["abc", True])

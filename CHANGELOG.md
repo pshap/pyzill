@@ -19,6 +19,7 @@ All notable changes to this project are documented here.
 - `tax_assessed_latest` is derived from tax history (not copied from paid tax); `tax_assessed_value` remains the listings-table value.
 - `--force` removed; safety is enforced by floors/env overrides.
 - Cooldown is enforced in network commands (after `--plan`) and cleared on successful requests.
+- A zero price or zero area now yields `NULL` for the computed `ppsf` field in filter, sort and projection (previously `0.0` for a zero price in filter/sort); the in-memory helper and the SQL expression share one guarded definition.
 
 ### Fixed
 - Detail normalization failures are recorded (`normalization_failed`) without breaking the batch; invalid zpids are skipped.
