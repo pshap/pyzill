@@ -5,8 +5,12 @@ import sqlite3
 
 from pyzill._kinds import Kind
 from pyzill.db import (
+    clear_detail_failure,
     connect,
+    detail_normalization_failed,
+    get_detail_failure,
     get_property_details,
+    record_detail_failure,
     upsert_listings,
     upsert_property_details,
 )
@@ -202,5 +206,34 @@ def test_taxes_under_threshold_uses_listing_value(tmp_path):
 
         expensive, _ = query_database(conn, where=["tax_assessed_value>=6000"])
         assert expensive == []
+    finally:
+        conn.close()
+
+
+def test_clear_detail_failure_forgets_the_recorded_failure(tmp_path):
+    conn = connect(tmp_path / "failure.db")
+    try:
+        _seed_listing(conn)
+        record_detail_failure(conn, 1, "sale", reason="not_found", status_code=404)
+        assert get_detail_failure(conn, 1) is not None
+
+        clear_detail_failure(conn, 1, "sale")
+
+        assert get_detail_failure(conn, 1) is None
+    finally:
+        conn.close()
+
+
+def test_detail_normalization_failed_reads_the_stored_flag(tmp_path):
+    conn = connect(tmp_path / "normalization.db")
+    try:
+        _seed_listing(conn)
+        assert detail_normalization_failed(conn, 1) is False
+
+        upsert_property_details(conn, _raw_detail(), kind="sale")
+        assert detail_normalization_failed(conn, 1) is False
+
+        conn.execute("UPDATE property_details SET normalization_failed = 1 WHERE zpid = 1 AND kind = 'sale'")
+        assert detail_normalization_failed(conn, 1, "sale") is True
     finally:
         conn.close()

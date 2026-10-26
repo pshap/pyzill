@@ -12,6 +12,8 @@ from pyzill.property_detail import normalize_property_detail
 from pyzill.values import to_zpid
 
 __all__ = [
+    "clear_detail_failure",
+    "detail_normalization_failed",
     "get_detail_failure",
     "get_property_details",
     "record_detail_failure",
@@ -201,6 +203,23 @@ def get_detail_failure(conn: sqlite3.Connection, zpid: int, kind: str = "sale") 
         return None
     cols = [d[0] for d in cur.description]
     return dict(zip(cols, row, strict=True))
+
+
+def clear_detail_failure(conn: sqlite3.Connection, zpid: int, kind: str = "sale") -> None:
+    """Forget a recorded failure, because a listing that comes back is not gone."""
+    conn.execute(
+        "DELETE FROM detail_failures WHERE zpid = ? AND kind = ?",
+        (zpid, kind),
+    )
+
+
+def detail_normalization_failed(conn: sqlite3.Connection, zpid: int, kind: str = "sale") -> bool:
+    """Whether the stored detail row for a listing could not be normalized."""
+    row = conn.execute(
+        "SELECT normalization_failed FROM property_details WHERE zpid = ? AND kind = ?",
+        (zpid, kind),
+    ).fetchone()
+    return bool(row is not None and row[0])
 
 
 def get_property_details(conn: sqlite3.Connection, zpid: int, kind: str = "sale") -> dict[str, Any] | None:

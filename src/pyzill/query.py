@@ -17,9 +17,12 @@ from typing import Any
 from pyzill.normalize import LISTING_FIELDS, NUMERIC_LISTING_FIELDS
 
 __all__ = [
+    "DETAILS_JOIN",
+    "CompiledFilter",
     "Condition",
     "QueryValidationError",
     "coerce_value",
+    "compile_listing_filter",
     "query_database",
     "query_rows",
 ]
@@ -69,11 +72,13 @@ _PROPERTY_DETAIL_FIELDS = frozenset(
 )
 # Detail-queryable fields that require joining property_details.
 _DETAIL_SQL_FIELDS = _PROPERTY_DETAIL_FIELDS
-_DETAILS_JOIN = (
+DETAILS_JOIN = (
     " LEFT JOIN property_details ON property_details.zpid = listings.zpid AND property_details.kind = listings.kind"
 )
 # Listing fields the database stores alongside the normalized shape.
 _DB_QUERY_FIELDS = _QUERY_FIELDS | {"first_seen_utc", "last_seen_utc", "kind"} | _DETAIL_QUERY_FIELDS
+# The order ``db query`` and the enrichment shortlist both fall back to.
+_DB_DEFAULT_ORDER = '"last_seen_utc" DESC, "zpid" DESC, "kind" ASC'
 # The numeric listing fields, plus the computed price-per-square-foot.
 _NUMERIC_FIELDS = NUMERIC_LISTING_FIELDS | {"ppsf"}
 
@@ -102,6 +107,19 @@ class Condition:
     field: str
     operator: str
     value: Any
+
+
+@dataclass(frozen=True)
+class CompiledFilter:
+    """The SQL fragments a parsed listing filter compiles to.
+
+    ``clauses`` and ``parameters`` are the WHERE conditions and their bound
+    values; ``order_by`` is the ORDER BY clause, including the tie-breakers.
+    """
+
+    clauses: list[str]
+    parameters: list[Any]
+    order_by: str
 
 
 def _unquote(text: str) -> str:
@@ -456,23 +474,64 @@ def _build_select(spec: _QuerySpec, selected: list[str] | None, join_used: bool)
     return "listings.*" if join_used else "*"
 
 
+def _compiled_filter(spec: _QuerySpec, parsed: list[Condition], join_used: bool) -> CompiledFilter:
+    """Compile validated conditions into the WHERE and ORDER BY parts.
+
+    ``_compile_query`` and :func:`compile_listing_filter` both go through
+    here, so the filter pipeline has one implementation rather than two that
+    can drift.
+    """
+    for condition in parsed:
+        _validate_condition(condition)
+    clauses, parameters = _build_where(parsed, join_used)
+    return CompiledFilter(clauses=clauses, parameters=parameters, order_by=_build_order(spec, join_used))
+
+
+def compile_listing_filter(
+    *,
+    where: list[str] | None = None,
+    where_json: str | None = None,
+    sort: str | None = None,
+    join_used: bool = True,
+    conditions: Sequence[Condition] | None = None,
+) -> CompiledFilter:
+    """Compile a listings filter into SQL clauses, values, and an ORDER BY.
+
+    This is the filter half of :func:`query_database` for the listings table:
+    the same fields, the same validation, and the same default order. A
+    caller that needs the rows ``db query`` would return, plus extra WHERE
+    clauses of its own, builds on this instead of re-assembling the pipeline.
+
+    ``join_used`` places every listing column behind the ``listings.``
+    qualifier, as the details join requires; it defaults to True because the
+    columns ``zpid`` and ``kind`` exist in both tables.
+    """
+    spec = _QuerySpec(
+        table="listings",
+        valid_fields=_DB_QUERY_FIELDS,
+        default_order=_DB_DEFAULT_ORDER,
+        where=where,
+        where_json=where_json,
+        sort=sort,
+        conditions=conditions,
+    )
+    parsed = _parse_conditions(spec.where, spec.where_json, spec.valid_fields, spec.conditions)
+    return _compiled_filter(spec, parsed, join_used)
+
+
 def _compile_query(spec: _QuerySpec) -> tuple[str, list[Any], list[str] | None]:
     """Turn a query description into SQL and its bound values."""
     parsed = _parse_conditions(spec.where, spec.where_json, spec.valid_fields, spec.conditions)
-    for condition in parsed:
-        _validate_condition(condition)
     selected = _selected_columns(spec.cols, spec.valid_fields)
     join_used = _needs_join(spec, parsed, selected)
-    clauses, parameters = _build_where(parsed, join_used)
-    if spec.table == "listings":
-        sql = f'SELECT {_build_select(spec, selected, join_used)} FROM "{spec.table}"'  # noqa: S608 - table names are internal constants
-        if join_used:
-            sql += _DETAILS_JOIN
-    else:
-        sql = f'SELECT {_build_select(spec, selected, join_used)} FROM "{spec.table}"'  # noqa: S608 - table names are internal constants
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
-    sql += " ORDER BY " + _build_order(spec, join_used)
+    compiled = _compiled_filter(spec, parsed, join_used)
+    sql = f'SELECT {_build_select(spec, selected, join_used)} FROM "{spec.table}"'  # noqa: S608 - table names are internal constants
+    if spec.table == "listings" and join_used:
+        sql += DETAILS_JOIN
+    if compiled.clauses:
+        sql += " WHERE " + " AND ".join(compiled.clauses)
+    sql += " ORDER BY " + compiled.order_by
+    parameters = list(compiled.parameters)
     if spec.limit is not None:
         sql += " LIMIT ?"
         parameters.append(spec.limit)
@@ -562,7 +621,7 @@ def query_database(  # noqa: PLR0913 - the query's whole filter surface
         _QuerySpec(
             table="listings",
             valid_fields=_DB_QUERY_FIELDS | _DETAIL_QUERY_FIELDS,
-            default_order='"last_seen_utc" DESC, "zpid" DESC, "kind" ASC',
+            default_order=_DB_DEFAULT_ORDER,
             where=where,
             where_json=where_json,
             sort=sort,

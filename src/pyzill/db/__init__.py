@@ -17,6 +17,8 @@ public names.
 from pyzill.db.changes import get_changes
 from pyzill.db.connection import connect, connect_readonly
 from pyzill.db.details import (
+    clear_detail_failure,
+    detail_normalization_failed,
     get_detail_failure,
     get_property_details,
     record_detail_failure,
@@ -24,7 +26,7 @@ from pyzill.db.details import (
 )
 from pyzill.db.paths import default_db_path, resolve_db_path
 from pyzill.db.prune import PruneStats, prune_database
-from pyzill.db.queries import get_price_history, load_listings
+from pyzill.db.queries import EnrichCandidate, get_price_history, load_listings, select_enrich_candidates
 from pyzill.db.runs import (
     SyncRun,
     begin_sync_run,
@@ -39,15 +41,18 @@ from pyzill.db.upsert import SyncStats, upsert_listings
 
 __all__ = [
     "DBStats",
+    "EnrichCandidate",
     "PruneStats",
     "SyncRun",
     "SyncStats",
     "begin_sync_run",
+    "clear_detail_failure",
     "comparable_run_had_results",
     "connect",
     "connect_readonly",
     "db_stats",
     "default_db_path",
+    "detail_normalization_failed",
     "finish_sync_run",
     "get_changes",
     "get_detail_failure",
@@ -59,6 +64,7 @@ __all__ = [
     "prune_database",
     "record_detail_failure",
     "resolve_db_path",
+    "select_enrich_candidates",
     "upsert_listings",
     "upsert_property_details",
     "utc_now",

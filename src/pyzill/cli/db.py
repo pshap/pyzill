@@ -73,11 +73,14 @@ from pyzill.cli.search import (
 )
 from pyzill.config import read_env
 from pyzill.db import (
+    EnrichCandidate,
     SyncStats,
+    clear_detail_failure,
     connect,
     connect_readonly,
     db_stats,
     default_db_path,
+    detail_normalization_failed,
     get_changes,
     get_price_history,
     list_runs,
@@ -85,21 +88,12 @@ from pyzill.db import (
     prune_database,
     record_detail_failure,
     resolve_db_path,
+    select_enrich_candidates,
     upsert_property_details,
     utc_now,
 )
 from pyzill.exceptions import ZillowError, ZillowNotFoundError
-from pyzill.query import (
-    _DB_QUERY_FIELDS,
-    _DETAILS_JOIN,
-    _build_order,
-    _build_where,
-    _parse_conditions,
-    _QuerySpec,
-    _validate_condition,
-)
 from pyzill.urls import apartment_id_from_url
-from pyzill.values import to_zpid
 from pyzill.workflows import SyncResult, fetch_listings, import_rows, prepare_import, sync_to_db
 
 db_app = typer.Typer(name="db", help="Local SQLite database for tracking listings")
@@ -613,13 +607,9 @@ def _enrich_listing(
     clear_block_state()
     upsert_property_details(conn, detail, kind=str(kind))
     # A listing that comes back is no longer gone.
-    conn.execute("DELETE FROM detail_failures WHERE zpid = ? AND kind = ?", (zpid, kind))
+    clear_detail_failure(conn, zpid, kind)
     conn.commit()
-    row = conn.execute(
-        "SELECT normalization_failed FROM property_details WHERE zpid = ? AND kind = ?",
-        (zpid, kind),
-    ).fetchone()
-    if row is not None and row[0]:
+    if detail_normalization_failed(conn, zpid, kind):
         return EnrichResult.NORMALIZATION_FAILED
     return EnrichResult.ENRICHED
 
@@ -638,23 +628,16 @@ def _handle_enrich_result(result: str, zpid: int, stats: EnrichStats) -> None:
 
 
 def _process_enrich_candidates(
-    conn: sqlite3.Connection, candidates: list[dict[str, Any]], budget: int, http_kwargs: dict[str, Any]
+    conn: sqlite3.Connection, candidates: list[EnrichCandidate], budget: int, http_kwargs: dict[str, Any]
 ) -> EnrichStats:
     """Process enrichment candidates and return statistics."""
     stats = EnrichStats()
-    for i, row in enumerate(candidates):
+    for i, candidate in enumerate(candidates):
         if i >= budget:
             break
-        zpid = row.get("zpid")
-        if zpid is None:
-            continue
-        zpid = to_zpid(zpid)
-        if zpid is None:
-            continue
-        kind = row.get("kind") or "sale"
-        detail_url = row.get("detail_url")
+        # zpid and kind come from the listings primary key, where both are NOT NULL.
         try:
-            result = _enrich_listing(conn, zpid, kind, http_kwargs, detail_url)
+            result = _enrich_listing(conn, candidate.zpid, candidate.kind, http_kwargs, candidate.detail_url)
         except ZillowError as e:
             stats.stopped_early = True
             stats.stop_reason = e.code
@@ -663,7 +646,7 @@ def _process_enrich_candidates(
             stats.stopped_early = True
             stats.stop_reason = getattr(e, "code", None) or "detail fetch failed"
             break
-        _handle_enrich_result(result, zpid, stats)
+        _handle_enrich_result(result, candidate.zpid, stats)
     return stats
 
 
@@ -714,7 +697,7 @@ def db_enrich(
     # be fetched: no property_details row, or one older than --max-age days,
     # and no recent detail_failure row either.
     with _db_session(db_path, must_exist=True, readonly=True) as conn:
-        candidates = _select_enrich_candidates(
+        candidates = select_enrich_candidates(
             conn,
             where=where,
             where_json=where_json,
@@ -755,64 +738,3 @@ def db_enrich(
         stats = _process_enrich_candidates(conn, candidates, budget, http_kwargs)
 
     _report_enrich_results(stats, output_format)
-
-
-def _select_enrich_candidates(
-    conn: sqlite3.Connection,
-    where: list[str] | None,
-    where_json: str | None,
-    sort: str | None,
-    limit: int | None,
-    max_age_days: int | None,
-) -> list[dict[str, Any]]:
-    """Select listings that need detail enrichment.
-
-    A listing is a candidate when it has no ``property_details`` row, or its
-    ``enriched_at_utc`` is older than ``max_age_days`` days, and it has no
-    ``detail_failures`` row recorded within ``max_age_days`` days.  When
-    ``max_age_days`` is None every matching listing is a candidate.
-    """
-    spec = _QuerySpec(
-        table="listings",
-        valid_fields=_DB_QUERY_FIELDS,
-        default_order='"last_seen_utc" DESC, "zpid" DESC, "kind" ASC',
-        where=where,
-        where_json=where_json,
-        sort=sort,
-    )
-    parsed = _parse_conditions(spec.where, spec.where_json, spec.valid_fields)
-    for condition in parsed:
-        _validate_condition(condition)
-    # The query always joins property_details and detail_failures for the
-    # max-age check, so columns must be qualified as listings.*.
-    join_used = True
-    clauses, parameters = _build_where(parsed, join_used)
-
-    sql = 'SELECT listings."zpid", listings."kind", listings."detail_url" FROM "listings"'
-    if join_used:
-        sql += _DETAILS_JOIN
-    else:
-        # Need property_details for the max-age check even when no user
-        # condition references a detail field.
-        sql += (
-            ' LEFT JOIN property_details ON property_details."zpid" = listings."zpid"'
-            ' AND property_details."kind" = listings."kind"'
-        )
-    sql += ' LEFT JOIN detail_failures df ON df."zpid" = listings."zpid" AND df."kind" = listings."kind"'
-
-    extra_clauses = list(clauses)
-    if max_age_days is not None:
-        cutoff = f"strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-{max_age_days} days')"
-        extra_clauses.append(f'(property_details."zpid" IS NULL OR property_details."enriched_at_utc" < {cutoff})')
-        extra_clauses.append(f'(df."zpid" IS NULL OR df."recorded_at_utc" < {cutoff})')
-    if extra_clauses:
-        sql += " WHERE " + " AND ".join(extra_clauses)
-
-    sql += " ORDER BY " + _build_order(spec, join_used)
-    if limit is not None:
-        sql += " LIMIT ?"
-        parameters.append(limit)
-
-    cursor = conn.execute(sql, parameters)
-    names = [description[0] for description in cursor.description]
-    return [dict(zip(names, record, strict=True)) for record in cursor.fetchall()]
