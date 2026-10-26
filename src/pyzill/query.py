@@ -273,6 +273,19 @@ def _sort_condition(spec: str, valid_fields: frozenset[str]) -> tuple[str, str]:
     return field, (direction or "asc").lower()
 
 
+def _ppsf_sql(prefix: str = "") -> str:
+    """One definition of price per square foot, unrounded and guarded.
+
+    NULL unless both price and area are present and non-zero; otherwise the
+    real quotient. A zero price (or area) yields NULL rather than 0.0.
+    """
+    return (
+        f"CASE WHEN {prefix}price IS NOT NULL AND {prefix}area IS NOT NULL "
+        f"AND {prefix}price != 0 AND {prefix}area != 0 "
+        f"THEN CAST({prefix}price AS REAL) / {prefix}area END"
+    )
+
+
 def _column_for(field: str, join_used: bool) -> str:
     """Return the SQL column expression for a field, used for ordering and projection.
 
@@ -282,7 +295,7 @@ def _column_for(field: str, join_used: bool) -> str:
     """
     if field == "ppsf":
         prefix = "listings." if join_used else ""
-        return f"(CAST({prefix}price AS REAL) / NULLIF({prefix}area, 0))"
+        return f"({_ppsf_sql(prefix)})"
     if field in _DETAIL_FIELDS:
         return f'property_details."{field}"'
     prefix = "listings." if join_used else ""
@@ -351,11 +364,7 @@ def _projection_column(field: str) -> str:
     carry ``zpid`` and ``kind`` and an unqualified one is ambiguous.
     """
     if field == "ppsf":
-        return (
-            "(CASE WHEN listings.price IS NOT NULL AND listings.area IS NOT NULL "
-            "AND listings.price != 0 AND listings.area != 0 "
-            'THEN ROUND(CAST(listings.price AS REAL) / listings.area, 2) END) AS "ppsf"'
-        )
+        return f'(ROUND({_ppsf_sql("listings.")}, 2)) AS "ppsf"'
     if field in _DETAIL_FIELDS:
         return f'property_details."{field}" AS "{field}"'
     return f'listings."{field}" AS "{field}"'
@@ -405,7 +414,7 @@ def _listings_order(field: str, direction: str) -> str:
         column = 'listings."kind"'
         return f'({column}) IS NULL ASC, {column} {direction.upper()}, listings."zpid" ASC'
     if field == "ppsf":
-        column = "(CAST(listings.price AS REAL) / NULLIF(listings.area, 0))"
+        column = f"({_ppsf_sql('listings.')})"
         return f'({column}) IS NULL ASC, {column} {direction.upper()}, listings."zpid" ASC'
     column = _column_for(field, True)
     return f'({column}) IS NULL ASC, {column} {direction.upper()}, listings."zpid" ASC'
