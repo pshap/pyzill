@@ -63,7 +63,7 @@ def _coerce_detail(detail: Mapping[str, Any]) -> tuple[Mapping[str, Any], bool]:
         return detail, True
 
 
-def _detail_values(  # noqa: PLR0913, PLR0917 - internal helper, all fields map 1:1 to table columns
+def _detail_values(  # noqa: PLR0913 - internal helper, all fields map 1:1 to table columns
     norm: Mapping[str, Any],
     kind: str,
     zpid: int,
